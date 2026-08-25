@@ -1,0 +1,6 @@
+# Agent-related files and directories
+.agents/
+skills-lock.json
+AGENTS.md
+docs/agents/
+.scratch/
