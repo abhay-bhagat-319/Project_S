@@ -6,20 +6,27 @@ This document defines the behavior, page states, caching policies, and data sync
 
 ## 1. Homepage & Dashboard Layout
 
-The homepage serves as the primary navigation hub and summary screen.
+The homepage serves as the primary navigation hub and academic summary screen.
 
 ### 1.1 UI Widgets
 *   **Profile Header Card**:
     *   Displays student's profile picture, name, roll number, and department.
-    *   *Source*: Fetched via JS evaluation of the hidden `#userInfo` div on the portal home/admit card page.
-*   **Attendance Summary Card**:
-    *   Displays the overall calculated average attendance percentage (e.g., `82.4%`).
-    *   *Visual indicator*: Uses a circular progress ring styled using the color guidelines in `design_ui.md`.
-*   **Primary Action Grid**:
-    *   Three large pill/card tiles pointing to primary app sections:
-        1.  **Profile Details** (Redirection target: `/secure/studenthome`)
-        2.  **My Courses** (Redirection target: `/secure/studentMyCourses`)
-        3.  **Attendance Tracker** (Dedicated Standalone Screen)
+    *   *Source*: Fetched via JS evaluation of the hidden `#userInfo` div on the portal home page, or parsed from the `studentData` JSON in the `ng-init` attribute on `/secure/studenthome`.
+*   **Academic Progress Badges**:
+    *   **Passed Courses**: Elevated green badge showing the total count of passed courses (`studentData.current.passedCourses.length`). Clicking the badge opens a native modal listing all completed course codes.
+    *   **Failed Courses**: Elevated red/grey badge showing the total count of failed courses (`studentData.current.failedCourses.length`). Clicking opens a native modal listing the failed course codes.
+    *   *Source*: Parsed from the stringified JSON loaded inside the `<div ng-init="initProfileInfo('...')">` element on the portal home page.
+*   **CPI Performance Chart**:
+    *   A native line chart (plotted using `fl_chart` / `react-native-chart-kit`) placed at the bottom of the screen.
+    *   *Data Source*: Scraped from the `performance` array in the home page JSON containing semester codes (`sem`), semester performance index (`spi`), and cumulative performance index (`cpi`).
+    *   *Chart Constraints*: The Y-axis is strictly bounded between `1.0` and `10.0`. The X-axis auto-fits interval points dynamically as new semesters are added.
+
+### 1.2 Primary App Navigation
+*   **Navigation Type**: A floating, pill-shaped Bottom Navigation Bar styled according to `design_ui.md`.
+*   **Tabs**:
+    1.  **Home**: Profile header card, Academic Progress badges, and the CPI Performance Chart.
+    2.  **Courses**: Current registered courses list with action sheet modal hooks (`getSpreadSheetData`, `getAttendanceData`, etc.).
+    3.  **Attendance**: Standalone attendance screen (see Section 2).
 
 ---
 
