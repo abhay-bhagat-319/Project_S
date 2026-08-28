@@ -378,17 +378,6 @@ export default function App() {
           </TouchableOpacity>
 
           <TouchableOpacity 
-            style={[styles.navItem, activeTab === 'Courses' && styles.activeNavItem]}
-            onPress={() => setActiveTab('Courses')}
-          >
-            <Ionicons 
-              name="book" 
-              size={20} 
-              color={activeTab === 'Courses' ? Theme.colors.textPrimary : Theme.colors.textSecondary} 
-            />
-          </TouchableOpacity>
-
-          <TouchableOpacity 
             style={[styles.navItem, activeTab === 'Attendance' && styles.activeNavItem]}
             onPress={() => setActiveTab('Attendance')}
           >
@@ -396,6 +385,17 @@ export default function App() {
               name="calendar" 
               size={20} 
               color={activeTab === 'Attendance' ? Theme.colors.textPrimary : Theme.colors.textSecondary} 
+            />
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={[styles.navItem, activeTab === 'Courses' && styles.activeNavItem]}
+            onPress={() => setActiveTab('Courses')}
+          >
+            <Ionicons 
+              name="book" 
+              size={20} 
+              color={activeTab === 'Courses' ? Theme.colors.textPrimary : Theme.colors.textSecondary} 
             />
           </TouchableOpacity>
 
