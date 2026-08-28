@@ -318,8 +318,20 @@ export const ScraperService = {
                     dateVal = keys[0];
                   }
                   
+                  function normalizeDate(ds) {
+                    if (!ds) return '';
+                    var str = ds.toString().trim();
+                    var ymd = str.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+                    if (ymd) return ymd[3].padStart(2, '0') + '-' + ymd[2].padStart(2, '0') + '-' + ymd[1];
+                    var y8 = str.match(/^(\d{4})(\d{2})(\d{2})$/);
+                    if (y8) return y8[3] + '-' + y8[2] + '-' + y8[1];
+                    var dmy = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+                    if (dmy) return dmy[1].padStart(2, '0') + '-' + dmy[2].padStart(2, '0') + '-' + dmy[3];
+                    return str;
+                  }
+
                   if (dateVal || statusVal) {
-                    list.push({ date: (dateVal || '').toString(), status: (statusVal || 'Present').toString() });
+                    list.push({ date: normalizeDate(dateVal), status: (statusVal || 'Present').toString() });
                   }
                 }
               }
@@ -332,12 +344,13 @@ export const ScraperService = {
                   var inner = parseRecords([v]);
                   if (inner.length > 0) list.push(inner[0]);
                 } else if (v) {
-                  list.push({ date: k, status: v.toString() });
+                  list.push({ date: normalizeDate(k), status: v.toString() });
                 }
               }
             }
             return list;
           }
+
 
           // Fetch attendance data (summary + date-wise records) in parallel
           var fetchPromises = courses.map(async function(course) {

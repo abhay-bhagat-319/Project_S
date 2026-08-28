@@ -39,6 +39,43 @@ export default function AttendanceScreen({ attendanceData, onRefresh, refreshing
     });
   };
 
+  const formatDateToDDMMYYYY = (dateStr?: string): string => {
+    if (!dateStr) return 'Class Session';
+    const clean = dateStr.trim();
+    
+    // YYYY-MM-DD or YYYY/MM/DD
+    const ymdMatch = clean.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+    if (ymdMatch) {
+      const [, y, m, d] = ymdMatch;
+      return `${d.padStart(2, '0')}-${m.padStart(2, '0')}-${y}`;
+    }
+
+    // 8-digit YYYYMMDD
+    const yyyymmddMatch = clean.match(/^(\d{4})(\d{2})(\d{2})$/);
+    if (yyyymmddMatch) {
+      const [, y, m, d] = yyyymmddMatch;
+      return `${d}-${m}-${y}`;
+    }
+
+    // DD-MM-YYYY or DD/MM/YYYY
+    const dmyMatch = clean.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+    if (dmyMatch) {
+      const [, d, m, y] = dmyMatch;
+      return `${d.padStart(2, '0')}-${m.padStart(2, '0')}-${y}`;
+    }
+
+    // ISO timestamp / date string fallback
+    const parsed = new Date(clean);
+    if (!isNaN(parsed.getTime()) && clean.length >= 8) {
+      const d = String(parsed.getDate()).padStart(2, '0');
+      const m = String(parsed.getMonth() + 1).padStart(2, '0');
+      const y = parsed.getFullYear();
+      return `${d}-${m}-${y}`;
+    }
+
+    return clean;
+  };
+
   const renderRecordItem = ({ item }: { item: AttendanceRecord }) => {
     const s = (item.status || '').trim().toUpperCase();
     const isPresent = s.startsWith('P') || s.includes('PRESENT');
@@ -47,7 +84,7 @@ export default function AttendanceScreen({ attendanceData, onRefresh, refreshing
       <View style={styles.recordRow}>
         <View style={[styles.recordIndicator, { backgroundColor: isPresent ? Theme.colors.success : Theme.colors.error }]} />
         <View style={styles.recordTextContainer}>
-          <Text style={styles.recordDateText}>{item.date || 'Class Session'}</Text>
+          <Text style={styles.recordDateText}>{formatDateToDDMMYYYY(item.date)}</Text>
           <Text style={styles.recordSubText}>{isPresent ? 'Attended' : 'Missed class'}</Text>
         </View>
         <View style={[
