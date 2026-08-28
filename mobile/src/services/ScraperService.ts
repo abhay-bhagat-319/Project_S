@@ -55,51 +55,176 @@ export const ScraperService = {
   },
 
   /**
+   * Runs BEFORE page scripts via injectedJavaScriptBeforeContentLoaded.
+   * Sets up XHR/fetch hooks so we capture the profile API response
+   * the moment Angular's $http service fires, not after.
+   */
+  getEarlyInterceptScript(): string {
+    return `
+      (function() {
+        window.__profileCaptured = null;
+
+        function looksLikeProfile(obj) {
+          return obj && (obj.roll || obj.name) && obj.acadIISER;
+        }
+
+        function tryCapture(text) {
+          if (window.__profileCaptured) return;
+          try {
+            if (!text || text.indexOf('"roll"') === -1) return;
+            var p = JSON.parse(text);
+            if (looksLikeProfile(p)) { window.__profileCaptured = p; return; }
+            if (p && p.data && looksLikeProfile(p.data)) { window.__profileCaptured = p.data; }
+          } catch(e) {}
+        }
+
+        // Intercept XHR
+        var origOpen = XMLHttpRequest.prototype.open;
+        var origSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.open = function(m, u) {
+          this._xhrUrl = u;
+          return origOpen.apply(this, arguments);
+        };
+        XMLHttpRequest.prototype.send = function() {
+          var xhr = this;
+          xhr.addEventListener('load', function() { tryCapture(xhr.responseText); });
+          return origSend.apply(this, arguments);
+        };
+
+        // Intercept fetch
+        var origFetch = window.fetch;
+        window.fetch = function() {
+          var p = origFetch.apply(this, arguments);
+          p.then(function(resp) {
+            resp.clone().text().then(tryCapture);
+          }).catch(function(){});
+          return p;
+        };
+      })();
+      true;
+    `;
+  },
+
+  /**
    * JS script to inject on the student profile page (/secure/studenthome)
    */
   getProfileScraperScript(): string {
     return `
       (function() {
-        try {
-          // Look for the div with ng-init="initProfileInfo(...)"
-          var div = Array.from(document.querySelectorAll('[ng-init]')).find(function(el) {
-            return el.getAttribute('ng-init').includes('initProfileInfo');
+        var done = false;
+
+        function postProfile(d) {
+          if (done) return;
+          done = true;
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'PROFILE_SCRAPED',
+            status: 'success',
+            name: d.name || '',
+            roll: d.roll ? d.roll.toString() : '',
+            dept: (d.acadIISER && d.acadIISER.major) ? d.acadIISER.major.toUpperCase() : '',
+            passedCourses: (d.current && d.current.passedCourses) ? d.current.passedCourses : [],
+            failedCourses: (d.current && d.current.failedCourses) ? d.current.failedCourses : [],
+            performance: d.performance || []
+          }));
+        }
+
+        function looksLikeProfile(obj) {
+          return obj && (obj.roll || obj.name) && obj.acadIISER;
+        }
+
+        // --- Strategy 1: Intercept XHR at network level ---
+        var origOpen = XMLHttpRequest.prototype.open;
+        var origSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.open = function(m, u) {
+          this._xhrUrl = u;
+          return origOpen.apply(this, arguments);
+        };
+        XMLHttpRequest.prototype.send = function() {
+          var xhr = this;
+          xhr.addEventListener('load', function() {
+            if (done) return;
+            try {
+              var text = xhr.responseText;
+              if (!text || text.length < 20) return;
+              if (text.indexOf('"roll"') === -1 && text.indexOf('"name"') === -1) return;
+              var parsed = JSON.parse(text);
+              if (looksLikeProfile(parsed)) {
+                postProfile(parsed);
+              } else if (parsed && parsed.data && looksLikeProfile(parsed.data)) {
+                postProfile(parsed.data);
+              }
+            } catch(e) {}
           });
+          return origSend.apply(this, arguments);
+        };
 
-          if (div) {
-            var ngInit = div.getAttribute('ng-init');
-            var match = ngInit.match(/initProfileInfo\\('(.*)'\\)/);
-            if (match && match[1]) {
-              var decoded = match[1]
-                .replace(/&quot;/g, '"')
-                .replace(/&#39;/g, "'")
-                .replace(/&amp;/g, '&');
-              
-              var data = JSON.parse(decoded);
-              
-              var payload = {
-                type: 'PROFILE_SCRAPED',
-                status: 'success',
-                name: data.name,
-                roll: data.roll ? data.roll.toString() : '',
-                dept: (data.acadIISER && data.acadIISER.major) ? data.acadIISER.major.toUpperCase() : '',
-                passedCourses: (data.current && data.current.passedCourses) ? data.current.passedCourses : [],
-                failedCourses: (data.current && data.current.failedCourses) ? data.current.failedCourses : [],
-                performance: data.performance || []
-              };
+        // Also intercept fetch()
+        var origFetch = window.fetch;
+        window.fetch = function() {
+          var p = origFetch.apply(this, arguments);
+          p.then(function(resp) {
+            if (done) return resp;
+            resp.clone().text().then(function(text) {
+              if (!text || text.indexOf('"roll"') === -1) return;
+              try {
+                var parsed = JSON.parse(text);
+                if (looksLikeProfile(parsed)) postProfile(parsed);
+                else if (parsed && parsed.data && looksLikeProfile(parsed.data)) postProfile(parsed.data);
+              } catch(e) {}
+            });
+          }).catch(function(){});
+          return p;
+        };
 
-              window.ReactNativeWebView.postMessage(JSON.stringify(payload));
+        // --- Strategy 2: Poll Angular scope ---
+        var attempts = 0;
+        var maxAttempts = 200; // 20 seconds
+
+        var poll = setInterval(function() {
+          if (done) { clearInterval(poll); return; }
+          attempts++;
+          try {
+            // Strategy 0: Check early-intercepted data from injectedJavaScriptBeforeContentLoaded
+            if (window.__profileCaptured && looksLikeProfile(window.__profileCaptured)) {
+              clearInterval(poll);
+              postProfile(window.__profileCaptured);
               return;
             }
+
+            var el = document.querySelector('[ng-controller]') || document.body;
+            var scope = (typeof angular !== 'undefined') ? angular.element(el).scope() : null;
+            if (scope && scope.studentData && looksLikeProfile(scope.studentData)) {
+              clearInterval(poll);
+              postProfile(scope.studentData);
+              return;
+            }
+
+            if (attempts >= maxAttempts) {
+              clearInterval(poll);
+              if (!done) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'ERROR',
+                  message: 'Timed out: XHR and scope both failed to yield student data'
+                }));
+              }
+            }
+          } catch(e) {
+            clearInterval(poll);
+            if (!done) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ERROR', message: 'Poll error: ' + e.message }));
+            }
           }
-          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ERROR', message: 'Profile data init block not found' }));
-        } catch (e) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ERROR', message: 'Scrape failed: ' + e.message }));
-        }
+        }, 100);
       })();
       true;
     `;
   },
+
+
+
+
+
+
 
   /**
    * JS script to inject on the courses page (/secure/studentMyCourses)
@@ -148,47 +273,146 @@ export const ScraperService = {
             return null;
           }).filter(Boolean);
 
-          // Fetch attendance data in parallel
+          function parseRecords(raw) {
+            if (!raw) return [];
+            var list = [];
+            
+            if (Array.isArray(raw)) {
+              for (var i = 0; i < raw.length; i++) {
+                var item = raw[i];
+                if (!item) continue;
+                
+                if (typeof item === 'string') {
+                  var parts = item.split(/[:,-]/);
+                  list.push({ date: parts[0] ? parts[0].trim() : item, status: parts[1] ? parts[1].trim() : 'Present' });
+                } else if (Array.isArray(item)) {
+                  list.push({ date: (item[0] || '').toString(), status: (item[1] || 'Present').toString() });
+                } else if (typeof item === 'object') {
+                  var keys = Object.keys(item);
+                  var dateVal = '';
+                  var statusVal = '';
+                  
+                  // Find date field
+                  for (var k = 0; k < keys.length; k++) {
+                    var lk = keys[k].toLowerCase();
+                    if (lk.includes('date') || lk.includes('day') || lk.includes('time') || lk.includes('session')) {
+                      dateVal = item[keys[k]];
+                      break;
+                    }
+                  }
+                  
+                  // Find status field
+                  for (var k = 0; k < keys.length; k++) {
+                    var lk = keys[k].toLowerCase();
+                    if (lk.includes('status') || lk.includes('attend') || lk.includes('present') || lk.includes('mark') || lk.includes('state')) {
+                      statusVal = item[keys[k]];
+                      break;
+                    }
+                  }
+                  
+                  // Fallbacks if not found by name
+                  if (!dateVal && keys.length > 0) dateVal = item[keys[0]];
+                  if (!statusVal && keys.length > 1) statusVal = item[keys[1]];
+                  if (!statusVal && keys.length === 1 && typeof dateVal === 'string' && (dateVal === 'P' || dateVal === 'A' || dateVal.toLowerCase().includes('present'))) {
+                    statusVal = dateVal;
+                    dateVal = keys[0];
+                  }
+                  
+                  if (dateVal || statusVal) {
+                    list.push({ date: (dateVal || '').toString(), status: (statusVal || 'Present').toString() });
+                  }
+                }
+              }
+            } else if (typeof raw === 'object') {
+              var objKeys = Object.keys(raw);
+              for (var i = 0; i < objKeys.length; i++) {
+                var k = objKeys[i];
+                var v = raw[k];
+                if (v && typeof v === 'object' && !Array.isArray(v)) {
+                  var inner = parseRecords([v]);
+                  if (inner.length > 0) list.push(inner[0]);
+                } else if (v) {
+                  list.push({ date: k, status: v.toString() });
+                }
+              }
+            }
+            return list;
+          }
+
+          // Fetch attendance data (summary + date-wise records) in parallel
           var fetchPromises = courses.map(async function(course) {
             try {
               var response = await fetch('/secure/studentMyCourseAttendance', {
                 method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  courseId: course.attendanceArg,
-                  roll: roll
-                })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ courseId: course.attendanceArg, roll: roll })
               });
               
               var resJson = await response.json();
               if (resJson && resJson.status === 'ok') {
                 var total = resJson.totalClasses || 0;
                 var present = resJson.presentClasses || 0;
+
+                // Extract date-wise records from all potential locations
+                var records = parseRecords(resJson.data || resJson.records || resJson.userAttendanceInfo || resJson.relPresentdays);
+
+                // Fallback: If 0 records, try previous attendance endpoint
+                if (records.length === 0) {
+                  try {
+                    var prevRes = await fetch('/secure/myCoursePreviousAttendance', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ cnum: course.courseCode })
+                    });
+                    var prevJson = await prevRes.json();
+                    if (prevJson && prevJson.status === 'ok') {
+                      records = parseRecords(prevJson.attendanceRecord || prevJson.data || prevJson.records);
+                    }
+                  } catch (e2) {}
+                }
+
+                var total = (typeof resJson.totalClasses === 'number' && resJson.totalClasses > 0) ? resJson.totalClasses : 0;
+                var present = (typeof resJson.presentClasses === 'number' && resJson.presentClasses > 0) ? resJson.presentClasses : 0;
+
+                if (records.length > 0) {
+                  var recPresent = records.filter(function(r) {
+                    var st = (r.status || '').toLowerCase();
+                    return st.includes('present') || st === 'p';
+                  }).length;
+                  
+                  if (total === 0 || total < records.length) {
+                    total = records.length;
+                  }
+                  if (present === 0 || present < recPresent) {
+                    present = recPresent;
+                  }
+                }
+
+                var absent = Math.max(0, total - present);
+                var percentage = total > 0 
+                  ? (present / total) * 100 
+                  : (resJson.relPresentPercentage ? parseFloat(resJson.relPresentPercentage) : 100);
+
                 return {
                   courseCode: course.courseCode,
                   courseTitle: course.courseTitle,
                   instructor: course.instructor,
                   present: present,
-                  absent: total - present,
+                  absent: absent,
                   totalClasses: total,
-                  percentage: resJson.relPresentPercentage ? parseFloat(resJson.relPresentPercentage) : 0
+                  percentage: percentage,
+                  records: records
                 };
               }
-            } catch (err) {
-              // Ignore and fallback
-            }
+            } catch (err) {}
             return {
               courseCode: course.courseCode,
               courseTitle: course.courseTitle,
               instructor: course.instructor,
-              present: 0,
-              absent: 0,
-              totalClasses: 0,
-              percentage: 0
+              present: 0, absent: 0, totalClasses: 0, percentage: 0, records: []
             };
           });
+
 
           var results = await Promise.all(fetchPromises);
           window.ReactNativeWebView.postMessage(JSON.stringify({
@@ -203,6 +427,7 @@ export const ScraperService = {
       true;
     `;
   },
+
 
   /**
    * Injects CSS styles to make the target webview responsive and native-feeling
