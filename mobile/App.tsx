@@ -137,7 +137,9 @@ export default function App() {
 
     console.log('Starting portal sync...');
     setSyncActive(true);
-    setSyncUrl('https://shiksha.iiserb.ac.in/secure/studenthome');
+    // Always start from login so Angular completes its full auth flow.
+    // The sync WebView will inject credentials, login, and navigate to studenthome naturally.
+    setSyncUrl('https://shiksha.iiserb.ac.in/login');
   };
 
   const handleManualRefresh = async () => {
@@ -185,17 +187,19 @@ export default function App() {
     setAppState('NEEDS_LOGIN');
   };
 
+  // Track current sync URL so onLoadEnd knows which page finished loading
+  const syncCurrentUrl = useRef<string>('');
+
   // WebView scraping execution coordinators
   const handleSyncNavigationStateChange = (navState: any) => {
-    const { url, loading } = navState;
-    if (loading) return;
-
+    const { url } = navState;
+    syncCurrentUrl.current = url || '';
     console.log('Sync WebView URL:', url);
 
-    // If redirected to login page during background sync, inject credentials
-    if (url.includes('/login')) {
+    // Inject credentials whenever we land on any login page
+    if (url && url.includes('/login')) {
       if (credentials) {
-        console.log('Session expired during sync. Injecting credentials...');
+        console.log('Injecting credentials into sync WebView...');
         syncWebViewRef.current?.injectJavaScript(
           ScraperService.getLoginInjectionScript(credentials.username, credentials.password)
         );
@@ -204,16 +208,25 @@ export default function App() {
         setRefreshing(false);
         setAppState('NEEDS_LOGIN');
       }
-    } 
-    // If on profile page, scrape profile info
-    else if (url.includes('/secure/studenthome')) {
-      console.log('Injected profile scraper.');
-      syncWebViewRef.current?.injectJavaScript(ScraperService.getProfileScraperScript());
     }
-    // If on courses page, scrape registered courses and attendance
-    else if (url.includes('/secure/studentMyCourses')) {
-      console.log('Injected attendance scraper.');
-      syncWebViewRef.current?.injectJavaScript(ScraperService.getAttendanceScraperScript());
+  };
+
+  // Inject scrapers only after the page has fully loaded (Angular bootstrapped)
+  const handleSyncLoadEnd = () => {
+    const url = syncCurrentUrl.current;
+    if (!url) return;
+
+    if (url.includes('/secure/studenthome')) {
+      // Delay to allow Angular to finish bootstrapping and populate ng-init
+      setTimeout(() => {
+        console.log('Injected profile scraper.');
+        syncWebViewRef.current?.injectJavaScript(ScraperService.getProfileScraperScript());
+      }, 1500);
+    } else if (url.includes('/secure/studentMyCourses')) {
+      setTimeout(() => {
+        console.log('Injected attendance scraper.');
+        syncWebViewRef.current?.injectJavaScript(ScraperService.getAttendanceScraperScript());
+      }, 1500);
     }
   };
 
@@ -402,7 +415,7 @@ export default function App() {
 
       {/* Background WebView for syncing data */}
       {syncActive && (
-        <View style={{ position: 'absolute', left: -1000, top: -1000, width: 100, height: 100 }}>
+        <View style={{ position: 'absolute', left: -9999, top: -9999, width: 390, height: 844 }}>
           <WebView
             ref={syncWebViewRef}
             source={{ uri: syncUrl }}
@@ -410,7 +423,9 @@ export default function App() {
             domStorageEnabled={true}
             onMessage={handleSyncMessage}
             onNavigationStateChange={handleSyncNavigationStateChange}
-            userAgent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36"
+            onLoadEnd={handleSyncLoadEnd}
+            injectedJavaScriptBeforeContentLoaded={ScraperService.getEarlyInterceptScript()}
+            userAgent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
           />
         </View>
       )}

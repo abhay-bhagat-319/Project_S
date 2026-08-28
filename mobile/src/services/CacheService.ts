@@ -17,6 +17,11 @@ export interface ProfileData {
   }>;
 }
 
+export interface AttendanceRecord {
+  date: string;
+  status: string;
+}
+
 export interface AttendanceItem {
   courseCode: string;
   courseTitle: string;
@@ -25,9 +30,10 @@ export interface AttendanceItem {
   absent: number;
   percentage: number;
   totalClasses: number;
+  records?: AttendanceRecord[];
   // Calculations
-  xMiss?: number; // Safe miss count
-  yAttend?: number; // Recovery attend count
+  xMiss?: number;
+  yAttend?: number;
 }
 
 export interface AttendanceData {
