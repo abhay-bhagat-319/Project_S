@@ -1,7 +1,25 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+export interface CourseDetail {
+  courseCode: string;
+  courseTitle: string;
+  credits: string;
+  slot: string;
+  instructors: string;
+  tutors?: string;
+  teachingAssistants?: string;
+  prerequisites?: string;
+  otherPrerequisites?: string;
+  learningObjectives: string[];
+  textBooks: string[];
+  referenceBooks: string[];
+  content: string;
+  remark?: string;
+}
+
 const KEY_PROFILE_DATA = 'shiksha_cache_profile';
 const KEY_ATTENDANCE_DATA = 'shiksha_cache_attendance';
+const KEY_COURSE_DETAILS = 'shiksha_cache_course_details';
 const KEY_LAST_SYNC_TIME = 'shiksha_last_sync_time';
 
 export interface ProfileData {
@@ -73,6 +91,21 @@ export const CacheService = {
   },
 
   /**
+   * Cache detailed course metadata & syllabi
+   */
+  async cacheCourseDetails(details: Record<string, CourseDetail>): Promise<void> {
+    await AsyncStorage.setItem(KEY_COURSE_DETAILS, JSON.stringify(details));
+  },
+
+  /**
+   * Retrieve cached course details
+   */
+  async getCachedCourseDetails(): Promise<Record<string, CourseDetail> | null> {
+    const raw = await AsyncStorage.getItem(KEY_COURSE_DETAILS);
+    return raw ? JSON.parse(raw) : null;
+  },
+
+  /**
    * Save the last successful sync time
    */
   async setLastSyncTime(timestamp: number): Promise<void> {
@@ -104,6 +137,8 @@ export const CacheService = {
   async clearCache(): Promise<void> {
     await AsyncStorage.removeItem(KEY_PROFILE_DATA);
     await AsyncStorage.removeItem(KEY_ATTENDANCE_DATA);
+    await AsyncStorage.removeItem(KEY_COURSE_DETAILS);
     await AsyncStorage.removeItem(KEY_LAST_SYNC_TIME);
   },
 };
+
