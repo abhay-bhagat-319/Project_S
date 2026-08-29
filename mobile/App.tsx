@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { Theme } from './src/Theme';
 import { SecureStorageService } from './src/services/SecureStorageService';
-import { CacheService, ProfileData, AttendanceData } from './src/services/CacheService';
+import { CacheService, ProfileData, AttendanceData, CourseDetail } from './src/services/CacheService';
 import { ScraperService } from './src/services/ScraperService';
 
 import LockScreen from './src/screens/LockScreen';
@@ -13,19 +13,21 @@ import LoginScreen from './src/screens/LoginScreen';
 import DashboardScreen from './src/screens/DashboardScreen';
 import CoursesScreen, { Course } from './src/screens/CoursesScreen';
 import AttendanceScreen from './src/screens/AttendanceScreen';
+import PortalWebviewScreen from './src/screens/PortalWebviewScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 
 type AppState = 'INITIALIZING' | 'NEEDS_LOGIN' | 'LOCKED' | 'LOGGED_IN';
-type TabName = 'Dashboard' | 'Courses' | 'Attendance' | 'Settings';
+type TabName = 'Profile' | 'Attendance' | 'Courses' | 'Portal' | 'Settings';
 
 export default function App() {
   const [appState, setAppState] = useState<AppState>('INITIALIZING');
-  const [activeTab, setActiveTab] = useState<TabName>('Dashboard');
+  const [activeTab, setActiveTab] = useState<TabName>('Profile');
   
   // Scraped Data
   const [profileData, setProfileData] = useState<ProfileData | null>(null);
   const [attendanceData, setAttendanceData] = useState<AttendanceData | null>(null);
   const [courses, setCourses] = useState<Course[]>([]);
+  const [courseDetails, setCourseDetails] = useState<Record<string, CourseDetail>>({});
   
   // Sync States
   const [syncActive, setSyncActive] = useState(false);
@@ -33,8 +35,10 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   
-  // Re-authentication Overlay
-  const [reAuthVisible, setReAuthVisible] = useState(false);
+  // Portal Navigation Target
+  const [portalTargetUrl, setPortalTargetUrl] = useState<string | null>(null);
+
+  // Re-authentication Credentials
   const [credentials, setCredentials] = useState<{ username: string; password: string } | null>(null);
 
   const syncWebViewRef = useRef<WebView>(null);
@@ -68,6 +72,7 @@ export default function App() {
     // Load local cache to immediately show dashboards offline
     const cachedProfile = await CacheService.getCachedProfileData();
     const cachedAttendance = await CacheService.getCachedAttendanceData();
+    const cachedDetails = await CacheService.getCachedCourseDetails();
     
     if (cachedProfile) {
       setProfileData(cachedProfile);
@@ -81,6 +86,9 @@ export default function App() {
         instructor: item.instructor
       }));
       setCourses(mappedCourses);
+    }
+    if (cachedDetails) {
+      setCourseDetails(cachedDetails);
     }
 
     setAppState('LOGGED_IN');
@@ -107,7 +115,7 @@ export default function App() {
 
   const checkOfflineStatus = async (): Promise<boolean> => {
     try {
-      // Perform a fast lightweight fetch to check internet connectivity
+      // Fast lightweight fetch to check internet connectivity
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 3000);
       await fetch('https://www.google.com', { method: 'HEAD', signal: controller.signal });
@@ -138,7 +146,6 @@ export default function App() {
     console.log('Starting portal sync...');
     setSyncActive(true);
     // Always start from login so Angular completes its full auth flow.
-    // The sync WebView will inject credentials, login, and navigate to studenthome naturally.
     setSyncUrl('https://shiksha.iiserb.ac.in/login');
   };
 
@@ -148,7 +155,7 @@ export default function App() {
   };
 
   // Top level state callbacks
-  const handleLoginSuccess = async (username: string) => {
+  const handleLoginSuccess = async () => {
     const creds = await SecureStorageService.getCredentials();
     setCredentials(creds);
     
@@ -182,9 +189,16 @@ export default function App() {
     setProfileData(null);
     setAttendanceData(null);
     setCourses([]);
+    setCourseDetails({});
     setCredentials(null);
-    setActiveTab('Dashboard');
+    setActiveTab('Profile');
     setAppState('NEEDS_LOGIN');
+  };
+
+  const handleOpenSrs = (courseCode: string) => {
+    const srsUrl = `https://shiksha.iiserb.ac.in/secure/studentSRS/${courseCode}`;
+    setPortalTargetUrl(srsUrl);
+    setActiveTab('Portal');
   };
 
   // Track current sync URL so onLoadEnd knows which page finished loading
@@ -224,7 +238,7 @@ export default function App() {
       }, 1500);
     } else if (url.includes('/secure/studentMyCourses')) {
       setTimeout(() => {
-        console.log('Injected attendance scraper.');
+        console.log('Injected attendance & course details scraper.');
         syncWebViewRef.current?.injectJavaScript(ScraperService.getAttendanceScraperScript());
       }, 1500);
     }
@@ -276,6 +290,12 @@ export default function App() {
           }));
           setCourses(mappedCourses);
 
+          // Map course details
+          if (data.courseDetails) {
+            setCourseDetails(data.courseDetails);
+            await CacheService.cacheCourseDetails(data.courseDetails);
+          }
+
           console.log('Sync completed successfully!');
           setSyncActive(false);
           setRefreshing(false);
@@ -300,10 +320,8 @@ export default function App() {
 
   const renderActiveScreen = () => {
     switch (activeTab) {
-      case 'Dashboard':
+      case 'Profile':
         return <DashboardScreen profileData={profileData} />;
-      case 'Courses':
-        return <CoursesScreen courses={courses} onNavigateToTab={(tab) => setActiveTab(tab as TabName)} />;
       case 'Attendance':
         return (
           <AttendanceScreen 
@@ -311,6 +329,23 @@ export default function App() {
             onRefresh={handleManualRefresh} 
             refreshing={refreshing}
             isOffline={isOffline}
+          />
+        );
+      case 'Courses':
+        return (
+          <CoursesScreen 
+            courses={courses} 
+            courseDetails={courseDetails}
+            onNavigateToTab={(tab) => setActiveTab(tab as TabName)}
+            onOpenSrs={handleOpenSrs}
+          />
+        );
+      case 'Portal':
+        return (
+          <PortalWebviewScreen 
+            credentials={credentials} 
+            targetUrl={portalTargetUrl}
+            onClearTargetUrl={() => setPortalTargetUrl(null)}
           />
         );
       case 'Settings':
@@ -349,7 +384,9 @@ export default function App() {
       
       {/* Top Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>{activeTab}</Text>
+        <Text style={styles.headerTitle}>
+          {activeTab === 'Courses' ? 'My Courses' : activeTab === 'Portal' ? 'Shiksha Portal' : activeTab}
+        </Text>
         {syncActive && (
           <View style={styles.syncSpinner}>
             <ActivityIndicator size="small" color={Theme.colors.primary} />
@@ -362,51 +399,67 @@ export default function App() {
         {renderActiveScreen()}
       </View>
 
-      {/* Custom Floating Pill Bottom Navigation Bar */}
+      {/* Custom Floating Pill 5-Item Bottom Navigation Bar */}
       <View style={styles.navBarWrapper}>
         <View style={styles.navBar}>
           
           <TouchableOpacity 
-            style={[styles.navItem, activeTab === 'Dashboard' && styles.activeNavItem]}
-            onPress={() => setActiveTab('Dashboard')}
+            style={[styles.navItem, activeTab === 'Profile' && styles.activeNavItem]}
+            onPress={() => setActiveTab('Profile')}
+            activeOpacity={0.7}
           >
             <Ionicons 
-              name="grid" 
+              name={activeTab === 'Profile' ? 'person' : 'person-outline'} 
               size={20} 
-              color={activeTab === 'Dashboard' ? Theme.colors.textPrimary : Theme.colors.textSecondary} 
+              color={activeTab === 'Profile' ? '#FFFFFF' : Theme.colors.textSecondary} 
             />
           </TouchableOpacity>
 
           <TouchableOpacity 
             style={[styles.navItem, activeTab === 'Attendance' && styles.activeNavItem]}
             onPress={() => setActiveTab('Attendance')}
+            activeOpacity={0.7}
           >
             <Ionicons 
-              name="calendar" 
+              name={activeTab === 'Attendance' ? 'calendar' : 'calendar-outline'} 
               size={20} 
-              color={activeTab === 'Attendance' ? Theme.colors.textPrimary : Theme.colors.textSecondary} 
+              color={activeTab === 'Attendance' ? '#FFFFFF' : Theme.colors.textSecondary} 
             />
           </TouchableOpacity>
 
           <TouchableOpacity 
             style={[styles.navItem, activeTab === 'Courses' && styles.activeNavItem]}
             onPress={() => setActiveTab('Courses')}
+            activeOpacity={0.7}
           >
             <Ionicons 
-              name="book" 
+              name={activeTab === 'Courses' ? 'book' : 'book-outline'} 
               size={20} 
-              color={activeTab === 'Courses' ? Theme.colors.textPrimary : Theme.colors.textSecondary} 
+              color={activeTab === 'Courses' ? '#FFFFFF' : Theme.colors.textSecondary} 
+            />
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={[styles.navItem, activeTab === 'Portal' && styles.activeNavItem]}
+            onPress={() => setActiveTab('Portal')}
+            activeOpacity={0.7}
+          >
+            <Ionicons 
+              name={activeTab === 'Portal' ? 'globe' : 'globe-outline'} 
+              size={20} 
+              color={activeTab === 'Portal' ? '#FFFFFF' : Theme.colors.textSecondary} 
             />
           </TouchableOpacity>
 
           <TouchableOpacity 
             style={[styles.navItem, activeTab === 'Settings' && styles.activeNavItem]}
             onPress={() => setActiveTab('Settings')}
+            activeOpacity={0.7}
           >
             <Ionicons 
-              name="settings" 
+              name={activeTab === 'Settings' ? 'settings' : 'settings-outline'} 
               size={20} 
-              color={activeTab === 'Settings' ? Theme.colors.textPrimary : Theme.colors.textSecondary} 
+              color={activeTab === 'Settings' ? '#FFFFFF' : Theme.colors.textSecondary} 
             />
           </TouchableOpacity>
 
@@ -474,8 +527,8 @@ const styles = StyleSheet.create({
   navBarWrapper: {
     position: 'absolute',
     bottom: 24,
-    left: 20,
-    right: 20,
+    left: 16,
+    right: 16,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'transparent',
@@ -484,11 +537,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: Theme.colors.surface,
     borderRadius: Theme.radii.pill,
-    height: 64,
+    height: 60,
     width: '100%',
     alignItems: 'center',
     justifyContent: 'space-around',
-    paddingHorizontal: 8,
+    paddingHorizontal: 6,
     borderWidth: 1,
     borderColor: Theme.colors.border,
     shadowColor: '#000',
@@ -498,9 +551,9 @@ const styles = StyleSheet.create({
     elevation: 10,
   },
   navItem: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
   },

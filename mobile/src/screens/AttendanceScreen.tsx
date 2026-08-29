@@ -42,7 +42,7 @@ export default function AttendanceScreen({ attendanceData, onRefresh, refreshing
   const formatDateToDDMMYYYY = (dateStr?: string): string => {
     if (!dateStr) return 'Class Session';
     const clean = dateStr.trim();
-    
+
     // YYYY-MM-DD or YYYY/MM/DD
     const ymdMatch = clean.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
     if (ymdMatch) {
@@ -79,7 +79,7 @@ export default function AttendanceScreen({ attendanceData, onRefresh, refreshing
   const renderRecordItem = ({ item }: { item: AttendanceRecord }) => {
     const s = (item.status || '').trim().toUpperCase();
     const isPresent = s.startsWith('P') || s.includes('PRESENT');
-    
+
     return (
       <View style={styles.recordRow}>
         <View style={[styles.recordIndicator, { backgroundColor: isPresent ? Theme.colors.success : Theme.colors.error }]} />
@@ -88,7 +88,7 @@ export default function AttendanceScreen({ attendanceData, onRefresh, refreshing
           <Text style={styles.recordSubText}>{isPresent ? 'Attended' : 'Missed class'}</Text>
         </View>
         <View style={[
-          styles.recordBadge, 
+          styles.recordBadge,
           { backgroundColor: isPresent ? 'rgba(76, 217, 100, 0.15)' : 'rgba(255, 94, 94, 0.15)' }
         ]}>
           <Text style={[styles.recordStatusText, { color: isPresent ? Theme.colors.success : Theme.colors.error }]}>
@@ -139,7 +139,7 @@ export default function AttendanceScreen({ attendanceData, onRefresh, refreshing
         <View style={styles.progressBarBg}>
           <View style={[
             styles.progressBarFill,
-            { 
+            {
               width: `${Math.min(100, percentage)}%`,
               backgroundColor: isAbove ? Theme.colors.primary : Theme.colors.error
             }
@@ -173,11 +173,11 @@ export default function AttendanceScreen({ attendanceData, onRefresh, refreshing
           styles.alertContainer,
           { backgroundColor: isAbove ? 'rgba(139, 120, 255, 0.08)' : 'rgba(255, 94, 94, 0.08)' }
         ]}>
-          <Ionicons 
-            name={isAbove ? 'checkmark-circle-outline' : 'alert-circle-outline'} 
+          <Ionicons
+            name={isAbove ? 'checkmark-circle-outline' : 'alert-circle-outline'}
             size={18}
-            color={isAbove ? Theme.colors.primary : Theme.colors.error} 
-            style={styles.alertIcon} 
+            color={isAbove ? Theme.colors.primary : Theme.colors.error}
+            style={styles.alertIcon}
           />
           <Text style={[styles.alertText, { color: isAbove ? Theme.colors.textPrimary : Theme.colors.error }]}>
             {message}
@@ -195,7 +195,7 @@ export default function AttendanceScreen({ attendanceData, onRefresh, refreshing
     );
   };
 
-  const selectedMetrics = selectedCourse 
+  const selectedMetrics = selectedCourse
     ? calculateAttendance(selectedCourse.present, selectedCourse.totalClasses)
     : null;
 
@@ -221,15 +221,15 @@ export default function AttendanceScreen({ attendanceData, onRefresh, refreshing
         keyExtractor={(item) => item.courseCode}
         renderItem={renderAttendanceCard}
         refreshControl={
-          <RefreshControl 
-            refreshing={refreshing} 
+          <RefreshControl
+            refreshing={refreshing}
             onRefresh={onRefresh}
-            colors={[Theme.colors.primary]} 
-            tintColor={Theme.colors.primary} 
+            colors={[Theme.colors.primary]}
+            tintColor={Theme.colors.primary}
           />
         }
         ListEmptyComponent={
-          <ScrollView 
+          <ScrollView
             contentContainerStyle={styles.emptyContainer}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           >
@@ -249,10 +249,10 @@ export default function AttendanceScreen({ attendanceData, onRefresh, refreshing
         onRequestClose={() => setSelectedCourse(null)}
       >
         <View style={styles.modalOverlay}>
-          <TouchableOpacity 
-            style={styles.modalDismiss} 
-            activeOpacity={1} 
-            onPress={() => setSelectedCourse(null)} 
+          <TouchableOpacity
+            style={styles.modalDismiss}
+            activeOpacity={1}
+            onPress={() => setSelectedCourse(null)}
           />
           <SafeAreaView style={styles.modalSheet}>
             <StatusBar barStyle="light-content" />
@@ -307,10 +307,10 @@ export default function AttendanceScreen({ attendanceData, onRefresh, refreshing
                 styles.modalAdviceBox,
                 { backgroundColor: selectedMetrics.isAbove ? 'rgba(139, 120, 255, 0.12)' : 'rgba(255, 94, 94, 0.12)' }
               ]}>
-                <Ionicons 
-                  name={selectedMetrics.isAbove ? "shield-checkmark" : "warning"} 
-                  size={20} 
-                  color={selectedMetrics.isAbove ? Theme.colors.primary : Theme.colors.error} 
+                <Ionicons
+                  name={selectedMetrics.isAbove ? "shield-checkmark" : "warning"}
+                  size={20}
+                  color={selectedMetrics.isAbove ? Theme.colors.primary : Theme.colors.error}
                   style={{ marginRight: 10, marginTop: 2 }}
                 />
                 <Text style={[styles.modalAdviceText, { color: selectedMetrics.isAbove ? Theme.colors.textPrimary : Theme.colors.error }]}>
@@ -322,16 +322,16 @@ export default function AttendanceScreen({ attendanceData, onRefresh, refreshing
             {/* Filter Chips */}
             <View style={styles.filterRow}>
               {(['ALL', 'PRESENT', 'ABSENT'] as Filter[]).map(f => {
-                const count = f === 'ALL' 
+                const count = f === 'ALL'
                   ? (selectedCourse?.records?.length || 0)
                   : (selectedCourse?.records || []).filter(r => {
-                      const s = (r.status || '').toUpperCase();
-                      return f === 'PRESENT' ? s.startsWith('P') : s.startsWith('A');
-                    }).length;
+                    const s = (r.status || '').toUpperCase();
+                    return f === 'PRESENT' ? s.startsWith('P') : s.startsWith('A');
+                  }).length;
 
                 return (
-                  <TouchableOpacity 
-                    key={f} 
+                  <TouchableOpacity
+                    key={f}
                     onPress={() => setFilter(f)}
                     style={[styles.chip, filter === f && styles.chipActive]}
                   >
@@ -354,7 +354,7 @@ export default function AttendanceScreen({ attendanceData, onRefresh, refreshing
                   <Ionicons name="document-text-outline" size={40} color={Theme.colors.textSecondary} />
                   <Text style={styles.noRecordsTitle}>No Session Records</Text>
                   <Text style={styles.noRecordsSub}>
-                    {selectedCourse?.records && selectedCourse.records.length > 0 
+                    {selectedCourse?.records && selectedCourse.records.length > 0
                       ? 'No records match the current filter.'
                       : 'Detailed date logs have not been published by the instructor yet.'}
                   </Text>
@@ -383,11 +383,11 @@ const styles = StyleSheet.create({
 
   // Cards
   card: {
-    backgroundColor: Theme.colors.surface, 
+    backgroundColor: Theme.colors.surface,
     borderRadius: Theme.radii.card,
-    padding: Theme.spacing.padding, 
+    padding: Theme.spacing.padding,
     marginBottom: Theme.spacing.gap,
-    borderWidth: 1, 
+    borderWidth: 1,
     borderColor: Theme.colors.border,
   },
   warningCard: { borderColor: Theme.colors.error, borderWidth: 1.5 },
@@ -397,22 +397,22 @@ const styles = StyleSheet.create({
   courseCode: { fontSize: 14, fontWeight: 'bold', color: Theme.colors.primary },
   instructorText: { fontSize: 12, color: Theme.colors.textSecondary, flex: 1 },
   courseTitle: { fontSize: 16, fontWeight: '700', color: Theme.colors.textPrimary, marginTop: 4 },
-  
+
   percentContainer: {
     paddingHorizontal: 12, paddingVertical: 6, borderRadius: Theme.radii.widget,
     backgroundColor: Theme.colors.background, borderWidth: 1, borderColor: Theme.colors.border,
   },
   percentageText: { fontSize: 16, fontWeight: 'bold' },
-  
+
   progressBarBg: {
     height: 8, backgroundColor: Theme.colors.background,
     borderRadius: Theme.radii.pill, marginBottom: 16, overflow: 'hidden',
   },
   progressBarFill: { height: '100%', borderRadius: Theme.radii.pill },
 
-  statsRow: { 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
+  statsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     backgroundColor: 'rgba(0,0,0,0.2)',
     borderRadius: Theme.radii.widget,
     padding: 12,

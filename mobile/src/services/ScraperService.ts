@@ -352,6 +352,42 @@ export const ScraperService = {
           }
 
 
+          // Helper to clean HTML strings in webview context
+          function cleanHtmlText(html) {
+            if (!html) return '';
+            var temp = html
+              .replace(/<br\\s*[\\/]?>/gi, '\\n')
+              .replace(/<\\/p>/gi, '\\n\\n')
+              .replace(/<[^>]+>/g, '')
+              .replace(/&nbsp;/g, ' ')
+              .replace(/&amp;/g, '&')
+              .replace(/&lt;/g, '<')
+              .replace(/&gt;/g, '>')
+              .replace(/&quot;/g, '"')
+              .replace(/&#39;/g, "'")
+              .replace(/[ \\t]+/g, ' ')
+              .replace(/\\n\\s*\\n/g, '\\n\\n')
+              .trim();
+            return temp;
+          }
+
+          function parseHtmlList(html) {
+            if (!html) return [];
+            var liMatches = html.match(/<li[^>]*>(.*?)<\\/li>/gis);
+            if (liMatches && liMatches.length > 0) {
+              return liMatches.map(function(item) {
+                return cleanHtmlText(item);
+              }).filter(function(i) { return i.length > 0; });
+            }
+            var text = cleanHtmlText(html);
+            if (!text) return [];
+            var lines = text.split('\\n').map(function(l) { return l.trim(); }).filter(Boolean);
+            if (lines.length > 1) {
+              return lines.map(function(l) { return l.replace(/^\\d+[\\.\\)]\\s*/, '').trim(); }).filter(Boolean);
+            }
+            return [text];
+          }
+
           // Fetch attendance data (summary + date-wise records) in parallel
           var fetchPromises = courses.map(async function(course) {
             try {
@@ -426,12 +462,69 @@ export const ScraperService = {
             };
           });
 
+          // Fetch Course Details in parallel
+          var courseDetailPromises = courses.map(async function(course) {
+            try {
+              // Try fetching from standard course detail API endpoints
+              var detailRes = await fetch('/secure/studentCourseDetail', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ courseCode: course.courseCode, cnum: course.courseCode })
+              });
+              var detailJson = await detailRes.json();
+              var d = (detailJson && (detailJson.data || detailJson.courseDetail || detailJson)) || {};
+
+              return {
+                courseCode: course.courseCode,
+                courseTitle: cleanHtmlText(d.courseTitle || d.title || course.courseTitle),
+                credits: (d.credits || d.credit || '4').toString(),
+                slot: (d.slot || 'N/A').toString(),
+                instructors: cleanHtmlText(d.instructors || d.instructor || course.instructor),
+                tutors: cleanHtmlText(d.tutors || d.tutor || ''),
+                teachingAssistants: cleanHtmlText(d.teachingAssistants || d.ta || ''),
+                prerequisites: cleanHtmlText(d.prerequisites || ''),
+                otherPrerequisites: cleanHtmlText(d.otherPrerequisites || ''),
+                learningObjectives: parseHtmlList(d.learningObjectives || d.objectives || ''),
+                textBooks: parseHtmlList(d.textBooks || d.textbooks || ''),
+                referenceBooks: parseHtmlList(d.referenceBooks || d.references || ''),
+                content: cleanHtmlText(d.content || d.syllabus || ''),
+                remark: cleanHtmlText(d.remark || '')
+              };
+            } catch (e) {
+              return {
+                courseCode: course.courseCode,
+                courseTitle: course.courseTitle,
+                credits: '4',
+                slot: 'N/A',
+                instructors: course.instructor,
+                tutors: '',
+                teachingAssistants: '',
+                prerequisites: '',
+                otherPrerequisites: '',
+                learningObjectives: [],
+                textBooks: [],
+                referenceBooks: [],
+                content: '',
+                remark: ''
+              };
+            }
+          });
 
           var results = await Promise.all(fetchPromises);
+          var detailResults = await Promise.all(courseDetailPromises);
+
+          var detailsMap = {};
+          detailResults.forEach(function(dt) {
+            if (dt && dt.courseCode) {
+              detailsMap[dt.courseCode] = dt;
+            }
+          });
+
           window.ReactNativeWebView.postMessage(JSON.stringify({
             type: 'ATTENDANCE_SCRAPED',
             status: 'success',
-            items: results
+            items: results,
+            courseDetails: detailsMap
           }));
         } catch (e) {
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ERROR', message: 'Attendance scrape failed: ' + e.message }));
