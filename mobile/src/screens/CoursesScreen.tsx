@@ -3,6 +3,7 @@ import { StyleSheet, Text, View, FlatList, TouchableOpacity } from 'react-native
 import { Ionicons } from '@expo/vector-icons';
 import { Theme } from '../Theme';
 import { CourseDetail } from '../services/CacheService';
+import { getCourseDetailFor } from '../utils/courseCatalog';
 import CourseDetailModal from './CourseDetailModal';
 import CourseMarksModal from './CourseMarksModal';
 
@@ -35,17 +36,12 @@ export default function CoursesScreen({
   };
 
   const handleOpenInfo = (course: Course) => {
-    const detail = courseDetails[course.courseCode] || {
-      courseCode: course.courseCode,
-      courseTitle: course.courseTitle,
-      credits: '4',
-      slot: 'N/A',
-      instructors: course.instructor,
-      learningObjectives: [],
-      textBooks: [],
-      referenceBooks: [],
-      content: 'Detailed course syllabus and literature list will be populated on the next portal sync.',
-    };
+    const detail = getCourseDetailFor(
+      course.courseCode,
+      course.courseTitle,
+      course.instructor,
+      courseDetails
+    );
     setSelectedDetail(detail);
   };
 
@@ -65,19 +61,25 @@ export default function CoursesScreen({
         data={courses}
         keyExtractor={(item) => item.courseCode}
         renderItem={({ item, index }) => {
-          const detail = courseDetails[item.courseCode];
+          const detail = getCourseDetailFor(
+            item.courseCode,
+            item.courseTitle,
+            item.instructor,
+            courseDetails
+          );
+
           return (
             <View style={[styles.courseCard, { backgroundColor: getCardColor(index) }]}>
               {/* Card Header: Code, Slot, Enrolled Tag */}
               <View style={styles.cardHeader}>
                 <View style={styles.headerLeftBadges}>
                   <Text style={styles.courseCode}>{item.courseCode}</Text>
-                  {detail?.slot && detail.slot !== 'N/A' ? (
+                  {detail.slot && detail.slot !== 'N/A' ? (
                     <View style={styles.slotBadge}>
                       <Text style={styles.slotBadgeText}>Slot {detail.slot}</Text>
                     </View>
                   ) : null}
-                  {detail?.credits ? (
+                  {detail.credits ? (
                     <View style={styles.creditsBadge}>
                       <Text style={styles.creditsBadgeText}>{detail.credits} Cr</Text>
                     </View>

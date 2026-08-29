@@ -462,63 +462,64 @@ export const ScraperService = {
             };
           });
 
-          // Fetch Course Details in parallel
-          var courseDetailPromises = courses.map(async function(course) {
-            try {
-              // Try fetching from standard course detail API endpoints
-              var detailRes = await fetch('/secure/studentCourseDetail', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ courseCode: course.courseCode, cnum: course.courseCode })
-              });
-              var detailJson = await detailRes.json();
-              var d = (detailJson && (detailJson.data || detailJson.courseDetail || detailJson)) || {};
+          // Extract Course Details from Angular scope and modal controller
+          var detailsMap = {};
+          try {
+            var el = document.querySelector('[ng-controller="studentMyCourse"]') || document.body;
+            var ctrlScope = (typeof angular !== 'undefined' && angular.element) ? angular.element(el).scope() : null;
 
-              return {
-                courseCode: course.courseCode,
-                courseTitle: cleanHtmlText(d.courseTitle || d.title || course.courseTitle),
-                credits: (d.credits || d.credit || '4').toString(),
-                slot: (d.slot || 'N/A').toString(),
-                instructors: cleanHtmlText(d.instructors || d.instructor || course.instructor),
-                tutors: cleanHtmlText(d.tutors || d.tutor || ''),
-                teachingAssistants: cleanHtmlText(d.teachingAssistants || d.ta || ''),
-                prerequisites: cleanHtmlText(d.prerequisites || ''),
-                otherPrerequisites: cleanHtmlText(d.otherPrerequisites || ''),
-                learningObjectives: parseHtmlList(d.learningObjectives || d.objectives || ''),
-                textBooks: parseHtmlList(d.textBooks || d.textbooks || ''),
-                referenceBooks: parseHtmlList(d.referenceBooks || d.references || ''),
-                content: cleanHtmlText(d.content || d.syllabus || ''),
-                remark: cleanHtmlText(d.remark || '')
-              };
-            } catch (e) {
-              return {
-                courseCode: course.courseCode,
-                courseTitle: course.courseTitle,
-                credits: '4',
-                slot: 'N/A',
-                instructors: course.instructor,
-                tutors: '',
-                teachingAssistants: '',
-                prerequisites: '',
-                otherPrerequisites: '',
-                learningObjectives: [],
-                textBooks: [],
-                referenceBooks: [],
-                content: '',
-                remark: ''
-              };
-            }
-          });
+            courses.forEach(function(course) {
+              var cCode = course.courseCode;
+              var d = null;
+
+              if (ctrlScope && typeof ctrlScope.currentCoursesDetail === 'function') {
+                try {
+                  ctrlScope.currentCoursesDetail(cCode);
+                  if (ctrlScope.currentCourseDetail) {
+                    d = ctrlScope.currentCourseDetail;
+                  }
+                } catch(e) {}
+              }
+
+              if (!d && ctrlScope) {
+                var possibleLists = [ctrlScope.myCourses, ctrlScope.courses, ctrlScope.allCourses, ctrlScope.currentCourses];
+                for (var li = 0; li < possibleLists.length; li++) {
+                  var list = possibleLists[li];
+                  if (Array.isArray(list)) {
+                    for (var cidx = 0; cidx < list.length; cidx++) {
+                      var item = list[cidx];
+                      if (item && (item["Course Number"] === cCode || item.courseCode === cCode || item.cnum === cCode)) {
+                        d = item;
+                        break;
+                      }
+                    }
+                  }
+                  if (d) break;
+                }
+              }
+
+              if (d) {
+                detailsMap[cCode] = {
+                  courseCode: cCode,
+                  courseTitle: cleanHtmlText(d["Course Title"] || d.courseTitle || course.courseTitle),
+                  credits: (d["Credits"] || d.credits || '4').toString(),
+                  slot: (d["Slot"] || d.slot || 'N/A').toString(),
+                  instructors: cleanHtmlText(d["Instructors"] || d.instructors || course.instructor),
+                  tutors: cleanHtmlText(d["Tutors"] || d.tutors || ''),
+                  teachingAssistants: cleanHtmlText(d["Teaching Assistants"] || d.teachingAssistants || ''),
+                  prerequisites: cleanHtmlText(d["Prerequisites"] || d.prerequisites || ''),
+                  otherPrerequisites: cleanHtmlText(d["Other Prerequisites"] || d.otherPrerequisites || ''),
+                  learningObjectives: parseHtmlList(d["Learning Objectives"] || d.learningObjectives || ''),
+                  textBooks: parseHtmlList(d["Text Books"] || d.textBooks || ''),
+                  referenceBooks: parseHtmlList(d["Reference Books"] || d.referenceBooks || ''),
+                  content: cleanHtmlText(d["Content"] || d.content || ''),
+                  remark: cleanHtmlText(d["Remark"] || d.remark || '')
+                };
+              }
+            });
+          } catch (e) {}
 
           var results = await Promise.all(fetchPromises);
-          var detailResults = await Promise.all(courseDetailPromises);
-
-          var detailsMap = {};
-          detailResults.forEach(function(dt) {
-            if (dt && dt.courseCode) {
-              detailsMap[dt.courseCode] = dt;
-            }
-          });
 
           window.ReactNativeWebView.postMessage(JSON.stringify({
             type: 'ATTENDANCE_SCRAPED',
