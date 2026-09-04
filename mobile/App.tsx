@@ -298,6 +298,8 @@ function AppContent() {
             passedCourses: data.passedCourses,
             failedCourses: data.failedCourses,
             performance: data.performance,
+            photoUrl: data.photoUrl,
+            photoBase64: data.photoBase64,
           };
           setProfileData(profile);
           await CacheService.cacheProfileData(profile);
@@ -336,6 +338,22 @@ function AppContent() {
           if (data.courseDetails) {
             setCourseDetails(data.courseDetails);
             await CacheService.cacheCourseDetails(data.courseDetails);
+          }
+
+          // If attendance scrape found photo and profile didn't have base64, augment profileData
+          if (data.photoBase64 || data.photoUrl) {
+            setProfileData((prev) => {
+              if (prev && !prev.photoBase64 && (data.photoBase64 || data.photoUrl)) {
+                const updated = {
+                  ...prev,
+                  photoBase64: data.photoBase64 || prev.photoBase64,
+                  photoUrl: data.photoUrl || prev.photoUrl
+                };
+                CacheService.cacheProfileData(updated);
+                return updated;
+              }
+              return prev;
+            });
           }
 
           console.log('Sync completed successfully!');

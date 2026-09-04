@@ -171,9 +171,73 @@ export const ScraperService = {
       (function() {
         var done = false;
 
-        function postProfile(d) {
+        async function extractPhoto(d) {
+          var photoUrl = '';
+          var photoBase64 = '';
+
+          // 1. Check DOM image elements
+          var photoEl = document.getElementById('profile_photo') || 
+                        document.querySelector('img.profile-image') || 
+                        document.querySelector('img[alt="avatar"]') ||
+                        document.querySelector('img[alt="profile image"]');
+          if (photoEl && photoEl.src && photoEl.src.indexOf('http') === 0) {
+            photoUrl = photoEl.src;
+          }
+
+          // 2. Check CouchDB document attachments if photoUrl not found
+          if (!photoUrl && d && d._id && d._attachments) {
+            var attachKeys = Object.keys(d._attachments);
+            var picKey = attachKeys.find(function(k) {
+              var lk = k.toLowerCase();
+              return lk.includes('profilepic') || lk.includes('.jpg') || lk.includes('.png') || lk.includes('.jpeg');
+            });
+            if (picKey) {
+              photoUrl = 'https://shiksha.iiserb.ac.in/students/profilepic/' + d._id + '/' + picKey;
+            }
+          }
+
+          // 3. Check Angular scope for profilePicture
+          if (!photoUrl && d && d.profilePicture) {
+            photoUrl = d.profilePicture;
+          }
+
+          // 4. Try to convert to Base64 via Canvas
+          if (photoEl && photoEl.complete && photoEl.naturalWidth > 0) {
+            try {
+              var canvas = document.createElement('canvas');
+              canvas.width = photoEl.naturalWidth;
+              canvas.height = photoEl.naturalHeight;
+              var ctx = canvas.getContext('2d');
+              ctx.drawImage(photoEl, 0, 0);
+              photoBase64 = canvas.toDataURL('image/jpeg', 0.85);
+            } catch(e) {}
+          }
+
+          // 5. If Canvas failed or not loaded, fetch inside WebView session
+          if (!photoBase64 && photoUrl) {
+            try {
+              var res = await fetch(photoUrl);
+              var blob = await res.blob();
+              photoBase64 = await new Promise(function(resolve) {
+                var reader = new FileReader();
+                reader.onloadend = function() { resolve(reader.result || ''); };
+                reader.onerror = function() { resolve(''); };
+                reader.readAsDataURL(blob);
+              });
+            } catch(e2) {}
+          }
+
+          return { photoUrl: photoUrl, photoBase64: photoBase64 };
+        }
+
+        async function postProfile(d) {
           if (done) return;
           done = true;
+          var photoInfo = { photoUrl: '', photoBase64: '' };
+          try {
+            photoInfo = await extractPhoto(d);
+          } catch(e) {}
+
           window.ReactNativeWebView.postMessage(JSON.stringify({
             type: 'PROFILE_SCRAPED',
             status: 'success',
@@ -182,7 +246,9 @@ export const ScraperService = {
             dept: (d.acadIISER && d.acadIISER.major) ? d.acadIISER.major.toUpperCase() : '',
             passedCourses: (d.current && d.current.passedCourses) ? d.current.passedCourses : [],
             failedCourses: (d.current && d.current.failedCourses) ? d.current.failedCourses : [],
-            performance: d.performance || []
+            performance: d.performance || [],
+            photoUrl: photoInfo.photoUrl || '',
+            photoBase64: photoInfo.photoBase64 || ''
           }));
         }
 
@@ -577,13 +643,30 @@ export const ScraperService = {
             });
           } catch (e) {}
 
+          var photoUrl = (bodyScope.userInfo && bodyScope.userInfo.profilePicture) ? bodyScope.userInfo.profilePicture : '';
+          var photoBase64 = '';
+          if (photoUrl) {
+            try {
+              var res = await fetch(photoUrl);
+              var blob = await res.blob();
+              photoBase64 = await new Promise(function(resolve) {
+                var reader = new FileReader();
+                reader.onloadend = function() { resolve(reader.result || ''); };
+                reader.onerror = function() { resolve(''); };
+                reader.readAsDataURL(blob);
+              });
+            } catch(e) {}
+          }
+
           var results = await Promise.all(fetchPromises);
 
           window.ReactNativeWebView.postMessage(JSON.stringify({
             type: 'ATTENDANCE_SCRAPED',
             status: 'success',
             items: results,
-            courseDetails: detailsMap
+            courseDetails: detailsMap,
+            photoUrl: photoUrl,
+            photoBase64: photoBase64
           }));
         } catch (e) {
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ERROR', message: 'Attendance scrape failed: ' + e.message }));

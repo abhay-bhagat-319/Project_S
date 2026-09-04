@@ -33,6 +33,8 @@ export interface ProfileData {
     spi: number;
     cpi: number;
   }>;
+  photoUrl?: string;
+  photoBase64?: string;
 }
 
 export interface AttendanceRecord {
