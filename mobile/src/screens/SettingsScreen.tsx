@@ -295,17 +295,25 @@ export default function SettingsScreen({ onLogout, onCredentialsUpdated, onOpenU
         <Text style={styles.logoutText}>Log Out from Application</Text>
       </TouchableOpacity>
 
-      {/* Hidden WebView for verifying updated credentials */}
+      {/* Background WebView for verifying updated credentials */}
       {triggerVerify && (
-        <View style={{ width: 0, height: 0, opacity: 0 }}>
+        <View 
+          style={{ position: 'absolute', bottom: 0, right: 0, width: 1, height: 1, opacity: 0.01 }} 
+          pointerEvents="none"
+        >
           <WebView
             ref={webViewRef}
             source={{ uri: loginUrl }}
             javaScriptEnabled={true}
             domStorageEnabled={true}
+            sharedCookiesEnabled={true}
+            thirdPartyCookiesEnabled={true}
+            mixedContentMode="always"
+            setSupportMultipleWindows={false}
+            originWhitelist={['*']}
             onMessage={handleWebViewMessage}
             onNavigationStateChange={handleNavigationStateChange}
-            injectedJavaScript={ScraperService.getLoginInjectionScript(username, password)}
+            injectedJavaScript={ScraperService.getLoginInjectionScript(username.trim(), password.trim())}
             userAgent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36"
           />
         </View>

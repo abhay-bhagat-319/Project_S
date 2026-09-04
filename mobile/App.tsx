@@ -525,7 +525,10 @@ function AppContent() {
 
       {/* Background WebView for syncing data */}
       {syncActive && (
-        <View style={{ position: 'absolute', left: -9999, top: -9999, width: 390, height: 844 }}>
+        <View 
+          style={{ position: 'absolute', bottom: 0, right: 0, width: 1, height: 1, opacity: 0.01 }} 
+          pointerEvents="none"
+        >
           <WebView
             ref={syncWebViewRef}
             source={{ uri: syncUrl }}
@@ -533,12 +536,14 @@ function AppContent() {
             domStorageEnabled={true}
             sharedCookiesEnabled={true}
             thirdPartyCookiesEnabled={true}
+            mixedContentMode="always"
+            setSupportMultipleWindows={false}
             originWhitelist={['*']}
             onMessage={handleSyncMessage}
             onNavigationStateChange={handleSyncNavigationStateChange}
             onLoadEnd={handleSyncLoadEnd}
             injectedJavaScriptBeforeContentLoaded={ScraperService.getEarlyInterceptScript()}
-            userAgent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            userAgent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36"
           />
         </View>
       )}
