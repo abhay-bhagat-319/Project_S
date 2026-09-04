@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, Platform, Animated } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { ScraperService } from '../services/ScraperService';
 
@@ -13,16 +14,25 @@ interface PortalWebviewScreenProps {
 
 const DEFAULT_URL = 'https://shiksha.iiserb.ac.in/secure/studenthome';
 
+// Mobile User Agent to guarantee mobile responsiveness from server
+const MOBILE_USER_AGENT = Platform.select({
+  ios: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+  android: 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36',
+  default: 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36',
+});
+
 export default function PortalWebviewScreen({
   credentials,
   targetUrl,
   onClearTargetUrl,
 }: PortalWebviewScreenProps) {
+  const insets = useSafeAreaInsets();
   const webViewRef = useRef<WebView>(null);
   const [currentUrl, setCurrentUrl] = useState<string>(targetUrl || DEFAULT_URL);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [pageTitle, setPageTitle] = useState('Shiksha Portal');
 
   useEffect(() => {
@@ -54,7 +64,8 @@ export default function PortalWebviewScreen({
 
   const handleLoadEnd = () => {
     setLoading(false);
-    // Inject mobile-responsive CSS cleanup
+    setProgress(1);
+    // Inject mobile-responsive CSS and viewport enforcement
     webViewRef.current?.injectJavaScript(ScraperService.getCssInjectionScript());
   };
 
@@ -76,6 +87,11 @@ export default function PortalWebviewScreen({
 
   const goHome = () => {
     webViewRef.current?.injectJavaScript(`window.location.href = "${DEFAULT_URL}"; true;`);
+  };
+
+  const optimizeView = () => {
+    // Re-trigger layout optimization and viewport reset
+    webViewRef.current?.injectJavaScript(ScraperService.getCssInjectionScript());
   };
 
   return (
@@ -124,26 +140,53 @@ export default function PortalWebviewScreen({
             </Text>
           </View>
 
-          {loading && (
-            <View style={styles.spinnerWrapper}>
-              <ActivityIndicator size="small" color={Theme.colors.primary} />
-            </View>
-          )}
+          <TouchableOpacity 
+            style={[styles.navBtn, { marginRight: 0 }]} 
+            onPress={optimizeView} 
+            activeOpacity={0.7}
+            accessibilityLabel="Optimize View"
+          >
+            <Ionicons name="phone-portrait-outline" size={16} color={Theme.colors.primary} />
+          </TouchableOpacity>
         </View>
+
+        {/* Loading Progress Bar */}
+        {loading && progress < 1 && (
+          <View style={styles.progressBarTrack}>
+            <View style={[styles.progressBarFill, { width: `${Math.max(15, progress * 100)}%` }]} />
+          </View>
+        )}
       </View>
 
-      {/* Embedded Web View */}
-      <View style={styles.webviewContainer}>
+      {/* Embedded Mobile Responsive Web View */}
+      <View 
+        style={[
+          styles.webviewContainer, 
+          { marginBottom: Theme.layout.navBarHeight + Math.max(16, insets.bottom + Theme.layout.navBarBaseBottom) + 8 }
+        ]}
+      >
         <WebView
           ref={webViewRef}
           source={{ uri: currentUrl }}
           javaScriptEnabled={true}
           domStorageEnabled={true}
+          scalesPageToFit={false}
+          setBuiltInZoomControls={true}
+          setDisplayZoomControls={false}
+          textZoom={100}
+          showsHorizontalScrollIndicator={false}
+          showsVerticalScrollIndicator={true}
+          allowsInlineMediaPlayback={true}
           onNavigationStateChange={handleNavigationStateChange}
-          onLoadStart={() => setLoading(true)}
+          onLoadStart={() => {
+            setLoading(true);
+            setProgress(0.1);
+          }}
+          onLoadProgress={({ nativeEvent }) => setProgress(nativeEvent.progress)}
           onLoadEnd={handleLoadEnd}
-          injectedJavaScriptBeforeContentLoaded={ScraperService.getEarlyInterceptScript()}
-          userAgent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+          injectedJavaScriptBeforeContentLoaded={ScraperService.getEarlyMobileResponsiveScript()}
+          injectedJavaScript={ScraperService.getCssInjectionScript()}
+          userAgent={MOBILE_USER_AGENT}
           style={styles.webview}
         />
       </View>
@@ -188,16 +231,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     marginLeft: 4,
-    marginRight: 4,
+    marginRight: 6,
   },
   urlText: {
     flex: 1,
     fontSize: 11,
     color: Theme.colors.textSecondary,
-    fontFamily: undefined,
   },
-  spinnerWrapper: {
-    marginLeft: 4,
+  progressBarTrack: {
+    height: 2.5,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    width: '100%',
+    marginTop: 6,
+    borderRadius: 1.5,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: Theme.colors.primary,
   },
   webviewContainer: {
     flex: 1,

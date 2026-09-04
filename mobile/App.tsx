@@ -3,6 +3,8 @@ import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, Alert, Sta
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+
 import { Theme } from './src/Theme';
 import { SecureStorageService } from './src/services/SecureStorageService';
 import { CacheService, ProfileData, AttendanceData, CourseDetail } from './src/services/CacheService';
@@ -20,6 +22,15 @@ type AppState = 'INITIALIZING' | 'NEEDS_LOGIN' | 'LOCKED' | 'LOGGED_IN';
 type TabName = 'Profile' | 'Attendance' | 'Courses' | 'Portal' | 'Settings';
 
 export default function App() {
+  return (
+    <SafeAreaProvider>
+      <AppContent />
+    </SafeAreaProvider>
+  );
+}
+
+function AppContent() {
+  const insets = useSafeAreaInsets();
   const [appState, setAppState] = useState<AppState>('INITIALIZING');
   const [activeTab, setActiveTab] = useState<TabName>('Profile');
   
@@ -379,7 +390,7 @@ export default function App() {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="light-content" backgroundColor={Theme.colors.background} />
       
       {/* Top Header */}
@@ -400,7 +411,7 @@ export default function App() {
       </View>
 
       {/* Custom Floating Pill 5-Item Bottom Navigation Bar */}
-      <View style={styles.navBarWrapper}>
+      <View style={[styles.navBarWrapper, { bottom: Math.max(16, insets.bottom + Theme.layout.navBarBaseBottom) }]}>
         <View style={styles.navBar}>
           
           <TouchableOpacity 
@@ -491,7 +502,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Theme.colors.background,
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   initializingContainer: {
     flex: 1,

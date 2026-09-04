@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, Alert } from 'react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 
 interface LockScreenProps {
@@ -9,6 +10,7 @@ interface LockScreenProps {
 }
 
 export default function LockScreen({ onUnlock }: LockScreenProps) {
+  const insets = useSafeAreaInsets();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [hasBiometrics, setHasBiometrics] = useState(false);
 
@@ -49,7 +51,15 @@ export default function LockScreen({ onUnlock }: LockScreenProps) {
   };
 
   return (
-    <View style={styles.container}>
+    <View 
+      style={[
+        styles.container, 
+        { 
+          paddingTop: Math.max(40, insets.top + 30),
+          paddingBottom: Math.max(40, insets.bottom + 30) 
+        }
+      ]}
+    >
       <View style={styles.logoContainer}>
         <View style={styles.iconCircle}>
           <Ionicons name="school" size={54} color={Theme.colors.primary} />

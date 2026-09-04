@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, Switch, TextInput, TouchableOpacity, ActivityIndicator, Alert, ScrollView } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { SecureStorageService } from '../services/SecureStorageService';
 import { CacheService } from '../services/CacheService';
@@ -13,6 +14,7 @@ interface SettingsScreenProps {
 }
 
 export default function SettingsScreen({ onLogout, onCredentialsUpdated }: SettingsScreenProps) {
+  const insets = useSafeAreaInsets();
   const [biometricsEnabled, setBiometricsEnabled] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -123,7 +125,13 @@ export default function SettingsScreen({ onLogout, onCredentialsUpdated }: Setti
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+    <ScrollView 
+      style={styles.container} 
+      contentContainerStyle={[
+        styles.scrollContent, 
+        { paddingBottom: Theme.layout.baseScrollBottomPadding + insets.bottom }
+      ]}
+    >
       
       {/* Security Section */}
       <Text style={styles.sectionTitle}>Security Settings</Text>

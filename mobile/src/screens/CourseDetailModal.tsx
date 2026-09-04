@@ -11,6 +11,7 @@ import {
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { CourseDetail } from '../services/CacheService';
 
@@ -27,6 +28,7 @@ export default function CourseDetailModal({
   courseDetail,
   onClose,
 }: CourseDetailModalProps) {
+  const insets = useSafeAreaInsets();
   if (!courseDetail) return null;
 
   return (
@@ -79,7 +81,10 @@ export default function CourseDetailModal({
           {/* Modal Content Scroll Area */}
           <ScrollView
             style={styles.scrollArea}
-            contentContainerStyle={styles.scrollContent}
+            contentContainerStyle={[
+              styles.scrollContent, 
+              { paddingBottom: Math.max(32, insets.bottom + 24) }
+            ]}
             showsVerticalScrollIndicator={true}
             bounces={true}
           >
@@ -217,6 +222,8 @@ const styles = StyleSheet.create({
     backgroundColor: Theme.colors.background,
     borderTopLeftRadius: Theme.radii.card,
     borderTopRightRadius: Theme.radii.card,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
     maxHeight: SCREEN_HEIGHT * 0.85,
     borderTopWidth: 1,
     borderLeftWidth: 1,

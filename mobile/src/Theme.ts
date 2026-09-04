@@ -28,5 +28,11 @@ export const Theme = {
     padding: 20,
     gap: 16,
     gapTight: 8
+  },
+
+  layout: {
+    navBarHeight: 60,
+    navBarBaseBottom: 12,
+    baseScrollBottomPadding: 96,
   }
 };
