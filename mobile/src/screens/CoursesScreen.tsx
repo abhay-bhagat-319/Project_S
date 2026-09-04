@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text, View, FlatList, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { CourseDetail } from '../services/CacheService';
 import { getCourseDetailFor } from '../utils/courseCatalog';
@@ -26,6 +27,7 @@ export default function CoursesScreen({
   onNavigateToTab,
   onOpenSrs,
 }: CoursesScreenProps) {
+  const insets = useSafeAreaInsets();
   const [selectedDetail, setSelectedDetail] = useState<CourseDetail | null>(null);
   const [marksModalCourse, setMarksModalCourse] = useState<Course | null>(null);
 
@@ -141,7 +143,10 @@ export default function CoursesScreen({
             </Text>
           </View>
         }
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[
+          styles.listContent, 
+          { paddingBottom: Theme.layout.baseScrollBottomPadding + insets.bottom }
+        ]}
       />
 
       {/* Course Details Modal */}

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { StyleSheet, Text, View, Image, ScrollView, TouchableOpacity, Modal, FlatList, Dimensions } from 'react-native';
 import Svg, { Line, Circle, Polyline, Text as SvgText, Rect, Path, Defs, LinearGradient, Stop, G } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { ProfileData } from '../services/CacheService';
 
@@ -10,6 +11,7 @@ interface DashboardScreenProps {
 }
 
 export default function DashboardScreen({ profileData }: DashboardScreenProps) {
+  const insets = useSafeAreaInsets();
   const [modalVisible, setModalVisible] = useState(false);
   const [modalType, setModalType] = useState<'passed' | 'failed'>('passed');
 
@@ -71,7 +73,13 @@ export default function DashboardScreen({ profileData }: DashboardScreenProps) {
   const cpiPolylineString = pointsCPI.map(p => `${p.x},${p.y}`).join(' ');
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+    <ScrollView 
+      style={styles.container} 
+      contentContainerStyle={[
+        styles.scrollContent, 
+        { paddingBottom: Theme.layout.baseScrollBottomPadding + insets.bottom }
+      ]}
+    >
       
       {/* Profile Header Card */}
       <View style={styles.profileCard}>
@@ -254,15 +262,22 @@ export default function DashboardScreen({ profileData }: DashboardScreenProps) {
         </View>
       </View>
 
-      {/* Courses List Modal */}
+      {/* Academic Courses Details Modal */}
       <Modal
+        visible={modalVisible}
         animationType="slide"
         transparent={true}
-        visible={modalVisible}
         onRequestClose={() => setModalVisible(false)}
+        statusBarTranslucent={true}
       >
         <View style={styles.modalBackdrop}>
+          <TouchableOpacity 
+            style={styles.modalDismiss} 
+            activeOpacity={1} 
+            onPress={() => setModalVisible(false)} 
+          />
           <View style={styles.modalContent}>
+            <View style={styles.sheetHandle} />
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
                 {modalType === 'passed' ? 'Passed Courses' : 'Failed Courses'}
@@ -288,7 +303,7 @@ export default function DashboardScreen({ profileData }: DashboardScreenProps) {
               ListEmptyComponent={
                 <Text style={styles.emptyText}>No courses in this category.</Text>
               }
-              contentContainerStyle={styles.listContent}
+              contentContainerStyle={[styles.listContent, { paddingBottom: Math.max(24, insets.bottom + 16) }]}
             />
           </View>
         </View>
@@ -450,13 +465,28 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.65)',
     justifyContent: 'flex-end',
   },
+  modalDismiss: {
+    flex: 1,
+  },
+  sheetHandle: {
+    width: 44,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: Theme.colors.border,
+    alignSelf: 'center',
+    marginBottom: 14,
+  },
   modalContent: {
+    width: '100%',
     backgroundColor: Theme.colors.surface,
     borderTopLeftRadius: Theme.radii.card,
     borderTopRightRadius: Theme.radii.card,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
     maxHeight: '60%',
     minHeight: '40%',
-    padding: Theme.spacing.padding,
+    paddingHorizontal: Theme.spacing.padding,
+    paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: Theme.colors.border,
   },

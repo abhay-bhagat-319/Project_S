@@ -4,6 +4,7 @@ import {
   TouchableOpacity, Modal, SafeAreaView, StatusBar,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { AttendanceItem, AttendanceRecord, AttendanceData } from '../services/CacheService';
 import { calculateAttendance } from '../utils/AttendanceCalc';
@@ -18,6 +19,7 @@ interface AttendanceScreenProps {
 type Filter = 'ALL' | 'PRESENT' | 'ABSENT';
 
 export default function AttendanceScreen({ attendanceData, onRefresh, refreshing, isOffline }: AttendanceScreenProps) {
+  const insets = useSafeAreaInsets();
   const [selectedCourse, setSelectedCourse] = useState<AttendanceItem | null>(null);
   const [filter, setFilter] = useState<Filter>('ALL');
 
@@ -230,7 +232,10 @@ export default function AttendanceScreen({ attendanceData, onRefresh, refreshing
         }
         ListEmptyComponent={
           <ScrollView
-            contentContainerStyle={styles.emptyContainer}
+            contentContainerStyle={[
+              styles.emptyContainer, 
+              { paddingBottom: Theme.layout.baseScrollBottomPadding + insets.bottom }
+            ]}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           >
             <Ionicons name="calendar-outline" size={54} color={Theme.colors.textSecondary} />
@@ -238,7 +243,10 @@ export default function AttendanceScreen({ attendanceData, onRefresh, refreshing
             <Text style={styles.emptySub}>Swipe down to sync portal data.</Text>
           </ScrollView>
         }
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[
+          styles.listContent, 
+          { paddingBottom: Theme.layout.baseScrollBottomPadding + insets.bottom }
+        ]}
       />
 
       {/* Date-wise Detailed Modal */}
@@ -247,6 +255,7 @@ export default function AttendanceScreen({ attendanceData, onRefresh, refreshing
         animationType="slide"
         transparent
         onRequestClose={() => setSelectedCourse(null)}
+        statusBarTranslucent={true}
       >
         <View style={styles.modalOverlay}>
           <TouchableOpacity
@@ -254,7 +263,7 @@ export default function AttendanceScreen({ attendanceData, onRefresh, refreshing
             activeOpacity={1}
             onPress={() => setSelectedCourse(null)}
           />
-          <SafeAreaView style={styles.modalSheet}>
+          <View style={styles.modalSheet}>
             <StatusBar barStyle="light-content" />
 
             {/* Handle */}
@@ -348,7 +357,10 @@ export default function AttendanceScreen({ attendanceData, onRefresh, refreshing
               data={recordsList}
               keyExtractor={(_, index) => index.toString()}
               renderItem={renderRecordItem}
-              contentContainerStyle={styles.recordsListContainer}
+              contentContainerStyle={[
+                styles.recordsListContainer, 
+                { paddingBottom: Math.max(24, insets.bottom + 20) }
+              ]}
               ListEmptyComponent={
                 <View style={styles.noRecordsBox}>
                   <Ionicons name="document-text-outline" size={40} color={Theme.colors.textSecondary} />
@@ -361,7 +373,7 @@ export default function AttendanceScreen({ attendanceData, onRefresh, refreshing
                 </View>
               }
             />
-          </SafeAreaView>
+          </View>
         </View>
       </Modal>
     </View>
@@ -455,8 +467,9 @@ const styles = StyleSheet.create({
   modalSheet: {
     backgroundColor: Theme.colors.surface,
     borderTopLeftRadius: 28, borderTopRightRadius: 28,
+    borderBottomLeftRadius: 0, borderBottomRightRadius: 0,
     maxHeight: '85%', minHeight: '60%',
-    paddingBottom: 20,
+    width: '100%',
   },
   sheetHandle: {
     width: 44, height: 5, borderRadius: 3,

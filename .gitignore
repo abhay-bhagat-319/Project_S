@@ -5,4 +5,5 @@ AGENTS.md
 docs/agents/
 .scratch/
 docs/portal_pages/
+*.code-workspace
 

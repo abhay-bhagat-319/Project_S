@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ActivityIndicator, Alert, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { ScraperService } from '../services/ScraperService';
 import { SecureStorageService } from '../services/SecureStorageService';
@@ -11,6 +12,7 @@ interface LoginScreenProps {
 }
 
 export default function LoginScreen({ onSuccess }: LoginScreenProps) {
+  const insets = useSafeAreaInsets();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -68,7 +70,16 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
     >
-      <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled">
+      <ScrollView 
+        contentContainerStyle={[
+          styles.scrollContainer, 
+          { 
+            paddingTop: Math.max(Theme.spacing.padding, insets.top + 20),
+            paddingBottom: Math.max(Theme.spacing.padding, insets.bottom + 20) 
+          }
+        ]} 
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={styles.header}>
           <View style={styles.iconContainer}>
             <Ionicons name="lock-closed" size={32} color={Theme.colors.primary} />
