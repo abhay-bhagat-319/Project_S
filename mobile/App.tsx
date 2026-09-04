@@ -17,6 +17,8 @@ import CoursesScreen, { Course } from './src/screens/CoursesScreen';
 import AttendanceScreen from './src/screens/AttendanceScreen';
 import PortalWebviewScreen from './src/screens/PortalWebviewScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
+import UpdateModal from './src/screens/UpdateModal';
+import { UpdateService, UpdateInfo } from './src/services/UpdateService';
 
 type AppState = 'INITIALIZING' | 'NEEDS_LOGIN' | 'LOCKED' | 'LOGGED_IN';
 type TabName = 'Profile' | 'Attendance' | 'Courses' | 'Portal' | 'Settings';
@@ -49,6 +51,10 @@ function AppContent() {
   // Portal Navigation Target
   const [portalTargetUrl, setPortalTargetUrl] = useState<string | null>(null);
 
+  // In-App Update State
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [updateModalVisible, setUpdateModalVisible] = useState(false);
+
   // Re-authentication Credentials
   const [credentials, setCredentials] = useState<{ username: string; password: string } | null>(null);
 
@@ -56,7 +62,20 @@ function AppContent() {
 
   useEffect(() => {
     bootstrapApp();
+    checkAppUpdates();
   }, []);
+
+  const checkAppUpdates = async () => {
+    try {
+      const info = await UpdateService.checkForUpdate();
+      if (info.hasUpdate) {
+        setUpdateInfo(info);
+        setUpdateModalVisible(true);
+      }
+    } catch (err) {
+      console.log('Startup update check error:', err);
+    }
+  };
 
   const bootstrapApp = async () => {
     try {
@@ -363,7 +382,11 @@ function AppContent() {
         return (
           <SettingsScreen 
             onLogout={handleLogoutSuccess} 
-            onCredentialsUpdated={bootstrapApp} 
+            onCredentialsUpdated={bootstrapApp}
+            onOpenUpdateModal={(info) => {
+              setUpdateInfo(info);
+              setUpdateModalVisible(true);
+            }}
           />
         );
       default:
@@ -476,6 +499,13 @@ function AppContent() {
 
         </View>
       </View>
+
+      {/* In-App Update Bottom Sheet Modal */}
+      <UpdateModal
+        visible={updateModalVisible}
+        updateInfo={updateInfo}
+        onClose={() => setUpdateModalVisible(false)}
+      />
 
       {/* Background WebView for syncing data */}
       {syncActive && (
