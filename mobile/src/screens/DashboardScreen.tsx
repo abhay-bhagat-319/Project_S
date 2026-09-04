@@ -19,21 +19,22 @@ export default function DashboardScreen({ profileData }: DashboardScreenProps) {
     return (
       <View style={styles.loadingContainer}>
         <Image 
-          source={{ uri: 'https://shiksha.iiserb.ac.in/images/materialize-logo.png' }}
+          source={require('../../assets/icon.png')}
           style={styles.loadingLogo}
-          defaultSource={require('../../assets/icon.png')}
         />
         <Text style={styles.loadingText}>No profile cache found. Swipe down on the attendance screen to sync.</Text>
       </View>
     );
   }
 
-  const { name, roll, dept, passedCourses, failedCourses, performance } = profileData;
+  const { name, roll, dept, passedCourses, failedCourses, performance, photoBase64, photoUrl } = profileData;
 
   const showModal = (type: 'passed' | 'failed') => {
     setModalType(type);
     setModalVisible(true);
   };
+
+  const avatarUri = photoBase64 || photoUrl;
 
   // --- SVG Custom Chart Configuration ---
   const screenWidth = Dimensions.get('window').width - 40; // width padding
@@ -84,11 +85,15 @@ export default function DashboardScreen({ profileData }: DashboardScreenProps) {
       {/* Profile Header Card */}
       <View style={styles.profileCard}>
         <View style={styles.avatarContainer}>
-          <Image 
-            source={{ uri: `https://shiksha.iiserb.ac.in/students/profilepic/04km/profilePic-58696292-${roll}.jpg` }}
-            style={styles.avatar}
-            defaultSource={require('../../assets/icon.png')}
-          />
+          {avatarUri ? (
+            <Image 
+              source={{ uri: avatarUri }}
+              style={styles.avatar}
+              defaultSource={require('../../assets/icon.png')}
+            />
+          ) : (
+            <Ionicons name="person" size={44} color={Theme.colors.primary} />
+          )}
         </View>
         <View style={styles.profileDetails}>
           <Text style={styles.profileName} numberOfLines={1}>{name}</Text>
