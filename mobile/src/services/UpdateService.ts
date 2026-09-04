@@ -1,4 +1,5 @@
 import { Platform, Linking } from 'react-native';
+import Constants from 'expo-constants';
 import * as Application from 'expo-application';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
@@ -22,10 +23,14 @@ export class UpdateService {
   public static RELEASES_WEB_URL = `https://github.com/${UpdateService.GITHUB_OWNER}/${UpdateService.GITHUB_REPO}/releases/latest`;
 
   /**
-   * Retrieves the current installed app version
+   * Retrieves the current app version from app.json / native binary
    */
   public static getCurrentVersion(): string {
-    return Application.nativeApplicationVersion || '1.0.0';
+    return (
+      Constants.expoConfig?.version ||
+      Application.nativeApplicationVersion ||
+      '1.0.0'
+    );
   }
 
   /**
