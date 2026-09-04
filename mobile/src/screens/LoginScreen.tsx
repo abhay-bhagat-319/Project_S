@@ -22,6 +22,8 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
   const webViewRef = useRef<WebView>(null);
   const loginUrl = 'https://shiksha.iiserb.ac.in/login/';
 
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const handleLogin = () => {
     if (!username.trim() || !password.trim()) {
       Alert.alert('Required Fields', 'Please enter both username and password.');
@@ -30,6 +32,14 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
     setLoading(true);
     setLoadingMessage('Initializing connection to portal...');
     setTriggerVerify(true);
+
+    // Timeout safety guard - 20 seconds maximum
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => {
+      setLoading(false);
+      setTriggerVerify(false);
+      Alert.alert('Connection Timeout', 'Portal verification took too long. Please verify your internet connection or LDAP credentials.');
+    }, 20000);
   };
 
   const handleWebViewMessage = (event: any) => {
@@ -37,7 +47,13 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
       const data = JSON.parse(event.nativeEvent.data);
       if (data.type === 'LOGIN_SUBMITTED') {
         setLoadingMessage('Verifying credentials on portal...');
+      } else if (data.type === 'AUTH_FAILED') {
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        setLoading(false);
+        setTriggerVerify(false);
+        Alert.alert('Authentication Failed', data.message || 'Invalid username or password.');
       } else if (data.type === 'ERROR') {
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
         setLoading(false);
         setTriggerVerify(false);
         Alert.alert('Verification Failed', data.message || 'An error occurred during verification.');
@@ -49,19 +65,28 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
 
   const handleNavigationStateChange = async (navState: any) => {
     const { url } = navState;
-    console.log('WebView URL changed to:', url);
+    console.log('Login WebView URL changed to:', url);
 
-    // If navigated to secure home, auth is successful!
-    if (url.includes('/secure/studenthome') || url.includes('/secure/studentMyCourses')) {
+    // If navigated to secure portal area, authentication was successful!
+    if (url && (url.includes('/secure/') || url.includes('/secure'))) {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
       await SecureStorageService.saveCredentials(username.trim(), password.trim());
       setLoading(false);
       setTriggerVerify(false);
       onSuccess(username.trim());
-    } else if (url.includes('/login') && !loading && triggerVerify) {
-      // If we are redirected back to login page during validation, it implies invalid credentials
-      setLoading(false);
-      setTriggerVerify(false);
-      Alert.alert('Authentication Failed', 'Invalid username or password.');
+    } else if (url && url.includes('/login') && triggerVerify) {
+      // Re-inject script in case page reloaded or navigated to login variant
+      webViewRef.current?.injectJavaScript(
+        ScraperService.getLoginInjectionScript(username.trim(), password.trim())
+      );
+    }
+  };
+
+  const handleLoadEnd = () => {
+    if (triggerVerify) {
+      webViewRef.current?.injectJavaScript(
+        ScraperService.getLoginInjectionScript(username.trim(), password.trim())
+      );
     }
   };
 
@@ -140,8 +165,12 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
               source={{ uri: loginUrl }}
               javaScriptEnabled={true}
               domStorageEnabled={true}
+              sharedCookiesEnabled={true}
+              thirdPartyCookiesEnabled={true}
+              originWhitelist={['*']}
               onMessage={handleWebViewMessage}
               onNavigationStateChange={handleNavigationStateChange}
+              onLoadEnd={handleLoadEnd}
               injectedJavaScript={ScraperService.getLoginInjectionScript(username, password)}
               userAgent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36"
             />

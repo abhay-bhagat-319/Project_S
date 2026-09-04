@@ -62,9 +62,23 @@ export default function PortalWebviewScreen({
     }
   };
 
+  const handleMessage = (event: any) => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data);
+      if (data.type === 'LOGIN_SUBMITTED') {
+        console.log('PortalWebview: Auto-login submitted successfully.');
+      }
+    } catch (e) {}
+  };
+
   const handleLoadEnd = () => {
     setLoading(false);
     setProgress(1);
+    if (currentUrl && currentUrl.includes('/login') && credentials) {
+      webViewRef.current?.injectJavaScript(
+        ScraperService.getLoginInjectionScript(credentials.username, credentials.password)
+      );
+    }
     // Inject mobile-responsive CSS and viewport enforcement
     webViewRef.current?.injectJavaScript(ScraperService.getCssInjectionScript());
   };
@@ -170,6 +184,9 @@ export default function PortalWebviewScreen({
           source={{ uri: currentUrl }}
           javaScriptEnabled={true}
           domStorageEnabled={true}
+          sharedCookiesEnabled={true}
+          thirdPartyCookiesEnabled={true}
+          originWhitelist={['*']}
           scalesPageToFit={false}
           setBuiltInZoomControls={true}
           setDisplayZoomControls={false}
@@ -177,6 +194,7 @@ export default function PortalWebviewScreen({
           showsHorizontalScrollIndicator={false}
           showsVerticalScrollIndicator={true}
           allowsInlineMediaPlayback={true}
+          onMessage={handleMessage}
           onNavigationStateChange={handleNavigationStateChange}
           onLoadStart={() => {
             setLoading(true);

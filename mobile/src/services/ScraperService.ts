@@ -8,46 +8,104 @@ export const ScraperService = {
 
     return `
       (function() {
+        function safePost(obj) {
+          try {
+            if (window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === 'function') {
+              window.ReactNativeWebView.postMessage(JSON.stringify(obj));
+            }
+          } catch (e) {}
+        }
+
         try {
           if (!window.location.href.includes('/login')) {
-            return; // Exit if not on login page
+            return;
           }
-          
-          var retries = 50; // Try for up to 5 seconds
+
+          var retries = 150; // Try for up to 15 seconds
           var checkExist = setInterval(function() {
             if (!window.location.href.includes('/login')) {
               clearInterval(checkExist);
               return;
             }
-            
-            var ldapInput = document.getElementById('ldap');
-            var secretInput = document.getElementById('secret');
-            var submitButton = document.querySelector('button[type="submit"]');
+
+            // Multi-selector query for username input
+            var ldapInput = document.getElementById('ldap') ||
+                            document.querySelector('input[name="ldap"]') ||
+                            document.querySelector('input[name="username"]') ||
+                            document.getElementById('username') ||
+                            document.querySelector('input[type="text"]');
+
+            // Multi-selector query for password input
+            var secretInput = document.getElementById('secret') ||
+                              document.querySelector('input[name="secret"]') ||
+                              document.querySelector('input[name="password"]') ||
+                              document.getElementById('password') ||
+                              document.querySelector('input[type="password"]');
+
+            // Multi-selector query for submit action
+            var submitButton = document.querySelector('button[type="submit"]') ||
+                               document.querySelector('input[type="submit"]') ||
+                               document.querySelector('button.btn') ||
+                               document.querySelector('button') ||
+                               document.querySelector('form');
+
+            // Check if page already shows an invalid credentials toast/alert
+            var errorElement = document.querySelector('.toast, .alert, .card-panel.red, #error-message');
+            if (errorElement && errorElement.innerText && errorElement.innerText.trim().length > 0) {
+              var errMsg = errorElement.innerText.trim();
+              if (/invalid|incorrect|failed|wrong/i.test(errMsg)) {
+                clearInterval(checkExist);
+                safePost({ type: 'AUTH_FAILED', message: errMsg });
+                return;
+              }
+            }
 
             if (ldapInput && secretInput && submitButton) {
               clearInterval(checkExist);
-              
+
               ldapInput.value = ${escapedUser};
               secretInput.value = ${escapedPass};
 
-              // Trigger AngularJS binding updates
+              // Native event dispatches
               ldapInput.dispatchEvent(new Event('input', { bubbles: true }));
               ldapInput.dispatchEvent(new Event('change', { bubbles: true }));
               secretInput.dispatchEvent(new Event('input', { bubbles: true }));
               secretInput.dispatchEvent(new Event('change', { bubbles: true }));
 
-              submitButton.click();
-              window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'LOGIN_SUBMITTED' }));
+              // AngularJS 1.x binding updates
+              if (window.angular) {
+                try {
+                  var ngLdap = angular.element(ldapInput);
+                  var ngSecret = angular.element(secretInput);
+                  ngLdap.val(${escapedUser}).triggerHandler('input');
+                  ngLdap.triggerHandler('change');
+                  ngSecret.val(${escapedPass}).triggerHandler('input');
+                  ngSecret.triggerHandler('change');
+                  var scope = ngLdap.scope() || ngSecret.scope();
+                  if (scope && scope.$apply) {
+                    scope.$apply();
+                  }
+                } catch (e) {}
+              }
+
+              // Submit form
+              if (typeof submitButton.click === 'function') {
+                submitButton.click();
+              } else if (typeof submitButton.submit === 'function') {
+                submitButton.submit();
+              }
+
+              safePost({ type: 'LOGIN_SUBMITTED' });
             } else {
               retries--;
               if (retries <= 0) {
                 clearInterval(checkExist);
-                window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ERROR', message: 'Timed out waiting for login elements' }));
+                safePost({ type: 'ERROR', message: 'Timed out waiting for portal login form elements.' });
               }
             }
           }, 100);
         } catch (e) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ERROR', message: e.message }));
+          safePost({ type: 'ERROR', message: e.message });
         }
       })();
       true;

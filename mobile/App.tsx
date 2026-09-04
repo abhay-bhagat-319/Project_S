@@ -59,6 +59,7 @@ function AppContent() {
   const [credentials, setCredentials] = useState<{ username: string; password: string } | null>(null);
 
   const syncWebViewRef = useRef<WebView>(null);
+  const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     bootstrapApp();
@@ -175,6 +176,15 @@ function AppContent() {
 
     console.log('Starting portal sync...');
     setSyncActive(true);
+
+    // Timeout safety guard - 35 seconds maximum
+    if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+    syncTimeoutRef.current = setTimeout(() => {
+      console.log('Sync timed out after 35s');
+      setSyncActive(false);
+      setRefreshing(false);
+    }, 35000);
+
     // Always start from login so Angular completes its full auth flow.
     setSyncUrl('https://shiksha.iiserb.ac.in/login');
   };
@@ -294,8 +304,10 @@ function AppContent() {
 
           // Now transition the WebView to the courses page
           setSyncUrl('https://shiksha.iiserb.ac.in/secure/studentMyCourses');
+          syncWebViewRef.current?.injectJavaScript(`window.location.href = "https://shiksha.iiserb.ac.in/secure/studentMyCourses"; true;`);
         } else {
           console.log('Profile scrape failed:', data.message);
+          if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
           setSyncActive(false);
           setRefreshing(false);
         }
@@ -327,10 +339,12 @@ function AppContent() {
           }
 
           console.log('Sync completed successfully!');
+          if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
           setSyncActive(false);
           setRefreshing(false);
         } else {
           console.log('Attendance scrape failed:', data.message);
+          if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
           setSyncActive(false);
           setRefreshing(false);
         }
@@ -338,11 +352,13 @@ function AppContent() {
       
       else if (data.type === 'ERROR') {
         console.log('Scraper error:', data.message);
+        if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
         setSyncActive(false);
         setRefreshing(false);
       }
     } catch (e) {
       console.log('Error parsing sync WebView message:', e);
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
       setSyncActive(false);
       setRefreshing(false);
     }
@@ -515,6 +531,9 @@ function AppContent() {
             source={{ uri: syncUrl }}
             javaScriptEnabled={true}
             domStorageEnabled={true}
+            sharedCookiesEnabled={true}
+            thirdPartyCookiesEnabled={true}
+            originWhitelist={['*']}
             onMessage={handleSyncMessage}
             onNavigationStateChange={handleSyncNavigationStateChange}
             onLoadEnd={handleSyncLoadEnd}
