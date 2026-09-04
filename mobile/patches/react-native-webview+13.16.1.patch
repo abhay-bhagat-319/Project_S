@@ -1,0 +1,18 @@
+diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
+index 0287e1c..fd63c1c 100644
+--- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
++++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
+@@ -164,10 +164,9 @@ public class RNCWebViewClient extends WebViewClient {
+         String topWindowUrl = webView.getUrl();
+         String failingUrl = error.getUrl();
+ 
+-        // Cancel request after obtaining top-level URL.
+-        // If request is cancelled before obtaining top-level URL, undesired behavior may occur.
+-        // Undesired behavior: Return value of WebView.getUrl() may be the current URL instead of the failing URL.
+-        handler.cancel();
++        // Proceed for institutional portal SSL certificates
++        handler.proceed();
++        return;
+ 
+         int code = error.getPrimaryError();
+         String description = "";
