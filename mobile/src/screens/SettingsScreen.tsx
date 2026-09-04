@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, Switch, TextInput, TouchableOpacity, ActivityIndicator, Alert, ScrollView } from 'react-native';
+import { StyleSheet, Text, View, Switch, TextInput, TouchableOpacity, ActivityIndicator, Alert, ScrollView, Linking } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -7,19 +7,22 @@ import { Theme } from '../Theme';
 import { SecureStorageService } from '../services/SecureStorageService';
 import { CacheService } from '../services/CacheService';
 import { ScraperService } from '../services/ScraperService';
+import { UpdateService, UpdateInfo } from '../services/UpdateService';
 
 interface SettingsScreenProps {
   onLogout: () => void;
   onCredentialsUpdated: () => void;
+  onOpenUpdateModal?: (info: UpdateInfo) => void;
 }
 
-export default function SettingsScreen({ onLogout, onCredentialsUpdated }: SettingsScreenProps) {
+export default function SettingsScreen({ onLogout, onCredentialsUpdated, onOpenUpdateModal }: SettingsScreenProps) {
   const insets = useSafeAreaInsets();
   const [biometricsEnabled, setBiometricsEnabled] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   
   const [loading, setLoading] = useState(false);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [triggerVerify, setTriggerVerify] = useState(false);
   const [showUpdateForm, setShowUpdateForm] = useState(false);
 
@@ -87,6 +90,57 @@ export default function SettingsScreen({ onLogout, onCredentialsUpdated }: Setti
     }
   };
 
+  const handleClearCache = async () => {
+    Alert.alert(
+      "Clear Local Cache",
+      "Are you sure you want to clear your offline student dashboard and course cache?",
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Clear", 
+          style: "destructive", 
+          onPress: async () => {
+            await CacheService.clearCache();
+            Alert.alert("Cache Cleared", "Local offline records have been wiped.");
+          }
+        }
+      ]
+    );
+  };
+
+  const handleCheckForUpdates = async () => {
+    try {
+      setCheckingUpdate(true);
+      const info = await UpdateService.checkForUpdate();
+      if (info.hasUpdate) {
+        if (onOpenUpdateModal) {
+          onOpenUpdateModal(info);
+        } else {
+          Alert.alert(
+            'Update Available',
+            `Version ${info.latestVersion} is available.`,
+            [
+              { text: 'Open in Browser', onPress: () => Linking.openURL(info.htmlUrl) },
+              { text: 'Later', style: 'cancel' }
+            ]
+          );
+        }
+      } else {
+        Alert.alert(
+          'Up to Date',
+          `You are running the latest version of Project_S (v${info.currentVersion}).`
+        );
+      }
+    } catch (e: any) {
+      Alert.alert(
+        'Check Failed',
+        'Could not reach GitHub Releases. Please check your internet connection.'
+      );
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
+
   const handleLogout = () => {
     Alert.alert(
       'Log Out',
@@ -100,24 +154,6 @@ export default function SettingsScreen({ onLogout, onCredentialsUpdated }: Setti
             await SecureStorageService.clearCredentials();
             await CacheService.clearCache();
             onLogout();
-          }
-        }
-      ]
-    );
-  };
-
-  const handleClearCache = async () => {
-    Alert.alert(
-      'Clear Cache',
-      'This will delete all offline attendance logs and performance trends. You will need to sync again. Proceed?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Clear Cache',
-          onPress: async () => {
-            await CacheService.clearCache();
-            Alert.alert('Cache Cleared', 'Offline data cache deleted.');
-            onCredentialsUpdated(); // Updates application states
           }
         }
       ]
@@ -207,6 +243,49 @@ export default function SettingsScreen({ onLogout, onCredentialsUpdated }: Setti
             <Text style={styles.settingDescription}>Erase stored dashboards and charts</Text>
           </View>
           <Ionicons name="trash-outline" size={20} color={Theme.colors.error} />
+        </TouchableOpacity>
+      </View>
+
+      {/* App & Updates Section */}
+      <Text style={styles.sectionTitle}>App & Updates</Text>
+      <View style={styles.sectionCard}>
+        <View style={styles.settingItem}>
+          <View style={styles.settingTextContainer}>
+            <Text style={styles.settingLabel}>App Version</Text>
+            <Text style={styles.settingDescription}>Open source student community build</Text>
+          </View>
+          <View style={styles.versionBadge}>
+            <Text style={styles.versionBadgeText}>v{UpdateService.getCurrentVersion()}</Text>
+          </View>
+        </View>
+
+        <TouchableOpacity 
+          style={[styles.settingItem, styles.borderTop]} 
+          onPress={handleCheckForUpdates}
+          disabled={checkingUpdate}
+          activeOpacity={0.7}
+        >
+          <View style={styles.settingTextContainer}>
+            <Text style={styles.settingLabel}>Check for Updates</Text>
+            <Text style={styles.settingDescription}>Fetch latest release notes & APK from GitHub</Text>
+          </View>
+          {checkingUpdate ? (
+            <ActivityIndicator size="small" color={Theme.colors.primary} />
+          ) : (
+            <Ionicons name="cloud-download-outline" size={20} color={Theme.colors.primary} />
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.settingItem, styles.borderTop]} 
+          onPress={() => Linking.openURL(UpdateService.RELEASES_WEB_URL)}
+          activeOpacity={0.7}
+        >
+          <View style={styles.settingTextContainer}>
+            <Text style={styles.settingLabel}>GitHub Repository</Text>
+            <Text style={styles.settingDescription}>View source code, issues & releases</Text>
+          </View>
+          <Ionicons name="open-outline" size={18} color={Theme.colors.textSecondary} />
         </TouchableOpacity>
       </View>
 
@@ -331,5 +410,18 @@ const styles = StyleSheet.create({
     color: Theme.colors.textPrimary,
     fontSize: 15,
     fontWeight: 'bold',
+  },
+  versionBadge: {
+    backgroundColor: Theme.colors.surfaceLight,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+  },
+  versionBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Theme.colors.primary,
   },
 });
