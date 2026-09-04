@@ -157,9 +157,12 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
           )}
         </View>
 
-        {/* Hidden WebView for background verification */}
+        {/* Background verification WebView (attached with 1x1 opacity to prevent Chromium timer throttling in release builds) */}
         {triggerVerify && (
-          <View style={{ position: 'absolute', left: -1000, top: -1000, width: 100, height: 100 }}>
+          <View 
+            style={{ position: 'absolute', bottom: 0, right: 0, width: 1, height: 1, opacity: 0.01 }} 
+            pointerEvents="none"
+          >
             <WebView
               ref={webViewRef}
               source={{ uri: loginUrl }}
@@ -167,11 +170,29 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
               domStorageEnabled={true}
               sharedCookiesEnabled={true}
               thirdPartyCookiesEnabled={true}
+              mixedContentMode="always"
+              setSupportMultipleWindows={false}
               originWhitelist={['*']}
               onMessage={handleWebViewMessage}
               onNavigationStateChange={handleNavigationStateChange}
               onLoadEnd={handleLoadEnd}
-              injectedJavaScript={ScraperService.getLoginInjectionScript(username, password)}
+              onError={(e) => {
+                console.warn('Login WebView Error:', e.nativeEvent);
+                if (timeoutRef.current) clearTimeout(timeoutRef.current);
+                setLoading(false);
+                setTriggerVerify(false);
+                Alert.alert('Connection Error', e.nativeEvent.description || 'Unable to connect to portal server.');
+              }}
+              onHttpError={(e) => {
+                console.warn('Login WebView HTTP Error:', e.nativeEvent);
+                if (e.nativeEvent.statusCode >= 500) {
+                  if (timeoutRef.current) clearTimeout(timeoutRef.current);
+                  setLoading(false);
+                  setTriggerVerify(false);
+                  Alert.alert('Portal Server Down', `Shiksha portal returned HTTP ${e.nativeEvent.statusCode}.`);
+                }
+              }}
+              injectedJavaScript={ScraperService.getLoginInjectionScript(username.trim(), password.trim())}
               userAgent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36"
             />
           </View>
