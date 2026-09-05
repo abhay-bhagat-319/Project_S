@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -8,7 +8,7 @@ import {
   ScrollView,
   ActivityIndicator,
   Linking,
-  Platform,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -19,40 +19,79 @@ interface UpdateModalProps {
   visible: boolean;
   updateInfo: UpdateInfo | null;
   onClose: () => void;
+  onStartBackgroundDownload?: (info: UpdateInfo) => void;
+  onSnooze?: (versionTag: string) => void;
+  isBackgroundDownloading?: boolean;
 }
 
 type DownloadStatus = 'IDLE' | 'DOWNLOADING' | 'READY_TO_INSTALL' | 'ERROR';
+type ActiveInfoKey = 'DOWNLOAD_NOW' | 'DOWNLOAD_BG' | 'REMIND_LATER' | 'INSTALL_NOW' | null;
 
-export default function UpdateModal({ visible, updateInfo, onClose }: UpdateModalProps) {
+export default function UpdateModal({
+  visible,
+  updateInfo,
+  onClose,
+  onStartBackgroundDownload,
+  onSnooze,
+  isBackgroundDownloading = false,
+}: UpdateModalProps) {
   const insets = useSafeAreaInsets();
   const [status, setStatus] = useState<DownloadStatus>('IDLE');
   const [progress, setProgress] = useState<number>(0);
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const [isApkCached, setIsApkCached] = useState<boolean>(false);
+  const [activeInfo, setActiveInfo] = useState<ActiveInfoKey>(null);
+
+  useEffect(() => {
+    if (visible && updateInfo) {
+      checkCacheStatus();
+      setActiveInfo(null);
+      setStatus('IDLE');
+      setProgress(0);
+      setErrorMessage('');
+    }
+  }, [visible, updateInfo]);
+
+  const checkCacheStatus = async () => {
+    if (!updateInfo) return;
+    const cached = await UpdateService.isApkCached(
+      updateInfo.latestVersion,
+      updateInfo.apkSizeBytes
+    );
+    setIsApkCached(cached);
+  };
 
   if (!updateInfo) return null;
 
-  const handleStartUpdate = async () => {
-    if (!updateInfo.apkDownloadUrl) {
-      // If no APK attached to release, fallback to GitHub Release page
+  const handleForegroundDownloadOrInstall = async () => {
+    if (!updateInfo.apkDownloadUrl && !isApkCached) {
       await Linking.openURL(updateInfo.htmlUrl);
       onClose();
       return;
     }
 
     try {
+      if (isApkCached) {
+        await UpdateService.installCachedApk(updateInfo.latestVersion);
+        onClose();
+        return;
+      }
+
       setStatus('DOWNLOADING');
       setProgress(0);
       setErrorMessage('');
 
       await UpdateService.downloadAndInstall(
-        updateInfo.apkDownloadUrl,
+        updateInfo.apkDownloadUrl!,
         updateInfo.latestVersion,
+        updateInfo.apkSizeBytes,
         (fraction) => {
           setProgress(fraction);
         }
       );
 
       setStatus('READY_TO_INSTALL');
+      setIsApkCached(true);
     } catch (err: any) {
       console.error('[UpdateModal] Update failed:', err);
       setStatus('ERROR');
@@ -60,12 +99,59 @@ export default function UpdateModal({ visible, updateInfo, onClose }: UpdateModa
     }
   };
 
+  const handleBackgroundDownload = () => {
+    if (onStartBackgroundDownload) {
+      onStartBackgroundDownload(updateInfo);
+    }
+    onClose();
+  };
+
+  const handleRemindLater = async () => {
+    await UpdateService.snoozeUpdate(updateInfo.latestVersion);
+    if (onSnooze) {
+      onSnooze(updateInfo.latestVersion);
+    }
+    onClose();
+    Alert.alert(
+      'Update Snoozed',
+      'You will not be reminded for 24 hours. You can update anytime from the Settings menu.',
+      [{ text: 'OK' }]
+    );
+  };
+
   const handleOpenBrowser = async () => {
     await Linking.openURL(updateInfo.htmlUrl);
     onClose();
   };
 
+  const toggleInfo = (key: ActiveInfoKey) => {
+    setActiveInfo((prev) => (prev === key ? null : key));
+  };
+
   const isDownloading = status === 'DOWNLOADING';
+
+  const infoDescriptions: Record<string, { title: string; desc: string; icon: any }> = {
+    DOWNLOAD_NOW: {
+      title: 'Download Now',
+      desc: 'Downloads the complete package actively on this screen and launches the Android Package Installer immediately.',
+      icon: 'download-outline',
+    },
+    INSTALL_NOW: {
+      title: 'Install Now',
+      desc: 'The update package is already verified and saved on your phone. Opens the installer instantly without downloading again.',
+      icon: 'checkmark-circle-outline',
+    },
+    DOWNLOAD_BG: {
+      title: 'Download in Background',
+      desc: 'Downloads the update in the background while you continue using the app freely. You will see a live progress bar at the bottom.',
+      icon: 'cloud-download-outline',
+    },
+    REMIND_LATER: {
+      title: 'Remind Me Later',
+      desc: 'Snoozes this update prompt for 24 hours. Note: Some institutional portal scrapers or features might not work properly on older versions.',
+      icon: 'time-outline',
+    },
+  };
 
   return (
     <Modal
@@ -78,7 +164,6 @@ export default function UpdateModal({ visible, updateInfo, onClose }: UpdateModa
       statusBarTranslucent={true}
     >
       <View style={styles.modalOverlay}>
-        {/* Backdrop touch to dismiss (disabled during active download) */}
         <TouchableOpacity
           style={styles.modalDismiss}
           activeOpacity={1}
@@ -87,7 +172,6 @@ export default function UpdateModal({ visible, updateInfo, onClose }: UpdateModa
           }}
         />
 
-        {/* Modal Sheet Container */}
         <View
           style={[
             styles.modalContainer,
@@ -111,12 +195,17 @@ export default function UpdateModal({ visible, updateInfo, onClose }: UpdateModa
                     <Ionicons name="arrow-forward" size={12} color={Theme.colors.textSecondary} style={{ marginHorizontal: 4 }} />
                     <Text style={styles.latestVersionText}>v{updateInfo.latestVersion}</Text>
                   </View>
-                  {updateInfo.apkSizeFormatted && (
+                  {isApkCached ? (
+                    <View style={[styles.sizeBadge, { backgroundColor: 'rgba(34, 197, 94, 0.15)' }]}>
+                      <Ionicons name="checkmark-done" size={12} color="#22c55e" style={{ marginRight: 3 }} />
+                      <Text style={[styles.sizeBadgeText, { color: '#22c55e' }]}>Downloaded</Text>
+                    </View>
+                  ) : updateInfo.apkSizeFormatted ? (
                     <View style={styles.sizeBadge}>
                       <Ionicons name="cube-outline" size={11} color={Theme.colors.lavender} style={{ marginRight: 3 }} />
                       <Text style={styles.sizeBadgeText}>{updateInfo.apkSizeFormatted}</Text>
                     </View>
-                  )}
+                  ) : null}
                 </View>
               </View>
             </View>
@@ -146,7 +235,21 @@ export default function UpdateModal({ visible, updateInfo, onClose }: UpdateModa
             </ScrollView>
           </View>
 
-          {/* Download Progress Bar */}
+          {/* Active Info Tooltip Card */}
+          {activeInfo && infoDescriptions[activeInfo] && (
+            <View style={styles.infoBox}>
+              <View style={styles.infoHeaderRow}>
+                <Ionicons name={infoDescriptions[activeInfo].icon} size={15} color={Theme.colors.primary} style={{ marginRight: 6 }} />
+                <Text style={styles.infoTitle}>{infoDescriptions[activeInfo].title}</Text>
+                <TouchableOpacity onPress={() => setActiveInfo(null)} style={{ marginLeft: 'auto' }}>
+                  <Ionicons name="close-circle" size={16} color={Theme.colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.infoDesc}>{infoDescriptions[activeInfo].desc}</Text>
+            </View>
+          )}
+
+          {/* Active Download Progress Section */}
           {isDownloading && (
             <View style={styles.progressSection}>
               <View style={styles.progressInfoRow}>
@@ -178,50 +281,116 @@ export default function UpdateModal({ visible, updateInfo, onClose }: UpdateModa
             </View>
           )}
 
-          {/* Action Buttons */}
+          {/* 3 Action Buttons Stack */}
           <View style={styles.actionButtonsContainer}>
-            <TouchableOpacity
-              style={[
-                styles.primaryBtn,
-                isDownloading && styles.primaryBtnDisabled
-              ]}
-              onPress={handleStartUpdate}
-              disabled={isDownloading}
-              activeOpacity={0.8}
-            >
-              {isDownloading ? (
-                <Text style={styles.primaryBtnText}>Downloading...</Text>
-              ) : (
-                <>
-                  <Ionicons name="download-outline" size={18} color="#ffffff" style={{ marginRight: 6 }} />
-                  <Text style={styles.primaryBtnText}>
-                    {status === 'ERROR' ? 'Retry Update' : 'Update Now'}
-                  </Text>
-                </>
-              )}
-            </TouchableOpacity>
-
-            <View style={styles.secondaryBtnRow}>
+            {/* Button 1: Download Now / Install Now */}
+            <View style={styles.buttonWithInfoRow}>
               <TouchableOpacity
-                style={styles.secondaryBtn}
-                onPress={handleOpenBrowser}
+                style={[
+                  styles.actionBtn,
+                  isApkCached ? styles.installBtn : styles.primaryBtn,
+                  isDownloading && styles.primaryBtnDisabled
+                ]}
+                onPress={handleForegroundDownloadOrInstall}
                 disabled={isDownloading}
+                activeOpacity={0.8}
+              >
+                {isDownloading ? (
+                  <Text style={styles.primaryBtnText}>Downloading ({Math.round(progress * 100)}%)...</Text>
+                ) : (
+                  <>
+                    <Ionicons
+                      name={isApkCached ? 'shield-checkmark-outline' : 'download-outline'}
+                      size={18}
+                      color="#ffffff"
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text style={styles.primaryBtnText}>
+                      {isApkCached ? 'Install Now' : status === 'ERROR' ? 'Retry Download' : 'Download Now'}
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.infoIconBtn}
+                onPress={() => toggleInfo(isApkCached ? 'INSTALL_NOW' : 'DOWNLOAD_NOW')}
                 activeOpacity={0.7}
               >
-                <Ionicons name="logo-github" size={15} color={Theme.colors.textSecondary} style={{ marginRight: 5 }} />
-                <Text style={styles.secondaryBtnText}>View on GitHub</Text>
+                <Ionicons
+                  name="information-circle-outline"
+                  size={20}
+                  color={activeInfo === (isApkCached ? 'INSTALL_NOW' : 'DOWNLOAD_NOW') ? Theme.colors.primary : Theme.colors.textSecondary}
+                />
               </TouchableOpacity>
+            </View>
 
-              {!isDownloading && (
+            {/* Button 2: Download in Background (Hidden if already cached) */}
+            {!isApkCached && !isDownloading && (
+              <View style={styles.buttonWithInfoRow}>
                 <TouchableOpacity
-                  style={styles.secondaryBtn}
-                  onPress={onClose}
+                  style={[
+                    styles.actionBtn,
+                    styles.secondaryActionBtn,
+                    isBackgroundDownloading && styles.primaryBtnDisabled
+                  ]}
+                  onPress={handleBackgroundDownload}
+                  disabled={isBackgroundDownloading}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="cloud-download-outline" size={17} color={Theme.colors.textPrimary} style={{ marginRight: 6 }} />
+                  <Text style={styles.secondaryActionBtnText}>
+                    {isBackgroundDownloading ? 'Downloading in background...' : 'Download in Background'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.infoIconBtn}
+                  onPress={() => toggleInfo('DOWNLOAD_BG')}
                   activeOpacity={0.7}
                 >
-                  <Text style={styles.secondaryBtnText}>Later</Text>
+                  <Ionicons
+                    name="information-circle-outline"
+                    size={20}
+                    color={activeInfo === 'DOWNLOAD_BG' ? Theme.colors.primary : Theme.colors.textSecondary}
+                  />
                 </TouchableOpacity>
-              )}
-            </View>
+              </View>
+            )}
+
+            {/* Button 3: Remind Me Later */}
+            {!isDownloading && (
+              <View style={styles.buttonWithInfoRow}>
+                <TouchableOpacity
+                  style={[styles.actionBtn, styles.tertiaryActionBtn]}
+                  onPress={handleRemindLater}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="time-outline" size={16} color={Theme.colors.textSecondary} style={{ marginRight: 6 }} />
+                  <Text style={styles.tertiaryActionBtnText}>Remind Me Later</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.infoIconBtn}
+                  onPress={() => toggleInfo('REMIND_LATER')}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name="information-circle-outline"
+                    size={20}
+                    color={activeInfo === 'REMIND_LATER' ? Theme.colors.primary : Theme.colors.textSecondary}
+                  />
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* GitHub Link footer */}
+            <TouchableOpacity
+              style={styles.gitHubLink}
+              onPress={handleOpenBrowser}
+              disabled={isDownloading}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="logo-github" size={14} color={Theme.colors.textSecondary} style={{ marginRight: 5 }} />
+              <Text style={styles.gitHubLinkText}>View Release on GitHub</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </View>
@@ -428,45 +597,105 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#ef4444',
   },
+  infoBox: {
+    backgroundColor: 'rgba(99, 102, 241, 0.08)',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.25)',
+    marginBottom: 12,
+  },
+  infoHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  infoTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Theme.colors.primary,
+  },
+  infoDesc: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: Theme.colors.textPrimary,
+  },
   actionButtonsContainer: {
     marginTop: 4,
+    gap: 8,
   },
-  primaryBtn: {
+  buttonWithInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  actionBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    height: 46,
+    borderRadius: 13,
+  },
+  primaryBtn: {
     backgroundColor: Theme.colors.primary,
-    height: 48,
-    borderRadius: 14,
     shadowColor: Theme.colors.primary,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 4,
   },
+  installBtn: {
+    backgroundColor: '#16a34a', // Green for instant install
+    shadowColor: '#16a34a',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  secondaryActionBtn: {
+    backgroundColor: Theme.colors.surfaceLight,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+  },
+  secondaryActionBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Theme.colors.textPrimary,
+  },
+  tertiaryActionBtn: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+  },
+  tertiaryActionBtnText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: Theme.colors.textSecondary,
+  },
+  infoIconBtn: {
+    width: 40,
+    height: 46,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 4,
+  },
   primaryBtnDisabled: {
     opacity: 0.6,
   },
   primaryBtnText: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     color: '#ffffff',
   },
-  secondaryBtnRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 10,
-    paddingHorizontal: 6,
-  },
-  secondaryBtn: {
+  gitHubLink: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     paddingVertical: 8,
-    paddingHorizontal: 8,
+    marginTop: 2,
   },
-  secondaryBtnText: {
-    fontSize: 13,
+  gitHubLinkText: {
+    fontSize: 12,
     color: Theme.colors.textSecondary,
     fontWeight: '500',
   },
