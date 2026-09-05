@@ -18,6 +18,7 @@ import AttendanceScreen from './src/screens/AttendanceScreen';
 import PortalWebviewScreen from './src/screens/PortalWebviewScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import UpdateModal from './src/screens/UpdateModal';
+import BackgroundDownloadPill from './src/components/BackgroundDownloadPill';
 import { UpdateService, UpdateInfo } from './src/services/UpdateService';
 
 type AppState = 'INITIALIZING' | 'NEEDS_LOGIN' | 'LOCKED' | 'LOGGED_IN';
@@ -54,6 +55,17 @@ function AppContent() {
   // In-App Update State
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [updateModalVisible, setUpdateModalVisible] = useState(false);
+  const [bgDownload, setBgDownload] = useState<{
+    isDownloading: boolean;
+    progress: number;
+    isComplete: boolean;
+    versionTag: string;
+  }>({
+    isDownloading: false,
+    progress: 0,
+    isComplete: false,
+    versionTag: '',
+  });
 
   // Re-authentication Credentials
   const [credentials, setCredentials] = useState<{ username: string; password: string } | null>(null);
@@ -71,10 +83,65 @@ function AppContent() {
       const info = await UpdateService.checkForUpdate();
       if (info.hasUpdate) {
         setUpdateInfo(info);
-        setUpdateModalVisible(true);
+        const isSnoozed = await UpdateService.isUpdateSnoozed(info.latestVersion);
+        if (!isSnoozed) {
+          setUpdateModalVisible(true);
+        }
       }
     } catch (err) {
       console.log('Startup update check error:', err);
+    }
+  };
+
+  const handleStartBackgroundDownload = async (info: UpdateInfo) => {
+    if (!info.apkDownloadUrl) return;
+    setBgDownload({
+      isDownloading: true,
+      progress: 0,
+      isComplete: false,
+      versionTag: info.latestVersion,
+    });
+
+    try {
+      await UpdateService.downloadApk(
+        info.apkDownloadUrl,
+        info.latestVersion,
+        info.apkSizeBytes,
+        (fraction) => {
+          setBgDownload((prev) => ({ ...prev, progress: fraction }));
+        }
+      );
+      setBgDownload((prev) => ({
+        ...prev,
+        isDownloading: false,
+        isComplete: true,
+      }));
+      setUpdateInfo((prev) => (prev ? { ...prev, isCached: true } : prev));
+      Alert.alert(
+        'Update Ready',
+        `Project_S v${info.latestVersion} is downloaded and ready to install.`,
+        [
+          { text: 'Later', style: 'cancel' },
+          {
+            text: 'Install Now',
+            onPress: () => UpdateService.installCachedApk(info.latestVersion),
+          },
+        ]
+      );
+    } catch (err: any) {
+      console.error('[App] Background download failed:', err);
+      setBgDownload((prev) => ({ ...prev, isDownloading: false }));
+      Alert.alert('Download Failed', 'Background download was interrupted. Please retry from Settings.');
+    }
+  };
+
+  const handleInstallCachedFromPill = async () => {
+    if (bgDownload.versionTag) {
+      try {
+        await UpdateService.installCachedApk(bgDownload.versionTag);
+      } catch (e: any) {
+        Alert.alert('Install Failed', e?.message || 'Could not open package installer.');
+      }
     }
   };
 
@@ -524,21 +591,39 @@ function AppContent() {
             onPress={() => setActiveTab('Settings')}
             activeOpacity={0.7}
           >
-            <Ionicons 
-              name={activeTab === 'Settings' ? 'settings' : 'settings-outline'} 
-              size={20} 
-              color={activeTab === 'Settings' ? '#FFFFFF' : Theme.colors.textSecondary} 
-            />
+            <View style={styles.iconContainer}>
+              <Ionicons 
+                name={activeTab === 'Settings' ? 'settings' : 'settings-outline'} 
+                size={20} 
+                color={activeTab === 'Settings' ? '#FFFFFF' : Theme.colors.textSecondary} 
+              />
+              {updateInfo?.hasUpdate && (
+                <View style={styles.badgeDot} />
+              )}
+            </View>
           </TouchableOpacity>
 
         </View>
       </View>
+
+      {/* Background Download Floating Pill */}
+      <BackgroundDownloadPill
+        isDownloading={bgDownload.isDownloading}
+        progress={bgDownload.progress}
+        isComplete={bgDownload.isComplete}
+        versionTag={bgDownload.versionTag}
+        onPressInstall={handleInstallCachedFromPill}
+        onDismiss={() => setBgDownload((prev) => ({ ...prev, isComplete: false }))}
+      />
 
       {/* In-App Update Bottom Sheet Modal */}
       <UpdateModal
         visible={updateModalVisible}
         updateInfo={updateInfo}
         onClose={() => setUpdateModalVisible(false)}
+        onStartBackgroundDownload={handleStartBackgroundDownload}
+        onSnooze={() => {}}
+        isBackgroundDownloading={bgDownload.isDownloading}
       />
 
       {/* Background WebView for syncing data */}
@@ -641,5 +726,21 @@ const styles = StyleSheet.create({
   },
   activeNavItem: {
     backgroundColor: Theme.colors.primary,
+  },
+  iconContainer: {
+    position: 'relative',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  badgeDot: {
+    position: 'absolute',
+    top: -2,
+    right: -4,
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
+    backgroundColor: '#eab308', // Vibrant yellow notification dot
+    borderWidth: 1.5,
+    borderColor: Theme.colors.surface,
   },
 });
