@@ -3,6 +3,7 @@ import Constants from 'expo-constants';
 import * as Application from 'expo-application';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export interface UpdateInfo {
   hasUpdate: boolean;
@@ -14,13 +15,70 @@ export interface UpdateInfo {
   apkDownloadUrl: string | null;
   htmlUrl: string;
   apkSizeFormatted?: string;
+  apkSizeBytes?: number;
+  isCached?: boolean;
 }
+
+const SNOOZE_KEY_PREFIX = 'shiksha_update_snooze_';
+const SNOOZE_DURATION_MS = 24 * 60 * 60 * 1000; // 24 Hours
 
 export class UpdateService {
   private static GITHUB_OWNER = 'abhay-bhagat-319';
   private static GITHUB_REPO = 'Project_S';
   private static RELEASES_API_URL = `https://api.github.com/repos/${UpdateService.GITHUB_OWNER}/${UpdateService.GITHUB_REPO}/releases/latest`;
   public static RELEASES_WEB_URL = `https://github.com/${UpdateService.GITHUB_OWNER}/${UpdateService.GITHUB_REPO}/releases/latest`;
+
+  /**
+   * Retrieves the persistent directory used to store downloaded APKs
+   */
+  public static getUpdatesDirectory(): string {
+    return `${FileSystem.documentDirectory || FileSystem.cacheDirectory}updates/`;
+  }
+
+  /**
+   * Returns the clean version tag without leading 'v'
+   */
+  public static cleanVersion(version: string): string {
+    return version.replace(/^v/i, '').trim();
+  }
+
+  /**
+   * Returns the local file path for a versioned APK
+   */
+  public static getApkPath(versionTag: string): string {
+    const clean = this.cleanVersion(versionTag);
+    return `${this.getUpdatesDirectory()}Project_S-v${clean}.apk`;
+  }
+
+  /**
+   * Checks whether a complete and valid APK file already exists for the given version
+   */
+  public static async isApkCached(versionTag: string, expectedSize?: number): Promise<boolean> {
+    try {
+      const fileUri = this.getApkPath(versionTag);
+      const fileInfo = await FileSystem.getInfoAsync(fileUri);
+      
+      if (!fileInfo.exists || fileInfo.isDirectory || !fileInfo.size) {
+        return false;
+      }
+
+      // If expectedSize is provided, ensure file is at least 90% of expected size (not incomplete)
+      if (expectedSize && expectedSize > 0) {
+        if (fileInfo.size < expectedSize * 0.9) {
+          // File is incomplete / corrupt, remove it
+          await FileSystem.deleteAsync(fileUri, { idempotent: true });
+          return false;
+        }
+      } else if (fileInfo.size < 5 * 1024 * 1024) {
+        // Less than 5MB is definitely not a full release APK
+        return false;
+      }
+
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   /**
    * Retrieves the current app version from app.json / native binary
@@ -37,8 +95,8 @@ export class UpdateService {
    * Compares two semantic version strings (e.g. "1.0.1" > "1.0.0")
    */
   public static isNewerVersion(latestVersion: string, currentVersion: string): boolean {
-    const cleanLatest = latestVersion.replace(/^v/i, '').trim();
-    const cleanCurrent = currentVersion.replace(/^v/i, '').trim();
+    const cleanLatest = this.cleanVersion(latestVersion);
+    const cleanCurrent = this.cleanVersion(currentVersion);
 
     if (!cleanLatest || !cleanCurrent) return false;
     if (cleanLatest === cleanCurrent) return false;
@@ -59,7 +117,7 @@ export class UpdateService {
   }
 
   /**
-   * Checks GitHub Releases API for new published version
+   * Checks GitHub Releases API for new published version and detects if APK is cached
    */
   public static async checkForUpdate(): Promise<UpdateInfo> {
     const currentVersion = this.getCurrentVersion();
@@ -87,11 +145,12 @@ export class UpdateService {
 
       const releaseData = await response.json();
       const tagName = releaseData.tag_name || '';
-      const latestVersion = tagName.replace(/^v/i, '') || currentVersion;
+      const latestVersion = this.cleanVersion(tagName) || currentVersion;
 
       // Locate APK asset if available
       let apkDownloadUrl: string | null = null;
       let apkSizeFormatted: string | undefined = undefined;
+      let apkSizeBytes: number | undefined = undefined;
 
       if (Array.isArray(releaseData.assets)) {
         const apkAsset = releaseData.assets.find((asset: any) => 
@@ -100,6 +159,7 @@ export class UpdateService {
 
         if (apkAsset) {
           apkDownloadUrl = apkAsset.browser_download_url;
+          apkSizeBytes = apkAsset.size;
           if (apkAsset.size) {
             const sizeInMb = (apkAsset.size / (1024 * 1024)).toFixed(1);
             apkSizeFormatted = `${sizeInMb} MB`;
@@ -108,6 +168,7 @@ export class UpdateService {
       }
 
       const hasUpdate = this.isNewerVersion(latestVersion, currentVersion);
+      const isCached = hasUpdate ? await this.isApkCached(latestVersion, apkSizeBytes) : false;
 
       return {
         hasUpdate,
@@ -119,6 +180,8 @@ export class UpdateService {
         apkDownloadUrl,
         htmlUrl: releaseData.html_url || this.RELEASES_WEB_URL,
         apkSizeFormatted,
+        apkSizeBytes,
+        isCached,
       };
     } catch (error) {
       console.warn('[UpdateService] Update check failed:', error);
@@ -136,57 +199,149 @@ export class UpdateService {
   }
 
   /**
-   * Downloads APK from GitHub Releases and triggers Android package installer
+   * Downloads APK to an atomic .tmp file, validates it, and renames it to the versioned filename
    */
-  public static async downloadAndInstall(
+  public static async downloadApk(
     apkUrl: string,
     versionTag: string,
+    expectedSize?: number,
     onProgress?: (fraction: number, totalBytes: number) => void
-  ): Promise<void> {
+  ): Promise<string> {
+    const updateDir = this.getUpdatesDirectory();
+    const dirInfo = await FileSystem.getInfoAsync(updateDir);
+    if (!dirInfo.exists) {
+      await FileSystem.makeDirectoryAsync(updateDir, { intermediates: true });
+    }
+
+    const finalPath = this.getApkPath(versionTag);
+    const tempPath = `${finalPath}.tmp`;
+
+    // Check if already completely cached
+    const alreadyCached = await this.isApkCached(versionTag, expectedSize);
+    if (alreadyCached) {
+      if (onProgress) onProgress(1, expectedSize || 0);
+      return finalPath;
+    }
+
+    // Clean any previous interrupted temp file
+    await FileSystem.deleteAsync(tempPath, { idempotent: true });
+
+    const downloadResumable = FileSystem.createDownloadResumable(
+      apkUrl,
+      tempPath,
+      {},
+      (downloadProgress) => {
+        const total = downloadProgress.totalBytesExpectedToWrite || expectedSize || 1;
+        const progress = downloadProgress.totalBytesWritten / total;
+        if (onProgress) {
+          onProgress(Math.min(1, Math.max(0, progress)), total);
+        }
+      }
+    );
+
+    const downloadResult = await downloadResumable.downloadAsync();
+    if (!downloadResult || !downloadResult.uri) {
+      throw new Error('Download failed to produce a valid file output.');
+    }
+
+    // Validate downloaded file
+    const downloadedInfo = await FileSystem.getInfoAsync(tempPath);
+    if (!downloadedInfo.exists || !downloadedInfo.size || downloadedInfo.size < 1024 * 1024) {
+      await FileSystem.deleteAsync(tempPath, { idempotent: true });
+      throw new Error('Downloaded APK package is corrupted or incomplete.');
+    }
+
+    // Atomically move .tmp to final .apk destination
+    await FileSystem.deleteAsync(finalPath, { idempotent: true });
+    await FileSystem.moveAsync({
+      from: tempPath,
+      to: finalPath,
+    });
+
+    // Clean up older cached APKs to free storage
+    this.cleanOldApks(versionTag).catch(() => {});
+
+    return finalPath;
+  }
+
+  /**
+   * Launches Android Package Installer using the cached APK
+   */
+  public static async installCachedApk(versionTag: string): Promise<void> {
     if (Platform.OS !== 'android') {
-      // Fallback for non-Android platforms
       await Linking.openURL(this.RELEASES_WEB_URL);
       return;
     }
 
+    const finalPath = this.getApkPath(versionTag);
+    const fileInfo = await FileSystem.getInfoAsync(finalPath);
+    if (!fileInfo.exists) {
+      throw new Error('Cached APK file not found. Please download the update again.');
+    }
+
+    const contentUri = await FileSystem.getContentUriAsync(finalPath);
+
+    await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+      data: contentUri,
+      flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
+      type: 'application/vnd.android.package-archive',
+    });
+  }
+
+  /**
+   * Downloads and installs in a single flow (used for foreground download)
+   */
+  public static async downloadAndInstall(
+    apkUrl: string,
+    versionTag: string,
+    expectedSize?: number,
+    onProgress?: (fraction: number, totalBytes: number) => void
+  ): Promise<void> {
+    await this.downloadApk(apkUrl, versionTag, expectedSize, onProgress);
+    await this.installCachedApk(versionTag);
+  }
+
+  /**
+   * Records a 24-hour snooze for a specific release version
+   */
+  public static async snoozeUpdate(versionTag: string): Promise<void> {
+    const clean = this.cleanVersion(versionTag);
+    await AsyncStorage.setItem(`${SNOOZE_KEY_PREFIX}${clean}`, Date.now().toString());
+  }
+
+  /**
+   * Checks if an update version has been snoozed within the last 24 hours
+   */
+  public static async isUpdateSnoozed(versionTag: string): Promise<boolean> {
     try {
-      const updateDir = `${FileSystem.cacheDirectory}updates/`;
-      const dirInfo = await FileSystem.getInfoAsync(updateDir);
-      if (!dirInfo.exists) {
-        await FileSystem.makeDirectoryAsync(updateDir, { intermediates: true });
-      }
+      const clean = this.cleanVersion(versionTag);
+      const val = await AsyncStorage.getItem(`${SNOOZE_KEY_PREFIX}${clean}`);
+      if (!val) return false;
+      const timestamp = parseInt(val, 10);
+      if (isNaN(timestamp)) return false;
+      return Date.now() - timestamp < SNOOZE_DURATION_MS;
+    } catch {
+      return false;
+    }
+  }
 
-      const fileUri = `${updateDir}Project_S_v${versionTag}.apk`;
+  /**
+   * Cleans older cached APK files from previous versions
+   */
+  private static async cleanOldApks(currentVersionTag: string): Promise<void> {
+    try {
+      const updateDir = this.getUpdatesDirectory();
+      const files = await FileSystem.readDirectoryAsync(updateDir);
+      const currentApkName = `Project_S-v${this.cleanVersion(currentVersionTag)}.apk`;
 
-      const downloadResumable = FileSystem.createDownloadResumable(
-        apkUrl,
-        fileUri,
-        {},
-        (downloadProgress) => {
-          const progress = downloadProgress.totalBytesWritten / downloadProgress.totalBytesExpectedToWrite;
-          if (onProgress) {
-            onProgress(Math.min(1, Math.max(0, progress)), downloadProgress.totalBytesExpectedToWrite);
-          }
+      for (const file of files) {
+        if (file.endsWith('.apk') && file !== currentApkName) {
+          await FileSystem.deleteAsync(`${updateDir}${file}`, { idempotent: true });
         }
-      );
-
-      const downloadResult = await downloadResumable.downloadAsync();
-      if (!downloadResult || !downloadResult.uri) {
-        throw new Error('Download failed to produce a valid file output.');
       }
-
-      // Convert to Android Content URI
-      const contentUri = await FileSystem.getContentUriAsync(downloadResult.uri);
-
-      // Fire Android Package Installer View Intent
-      await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-        data: contentUri,
-        flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
-        type: 'application/vnd.android.package-archive',
-      });
-    } catch (error) {
-      console.error('[UpdateService] Failed to download or install update:', error);
-      throw error;
+    } catch (e) {
+      // Non-critical cleanup
     }
   }
 }
+
