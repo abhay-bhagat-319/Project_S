@@ -337,7 +337,7 @@ export default function UpdateModal({
                   disabled={isBackgroundDownloading}
                   activeOpacity={0.8}
                 >
-                  <Ionicons name="cloud-download-outline" size={17} color={Theme.colors.textPrimary} style={{ marginRight: 6 }} />
+                  <Ionicons name="cloud-download-outline" size={17} color={Theme.colors.lavender} style={{ marginRight: 6 }} />
                   <Text style={styles.secondaryActionBtnText}>
                     {isBackgroundDownloading ? 'Downloading in background...' : 'Download in Background'}
                   </Text>
@@ -467,12 +467,12 @@ const styles = StyleSheet.create({
   versionBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Theme.colors.surfaceLight,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: Theme.colors.border,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
   },
   currentVersionText: {
     fontSize: 11,
@@ -502,11 +502,11 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: Theme.colors.surfaceLight,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: Theme.colors.border,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
   },
   releaseNameText: {
     fontSize: 14,
@@ -545,11 +545,11 @@ const styles = StyleSheet.create({
   },
   progressSection: {
     marginBottom: 14,
-    backgroundColor: Theme.colors.surfaceLight,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
     padding: 12,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: Theme.colors.border,
+    borderColor: 'rgba(255, 255, 255, 0.10)',
   },
   progressInfoRow: {
     flexDirection: 'row',
@@ -653,14 +653,14 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   secondaryActionBtn: {
-    backgroundColor: Theme.colors.surfaceLight,
+    backgroundColor: 'rgba(139, 120, 255, 0.12)',
     borderWidth: 1,
-    borderColor: Theme.colors.border,
+    borderColor: 'rgba(139, 120, 255, 0.3)',
   },
   secondaryActionBtnText: {
     fontSize: 14,
     fontWeight: '600',
-    color: Theme.colors.textPrimary,
+    color: Theme.colors.lavender,
   },
   tertiaryActionBtn: {
     backgroundColor: 'transparent',

@@ -168,6 +168,10 @@ export class UpdateService {
       }
 
       const hasUpdate = this.isNewerVersion(latestVersion, currentVersion);
+      if (!hasUpdate) {
+        // Clean up stale APK files since we are already on current/newer version
+        this.cleanOldApks(currentVersion).catch(() => {});
+      }
       const isCached = hasUpdate ? await this.isApkCached(latestVersion, apkSizeBytes) : false;
 
       return {
