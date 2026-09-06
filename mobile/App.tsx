@@ -4,6 +4,7 @@ import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 
 import { Theme } from './src/Theme';
 import { SecureStorageService } from './src/services/SecureStorageService';
@@ -534,6 +535,27 @@ function AppContent() {
         {renderActiveScreen()}
       </View>
 
+      {/* Bottom Black Gradient Scrim (Underneath Navigation Bar) */}
+      <View 
+        style={[
+          styles.bottomGradientWrapper, 
+          { height: insets.bottom + 96 }
+        ]} 
+        pointerEvents="none"
+      >
+        <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
+          <Defs>
+            <SvgLinearGradient id="bottomNavScrim" x1="0%" y1="0%" x2="0%" y2="100%">
+              <Stop offset="0%" stopColor="#000000" stopOpacity="0" />
+              <Stop offset="30%" stopColor="#000000" stopOpacity="0.25" />
+              <Stop offset="65%" stopColor="#000000" stopOpacity="0.70" />
+              <Stop offset="100%" stopColor="#000000" stopOpacity="0.95" />
+            </SvgLinearGradient>
+          </Defs>
+          <Rect width="100%" height="100%" fill="url(#bottomNavScrim)" />
+        </Svg>
+      </View>
+
       {/* Custom Floating Pill 5-Item Bottom Navigation Bar */}
       <View style={[styles.navBarWrapper, { bottom: Math.max(16, insets.bottom + Theme.layout.navBarBaseBottom) }]}>
         <View style={styles.navBar}>
@@ -691,6 +713,13 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
   },
+  bottomGradientWrapper: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    zIndex: 40,
+  },
   navBarWrapper: {
     position: 'absolute',
     bottom: 24,
@@ -699,6 +728,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'transparent',
+    zIndex: 50,
   },
   navBar: {
     flexDirection: 'row',
