@@ -36,6 +36,19 @@ jobs:
       - name: 📦 Install NPM Dependencies
         run: npm ci
 
+      - name: 🏷️ Sync Version from Git Tag
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+          CLEAN_VER="${TAG_NAME#v}"
+          echo "Syncing app version to $CLEAN_VER"
+          npm version "$CLEAN_VER" --no-git-tag-version --allow-same-version
+          node -e "
+            const fs = require('fs');
+            const appJson = JSON.parse(fs.readFileSync('app.json', 'utf8'));
+            appJson.expo.version = '$CLEAN_VER';
+            fs.writeFileSync('app.json', JSON.stringify(appJson, null, 2) + '\n');
+          "
+
       - name: ⚙️ Prebuild Android Project
         run: npx expo prebuild --platform android --clean
 
