@@ -25,13 +25,24 @@ export default function SettingsScreen({ onLogout, onCredentialsUpdated, onOpenU
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [triggerVerify, setTriggerVerify] = useState(false);
   const [showUpdateForm, setShowUpdateForm] = useState(false);
+  const [cacheSize, setCacheSize] = useState<string>('...');
 
   const webViewRef = useRef<WebView>(null);
   const loginUrl = 'https://shiksha.iiserb.ac.in/login/';
 
   useEffect(() => {
     loadSettings();
+    loadCacheSize();
   }, []);
+
+  const loadCacheSize = async () => {
+    try {
+      const stats = await CacheService.getCacheStats();
+      setCacheSize(stats.formatted);
+    } catch {
+      setCacheSize('0 KB');
+    }
+  };
 
   const loadSettings = async () => {
     const isBioEnabled = await SecureStorageService.isBiometricsEnabled();
@@ -93,7 +104,7 @@ export default function SettingsScreen({ onLogout, onCredentialsUpdated, onOpenU
   const handleClearCache = async () => {
     Alert.alert(
       "Clear Local Cache",
-      "Are you sure you want to clear your offline student dashboard and course cache?",
+      `Are you sure you want to clear your offline student dashboard, course cache, and downloaded update packages? (${cacheSize})`,
       [
         { text: "Cancel", style: "cancel" },
         { 
@@ -101,7 +112,8 @@ export default function SettingsScreen({ onLogout, onCredentialsUpdated, onOpenU
           style: "destructive", 
           onPress: async () => {
             await CacheService.clearCache();
-            Alert.alert("Cache Cleared", "Local offline records have been wiped.");
+            await loadCacheSize();
+            Alert.alert("Cache Cleared", "Local offline records and downloaded packages have been wiped.");
           }
         }
       ]
@@ -237,10 +249,15 @@ export default function SettingsScreen({ onLogout, onCredentialsUpdated, onOpenU
       {/* Storage & Cache Section */}
       <Text style={styles.sectionTitle}>System Settings</Text>
       <View style={styles.sectionCard}>
-        <TouchableOpacity style={styles.settingItem} onPress={handleClearCache}>
+        <TouchableOpacity style={styles.settingItem} onPress={handleClearCache} activeOpacity={0.7}>
           <View style={styles.settingTextContainer}>
-            <Text style={styles.settingLabel}>Clear Local Cache</Text>
-            <Text style={styles.settingDescription}>Erase stored dashboards and charts</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={styles.settingLabel}>Clear Local Cache</Text>
+              <View style={styles.sizePill}>
+                <Text style={styles.sizePillText}>{cacheSize}</Text>
+              </View>
+            </View>
+            <Text style={styles.settingDescription}>Erase stored dashboards, charts & downloaded update files</Text>
           </View>
           <Ionicons name="trash-outline" size={20} color={Theme.colors.error} />
         </TouchableOpacity>
@@ -420,16 +437,30 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   versionBadge: {
-    backgroundColor: Theme.colors.surfaceLight,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: Theme.colors.border,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
   },
   versionBadgeText: {
+    color: Theme.colors.lavender,
     fontSize: 12,
     fontWeight: '700',
-    color: Theme.colors.primary,
+  },
+  sizePill: {
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginLeft: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.25)',
+  },
+  sizePillText: {
+    color: '#f87171',
+    fontSize: 11,
+    fontWeight: '700',
   },
 });
