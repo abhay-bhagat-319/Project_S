@@ -168,10 +168,8 @@ export class UpdateService {
       }
 
       const hasUpdate = this.isNewerVersion(latestVersion, currentVersion);
-      if (!hasUpdate) {
-        // Clean up stale APK files since we are already on current/newer version
-        this.cleanOldApks(currentVersion).catch(() => {});
-      }
+      // Automatically prune older/orphaned APKs and temp files
+      this.autoPruneStorage(currentVersion).catch(() => {});
       const isCached = hasUpdate ? await this.isApkCached(latestVersion, apkSizeBytes) : false;
 
       return {
@@ -211,6 +209,9 @@ export class UpdateService {
     expectedSize?: number,
     onProgress?: (fraction: number, totalBytes: number) => void
   ): Promise<string> {
+    // Enforce single-APK retention before downloading new release
+    await this.purgeOtherApks(versionTag);
+
     const updateDir = this.getUpdatesDirectory();
     const dirInfo = await FileSystem.getInfoAsync(updateDir);
     if (!dirInfo.exists) {
@@ -263,7 +264,7 @@ export class UpdateService {
     });
 
     // Clean up older cached APKs to free storage
-    this.cleanOldApks(versionTag).catch(() => {});
+    this.purgeOtherApks(versionTag).catch(() => {});
 
     return finalPath;
   }
@@ -330,21 +331,100 @@ export class UpdateService {
   }
 
   /**
-   * Cleans older cached APK files from previous versions
+   * Automatically prunes all APK files <= current running version,
+   * orphaned .tmp staging files, and ensures no obsolete release files remain.
    */
-  private static async cleanOldApks(currentVersionTag: string): Promise<void> {
+  public static async autoPruneStorage(currentVersionTag?: string): Promise<void> {
+    try {
+      const current = currentVersionTag || this.getCurrentVersion();
+      const updateDir = this.getUpdatesDirectory();
+      const dirInfo = await FileSystem.getInfoAsync(updateDir);
+      if (!dirInfo.exists) return;
+
+      const files = await FileSystem.readDirectoryAsync(updateDir);
+      for (const file of files) {
+        const filePath = `${updateDir}${file}`;
+        
+        // Remove .tmp files immediately
+        if (file.endsWith('.tmp')) {
+          await FileSystem.deleteAsync(filePath, { idempotent: true });
+          continue;
+        }
+
+        // Check version on APK files
+        if (file.endsWith('.apk')) {
+          const match = file.match(/Project_S-v([0-9.]+)\.apk/i);
+          if (match && match[1]) {
+            const fileVersion = match[1];
+            // If the file version is older than or equal to current version, delete it
+            if (!this.isNewerVersion(fileVersion, current)) {
+              await FileSystem.deleteAsync(filePath, { idempotent: true });
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[UpdateService] Auto prune storage warning:', e);
+    }
+  }
+
+  /**
+   * Purges all APK files other than the specified target version (enforces single-APK retention)
+   */
+  public static async purgeOtherApks(keepVersionTag: string): Promise<void> {
     try {
       const updateDir = this.getUpdatesDirectory();
+      const dirInfo = await FileSystem.getInfoAsync(updateDir);
+      if (!dirInfo.exists) return;
+
       const files = await FileSystem.readDirectoryAsync(updateDir);
-      const currentApkName = `Project_S-v${this.cleanVersion(currentVersionTag)}.apk`;
+      const keepFileName = `Project_S-v${this.cleanVersion(keepVersionTag)}.apk`;
 
       for (const file of files) {
-        if (file.endsWith('.apk') && file !== currentApkName) {
+        if (file !== keepFileName) {
           await FileSystem.deleteAsync(`${updateDir}${file}`, { idempotent: true });
         }
       }
     } catch (e) {
-      // Non-critical cleanup
+      // Ignore
+    }
+  }
+
+  /**
+   * Cleans all update files and APKs in storage
+   */
+  public static async clearAllUpdateFiles(): Promise<void> {
+    try {
+      const updateDir = this.getUpdatesDirectory();
+      const dirInfo = await FileSystem.getInfoAsync(updateDir);
+      if (dirInfo.exists) {
+        await FileSystem.deleteAsync(updateDir, { idempotent: true });
+      }
+    } catch (e) {
+      console.warn('[UpdateService] Failed to clear update files:', e);
+    }
+  }
+
+  /**
+   * Computes the total byte size of all update files currently cached on disk
+   */
+  public static async getTotalUpdateStorageBytes(): Promise<number> {
+    try {
+      const updateDir = this.getUpdatesDirectory();
+      const dirInfo = await FileSystem.getInfoAsync(updateDir);
+      if (!dirInfo.exists) return 0;
+
+      const files = await FileSystem.readDirectoryAsync(updateDir);
+      let total = 0;
+      for (const file of files) {
+        const fileInfo = await FileSystem.getInfoAsync(`${updateDir}${file}`);
+        if (fileInfo.exists && !fileInfo.isDirectory && fileInfo.size) {
+          total += fileInfo.size;
+        }
+      }
+      return total;
+    } catch {
+      return 0;
     }
   }
 }

@@ -61,6 +61,15 @@ export interface AttendanceData {
   timestamp: string;
 }
 
+import { UpdateService } from './UpdateService';
+
+export interface CacheStats {
+  totalBytes: number;
+  formatted: string;
+  memoryBytes: number;
+  diskBytes: number;
+}
+
 export const CacheService = {
   /**
    * Cache student profile details & performance trends
@@ -131,6 +140,36 @@ export const CacheService = {
     const now = Date.now();
     const cooldownMs = 24 * 60 * 60 * 1000; // 24 Hours
     return now - lastSync >= cooldownMs;
+  },
+
+  /**
+   * Calculates total cache footprint across AsyncStorage data and FileSystem APK downloads
+   */
+  async getCacheStats(): Promise<CacheStats> {
+    try {
+      const keys = [KEY_PROFILE_DATA, KEY_ATTENDANCE_DATA, KEY_COURSE_DETAILS, KEY_LAST_SYNC_TIME];
+      let memoryBytes = 0;
+      for (const k of keys) {
+        const item = await AsyncStorage.getItem(k);
+        if (item) {
+          memoryBytes += item.length * 2;
+        }
+      }
+
+      const diskBytes = await UpdateService.getTotalUpdateStorageBytes();
+      const totalBytes = memoryBytes + diskBytes;
+
+      let formatted = '0 KB';
+      if (totalBytes > 1024 * 1024) {
+        formatted = `${(totalBytes / (1024 * 1024)).toFixed(1)} MB`;
+      } else if (totalBytes > 0) {
+        formatted = `${Math.max(1, Math.round(totalBytes / 1024))} KB`;
+      }
+
+      return { totalBytes, formatted, memoryBytes, diskBytes };
+    } catch {
+      return { totalBytes: 0, formatted: '0 KB', memoryBytes: 0, diskBytes: 0 };
+    }
   },
 
   /**
