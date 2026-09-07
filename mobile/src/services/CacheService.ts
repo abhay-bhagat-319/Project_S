@@ -173,13 +173,14 @@ export const CacheService = {
   },
 
   /**
-   * Clear all cache on logout
+   * Clear all cache on logout or user reset (wipes AsyncStorage and all update disk files)
    */
   async clearCache(): Promise<void> {
     await AsyncStorage.removeItem(KEY_PROFILE_DATA);
     await AsyncStorage.removeItem(KEY_ATTENDANCE_DATA);
     await AsyncStorage.removeItem(KEY_COURSE_DETAILS);
     await AsyncStorage.removeItem(KEY_LAST_SYNC_TIME);
+    await UpdateService.clearAllUpdateFiles();
   },
 };
 
