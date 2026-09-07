@@ -88,6 +88,8 @@ function AppContent() {
         if (!isSnoozed) {
           setUpdateModalVisible(true);
         }
+      } else {
+        setUpdateInfo(null);
       }
     } catch (err) {
       console.log('Startup update check error:', err);
@@ -485,6 +487,15 @@ function AppContent() {
           <SettingsScreen 
             onLogout={handleLogoutSuccess} 
             onCredentialsUpdated={bootstrapApp}
+            hasUpdate={!!updateInfo?.hasUpdate}
+            updateInfo={updateInfo}
+            onUpdateStatusChecked={(info) => {
+              if (info.hasUpdate) {
+                setUpdateInfo(info);
+              } else {
+                setUpdateInfo(null);
+              }
+            }}
             onOpenUpdateModal={(info) => {
               setUpdateInfo(info);
               setUpdateModalVisible(true);

@@ -13,9 +13,19 @@ interface SettingsScreenProps {
   onLogout: () => void;
   onCredentialsUpdated: () => void;
   onOpenUpdateModal?: (info: UpdateInfo) => void;
+  onUpdateStatusChecked?: (info: UpdateInfo) => void;
+  hasUpdate?: boolean;
+  updateInfo?: UpdateInfo | null;
 }
 
-export default function SettingsScreen({ onLogout, onCredentialsUpdated, onOpenUpdateModal }: SettingsScreenProps) {
+export default function SettingsScreen({
+  onLogout,
+  onCredentialsUpdated,
+  onOpenUpdateModal,
+  onUpdateStatusChecked,
+  hasUpdate = false,
+  updateInfo = null,
+}: SettingsScreenProps) {
   const insets = useSafeAreaInsets();
   const [biometricsEnabled, setBiometricsEnabled] = useState(false);
   const [username, setUsername] = useState('');
@@ -124,6 +134,9 @@ export default function SettingsScreen({ onLogout, onCredentialsUpdated, onOpenU
     try {
       setCheckingUpdate(true);
       const info = await UpdateService.checkForUpdate();
+      if (onUpdateStatusChecked) {
+        onUpdateStatusChecked(info);
+      }
       if (info.hasUpdate) {
         if (onOpenUpdateModal) {
           onOpenUpdateModal(info);
@@ -277,19 +290,41 @@ export default function SettingsScreen({ onLogout, onCredentialsUpdated, onOpenU
         </View>
 
         <TouchableOpacity 
-          style={[styles.settingItem, styles.borderTop]} 
+          style={[
+            styles.settingItem, 
+            styles.borderTop,
+            hasUpdate && styles.highlightedUpdateItem
+          ]} 
           onPress={handleCheckForUpdates}
           disabled={checkingUpdate}
           activeOpacity={0.7}
         >
           <View style={styles.settingTextContainer}>
-            <Text style={styles.settingLabel}>Check for Updates</Text>
-            <Text style={styles.settingDescription}>Fetch latest release notes & APK from GitHub</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={[styles.settingLabel, hasUpdate && styles.highlightedUpdateText]}>
+                Check for Updates
+              </Text>
+              {hasUpdate && (
+                <View style={styles.updateAvailablePill}>
+                  <Ionicons name="sparkles" size={11} color="#fef08a" style={{ marginRight: 3 }} />
+                  <Text style={styles.updateAvailablePillText}>
+                    {updateInfo?.latestVersion ? `v${updateInfo.latestVersion} Ready` : 'Update Ready'}
+                  </Text>
+                </View>
+              )}
+            </View>
+            <Text style={[styles.settingDescription, hasUpdate && { color: Theme.colors.lavender }]}>
+              {hasUpdate ? 'Tap to view details and install the latest update' : 'Fetch latest release notes & APK from GitHub'}
+            </Text>
           </View>
           {checkingUpdate ? (
-            <ActivityIndicator size="small" color={Theme.colors.primary} />
+            <ActivityIndicator size="small" color={hasUpdate ? '#eab308' : Theme.colors.primary} />
           ) : (
-            <Ionicons name="cloud-download-outline" size={20} color={Theme.colors.primary} />
+            <Ionicons 
+              name={hasUpdate ? "arrow-forward-circle" : "cloud-download-outline"} 
+              size={hasUpdate ? 24 : 20} 
+              color={hasUpdate ? "#eab308" : Theme.colors.primary} 
+            />
           )}
         </TouchableOpacity>
 
@@ -460,6 +495,34 @@ const styles = StyleSheet.create({
   },
   sizePillText: {
     color: '#f87171',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  highlightedUpdateItem: {
+    backgroundColor: 'rgba(234, 179, 8, 0.12)',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: 'rgba(234, 179, 8, 0.5)',
+    marginVertical: 4,
+    paddingHorizontal: 14,
+  },
+  highlightedUpdateText: {
+    color: '#fef08a',
+    fontWeight: '700',
+  },
+  updateAvailablePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(234, 179, 8, 0.25)',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginLeft: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(234, 179, 8, 0.4)',
+  },
+  updateAvailablePillText: {
+    color: '#fef08a',
     fontSize: 11,
     fontWeight: '700',
   },
