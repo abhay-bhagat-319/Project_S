@@ -3,15 +3,18 @@ import { StyleSheet, Text, View, FlatList, TouchableOpacity } from 'react-native
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
-import { CourseDetail } from '../services/CacheService';
+import { CourseDetail, CourseSRSStatus } from '../services/CacheService';
 import { getCourseDetailFor } from '../utils/courseCatalog';
 import CourseDetailModal from './CourseDetailModal';
 import CourseMarksModal from './CourseMarksModal';
+import CourseSrsModal, { SrsFormData } from './CourseSrsModal';
+import { Alert } from 'react-native';
 
 export interface Course {
   courseCode: string;
   courseTitle: string;
   instructor: string;
+  srsStatus?: CourseSRSStatus;
 }
 
 interface CoursesScreenProps {
@@ -19,6 +22,7 @@ interface CoursesScreenProps {
   courseDetails?: Record<string, CourseDetail>;
   onNavigateToTab?: (tabName: string) => void;
   onOpenSrs?: (courseCode: string) => void;
+  onSubmitSrs?: (course: Course, data: SrsFormData) => Promise<boolean>;
 }
 
 export default function CoursesScreen({
@@ -26,10 +30,12 @@ export default function CoursesScreen({
   courseDetails = {},
   onNavigateToTab,
   onOpenSrs,
+  onSubmitSrs,
 }: CoursesScreenProps) {
   const insets = useSafeAreaInsets();
   const [selectedDetail, setSelectedDetail] = useState<CourseDetail | null>(null);
   const [marksModalCourse, setMarksModalCourse] = useState<Course | null>(null);
+  const [srsModalCourse, setSrsModalCourse] = useState<Course | null>(null);
 
   // Determine card background color based on index
   const getCardColor = (index: number) => {
@@ -52,8 +58,21 @@ export default function CoursesScreen({
   };
 
   const handleOpenSrs = (course: Course) => {
-    if (onOpenSrs) {
-      onOpenSrs(course.courseCode);
+    const isAvailable = !!(course.srsStatus?.midSemAvailable || course.srsStatus?.endSemAvailable);
+    if (course.srsStatus?.isSubmitted) {
+      Alert.alert(
+        'SRS Already Submitted',
+        `You have already submitted the Student Reaction Survey for ${course.courseCode}.`
+      );
+      return;
+    }
+    if (isAvailable) {
+      setSrsModalCourse(course);
+    } else {
+      Alert.alert(
+        'SRS Unavailable',
+        `Student Reaction Survey submissions are currently closed for ${course.courseCode} (${course.courseTitle}).`
+      );
     }
   };
 
@@ -122,14 +141,50 @@ export default function CoursesScreen({
                   <Text style={styles.actionButtonText}>Marks</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={styles.actionButton}
-                  onPress={() => handleOpenSrs(item)}
-                  activeOpacity={0.75}
-                >
-                  <Ionicons name="thumbs-up-outline" size={15} color={Theme.colors.textDark} />
-                  <Text style={styles.actionButtonText}>SRS</Text>
-                </TouchableOpacity>
+                {/* SRS Action Button */}
+                {(() => {
+                  const isSubmitted = !!item.srsStatus?.isSubmitted;
+                  const isMid = !!item.srsStatus?.midSemAvailable;
+                  const isEnd = !!item.srsStatus?.endSemAvailable;
+
+                  let btnStyle: any = styles.actionButton;
+                  let textStyle: any = styles.actionButtonText;
+                  let iconName: any = "thumbs-up-outline";
+                  let iconColor = Theme.colors.textDark;
+                  let label = "SRS";
+
+                  if (isSubmitted) {
+                    btnStyle = [styles.actionButton, styles.srsButtonSubmitted];
+                    textStyle = styles.srsTextSubmitted;
+                    iconName = "checkmark-circle";
+                    iconColor = Theme.colors.successGreen;
+                    label = "Submitted";
+                  } else if (isMid) {
+                    btnStyle = [styles.actionButton, styles.srsButtonMidActive];
+                    textStyle = styles.srsTextMidActive;
+                    iconName = "thumbs-up";
+                    iconColor = "#D84315";
+                    label = "Mid SRS";
+                  } else if (isEnd) {
+                    btnStyle = [styles.actionButton, styles.srsButtonEndActive];
+                    textStyle = styles.srsTextEndActive;
+                    iconName = "thumbs-up";
+                    iconColor = "#E65100";
+                    label = "End SRS";
+                  }
+
+                  return (
+                    <TouchableOpacity
+                      style={btnStyle}
+                      onPress={() => handleOpenSrs(item)}
+                      activeOpacity={0.75}
+                    >
+                      {(isMid || isEnd) && !isSubmitted && <View style={styles.activePulseDot} />}
+                      <Ionicons name={iconName} size={15} color={iconColor} />
+                      <Text style={textStyle}>{label}</Text>
+                    </TouchableOpacity>
+                  );
+                })()}
               </View>
             </View>
           );
@@ -162,6 +217,19 @@ export default function CoursesScreen({
         courseCode={marksModalCourse?.courseCode || ''}
         courseTitle={marksModalCourse?.courseTitle || ''}
         onClose={() => setMarksModalCourse(null)}
+      />
+
+      {/* Course SRS Survey Modal */}
+      <CourseSrsModal
+        visible={!!srsModalCourse}
+        course={srsModalCourse}
+        onClose={() => setSrsModalCourse(null)}
+        onSubmit={async (data) => {
+          if (onSubmitSrs && srsModalCourse) {
+            return await onSubmitSrs(srsModalCourse, data);
+          }
+          return false;
+        }}
       />
     </View>
   );
@@ -276,6 +344,47 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: Theme.colors.textDark,
+  },
+  srsButtonMidActive: {
+    backgroundColor: '#FFEBE6',
+    borderWidth: 1.5,
+    borderColor: '#FF5722',
+    position: 'relative',
+  },
+  srsButtonEndActive: {
+    backgroundColor: '#FFF3E0',
+    borderWidth: 1.5,
+    borderColor: '#FF9800',
+    position: 'relative',
+  },
+  srsButtonSubmitted: {
+    backgroundColor: '#E8F5E9',
+    borderWidth: 1,
+    borderColor: '#81C784',
+  },
+  srsTextMidActive: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#D84315',
+  },
+  srsTextEndActive: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#E65100',
+  },
+  srsTextSubmitted: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Theme.colors.successGreen,
+  },
+  activePulseDot: {
+    position: 'absolute',
+    top: 4,
+    right: 6,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#FF3D00',
   },
   emptyContainer: {
     alignItems: 'center',

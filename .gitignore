@@ -7,4 +7,5 @@ docs/agents/
 docs/portal_pages/
 *.code-workspace
 .idea/
-
+docs/contributor_setup_and_security.md
+docs/releasing_apks.md

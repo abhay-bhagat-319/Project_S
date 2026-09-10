@@ -15,6 +15,7 @@ import LockScreen from './src/screens/LockScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import DashboardScreen from './src/screens/DashboardScreen';
 import CoursesScreen, { Course } from './src/screens/CoursesScreen';
+import { SrsFormData } from './src/screens/CourseSrsModal';
 import AttendanceScreen from './src/screens/AttendanceScreen';
 import PortalWebviewScreen from './src/screens/PortalWebviewScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
@@ -180,11 +181,18 @@ function AppContent() {
     }
     if (cachedAttendance) {
       setAttendanceData(cachedAttendance);
+      const submittedSrs = await CacheService.getSubmittedSrsCourses();
       // Map attendance item list back to registered course structures
       const mappedCourses = cachedAttendance.items.map(item => ({
         courseCode: item.courseCode,
         courseTitle: item.courseTitle,
-        instructor: item.instructor
+        instructor: item.instructor,
+        srsStatus: {
+          ...item.srsStatus,
+          midSemAvailable: !!item.srsStatus?.midSemAvailable,
+          endSemAvailable: !!item.srsStatus?.endSemAvailable,
+          isSubmitted: submittedSrs.includes(item.courseCode) || !!item.srsStatus?.isSubmitted
+        }
       }));
       setCourses(mappedCourses);
     }
@@ -311,6 +319,104 @@ function AppContent() {
     setActiveTab('Portal');
   };
 
+  const handleSubmitSrs = async (course: Course, formData: SrsFormData): Promise<boolean> => {
+    try {
+      // Build portal payload structure
+      let payload: any = {
+        courseNumber: course.courseCode,
+      };
+
+      if (!formData.isLab) {
+        payload.general = {
+          response: {
+            '1': formData.general.q1 || 'yes',
+            '2': formData.general.q2 || 'yes',
+            '3': formData.general.q3 || 'yes',
+            '4': formData.general.q4 || 'yes',
+            aspects: formData.general.aspects || '',
+            suggestion: formData.general.suggestion || '',
+          },
+        };
+        payload.course = {
+          response: {
+            '1': formData.evaluation.q1 || 'yes',
+            '2': formData.evaluation.q2 || 'yes',
+            '3': formData.evaluation.q3 || 'yes',
+            '4': formData.evaluation.q4 || 'yes',
+            '5': formData.evaluation.q5 || 'yes',
+          },
+        };
+        payload.selfForCourse = {
+          response: {
+            '1': formData.selfEvaluation.q1 || 'yes',
+            '2': formData.selfEvaluation.q2 || 'yes',
+            '3': formData.selfEvaluation.q3 || 'yes',
+            '4': formData.selfEvaluation.q4 || 'yes',
+            '5': formData.selfEvaluation.q5 || 'yes',
+          },
+        };
+      } else {
+        payload.general = {
+          response: {
+            aspects: formData.general.aspects || '',
+            suggestion: formData.general.suggestion || '',
+          },
+        };
+        payload.course = {
+          response: {
+            '1': formData.evaluation.q1 || 'yes',
+            '2': formData.evaluation.q2 || 'yes',
+            '3': formData.evaluation.q3 || 'yes',
+            '4': formData.evaluation.q4 || 'yes',
+          },
+        };
+        payload.selfForCourse = {
+          response: {
+            '1': formData.selfEvaluation.q1 || 'yes',
+            '2': formData.selfEvaluation.q2 || 'yes',
+            '3': formData.selfEvaluation.q3 || 'yes',
+          },
+        };
+      }
+
+      // Inject submission script into sync WebView session
+      const isMidSem = formData.surveyType === 'mid_sem';
+      const script = ScraperService.getSrsSubmissionScript(payload, isMidSem);
+      if (syncWebViewRef.current) {
+        syncWebViewRef.current.injectJavaScript(script);
+      }
+
+      // Mark locally as submitted in Cache & state optimistically
+      await CacheService.markCourseSrsSubmitted(course.courseCode);
+      setCourses((prevCourses) =>
+        prevCourses.map((c) =>
+          c.courseCode === course.courseCode
+            ? {
+                ...c,
+                srsStatus: {
+                  ...c.srsStatus,
+                  isSubmitted: true,
+                  midSemAvailable: false,
+                  endSemAvailable: false,
+                },
+              }
+            : c
+        )
+      );
+
+      Alert.alert(
+        'SRS Submitted 🎉',
+        `Thank you for your feedback! Your Student Reaction Survey for ${course.courseCode} (${course.courseTitle}) has been submitted successfully.`
+      );
+
+      return true;
+    } catch (e: any) {
+      console.error('Error submitting SRS:', e);
+      Alert.alert('Submission Error', 'Failed to submit survey. Please try again.');
+      return false;
+    }
+  };
+
   // Track current sync URL so onLoadEnd knows which page finished loading
   const syncCurrentUrl = useRef<string>('');
 
@@ -396,11 +502,18 @@ function AppContent() {
           await CacheService.cacheAttendanceData(attendance);
           await CacheService.setLastSyncTime(Date.now());
           
+          const submittedSrs = await CacheService.getSubmittedSrsCourses();
           // Map courses
           const mappedCourses = data.items.map((item: any) => ({
             courseCode: item.courseCode,
             courseTitle: item.courseTitle,
-            instructor: item.instructor
+            instructor: item.instructor,
+            srsStatus: {
+              ...item.srsStatus,
+              midSemAvailable: !!item.srsStatus?.midSemAvailable,
+              endSemAvailable: !!item.srsStatus?.endSemAvailable,
+              isSubmitted: submittedSrs.includes(item.courseCode) || !!item.srsStatus?.isSubmitted
+            }
           }));
           setCourses(mappedCourses);
 
@@ -472,6 +585,7 @@ function AppContent() {
             courseDetails={courseDetails}
             onNavigateToTab={(tab) => setActiveTab(tab as TabName)}
             onOpenSrs={handleOpenSrs}
+            onSubmitSrs={handleSubmitSrs}
           />
         );
       case 'Portal':

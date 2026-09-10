@@ -100,8 +100,9 @@ Rather than relying on the website's sidebar navigation, the mobile app should u
         *   **View Attendance**: Click triggers `ng-click="getAttendanceData('COURSE_CODE')"` (icon: `people`).
         *   **View Course Info**: Click triggers `ng-click="currentCoursesDetail('COURSE_CODE')"` (icon: `info_outline`).
         *   **Course Timeline**: Link points to `/secure/facultyTimeline/COURSE_CODE&YEAR-SEM` (icon: `linear_scale`).
-        *   **SRS Feedback Form**: Link points to `/secure/studentSRS/COURSE_CODE` (icon: `thumb_up`).
-    *   **Mobile Optimizations**: Hide the sidebar and float action button wrappers. Keep table headers visible, but hide action icons behind a native bottom sheet.
+        *   **End-Sem SRS Feedback Form**: Link points to `/secure/studentSRS/COURSE_CODE` (icon: `thumb_up`, orange icon).
+        *   **Mid-Sem SRS Feedback Form**: Link points to `/secure/studentMidSemSRS/COURSE_CODE` (icon: `thumb_up`, red icon `icon-red`).
+    *   **Mobile Optimizations**: In-app native 4-step survey modal (`CourseSrsModal`) with confidential questionnaire submission, dynamic lecture/lab course schema detection, and reactive course card button highlighting.
 
 ### C. Document Requisitions Page (`/secure/requisitionForm`)
 *   **File Source**: `Shiksha _ Document_requisitions.html`
