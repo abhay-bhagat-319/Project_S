@@ -379,19 +379,34 @@ export const ScraperService = {
               var courseTitle = cells[1].innerText.trim();
               
               var instructorText = cells[2].innerText.trim();
-              // Clean instructor name from whitespace/newlines
-              var instructor = instructorText.replace(/\\s+/g, ' ');
+          // Clean instructor name from whitespace/newlines
+              var instructor = instructorText.replace(/\s+/g, ' ');
 
               var attendanceBtn = cells[3].querySelector('a[ng-click^="getAttendanceData"]');
               var ngClickAttr = attendanceBtn ? attendanceBtn.getAttribute('ng-click') : '';
-              var argMatch = ngClickAttr.match(/getAttendanceData\\('(.*)'\\)/);
+              var argMatch = ngClickAttr.match(/getAttendanceData\('(.*)'\)/);
               var attendanceArg = argMatch ? argMatch[1] : (courseCode + ',');
+
+              // Parse SRS Buttons (Mid-Sem and End-Sem)
+              var midSemBtn = cells[3].querySelector('a[href*="studentMidSemSRS"]');
+              var midSemHref = midSemBtn ? midSemBtn.getAttribute('href') : '';
+              var midSemAvailable = !!midSemHref && midSemHref.indexOf('studentMidSemSRS') !== -1;
+
+              var endSemBtn = cells[3].querySelector('a[href*="studentSRS"]:not([href*="studentMidSemSRS"])');
+              var endSemHref = endSemBtn ? endSemBtn.getAttribute('href') : '';
+              var endSemAvailable = !!endSemHref && endSemHref.indexOf('studentSRS') !== -1;
 
               return {
                 courseCode: courseCode,
                 courseTitle: courseTitle,
                 instructor: instructor,
-                attendanceArg: attendanceArg
+                attendanceArg: attendanceArg,
+                srsStatus: {
+                  midSemAvailable: midSemAvailable,
+                  midSemUrl: midSemAvailable ? midSemHref : (midSemBtn ? midSemBtn.getAttribute('href') : undefined),
+                  endSemAvailable: endSemAvailable,
+                  endSemUrl: endSemAvailable ? endSemHref : (endSemBtn ? endSemBtn.getAttribute('href') : undefined)
+                }
               };
             }
             return null;
@@ -574,7 +589,8 @@ export const ScraperService = {
                   absent: absent,
                   totalClasses: total,
                   percentage: percentage,
-                  records: records
+                  records: records,
+                  srsStatus: course.srsStatus
                 };
               }
             } catch (err) {}
@@ -582,7 +598,8 @@ export const ScraperService = {
               courseCode: course.courseCode,
               courseTitle: course.courseTitle,
               instructor: course.instructor,
-              present: 0, absent: 0, totalClasses: 0, percentage: 0, records: []
+              present: 0, absent: 0, totalClasses: 0, percentage: 0, records: [],
+              srsStatus: course.srsStatus
             };
           });
 
@@ -1014,6 +1031,63 @@ export const ScraperService = {
             }
           });
         } catch (e) {}
+      })();
+      true;
+    `;
+  },
+
+  /**
+   * Injected script to submit SRS questionnaire directly within the authenticated portal context
+   */
+  getSrsSubmissionScript(payload: any, isMidSem: boolean = true): string {
+    return `
+      (async function() {
+        try {
+          var payload = ${JSON.stringify(payload)};
+          var isMid = ${isMidSem ? 'true' : 'false'};
+          
+          // Attempt AngularJS scope submission if active in DOM
+          var submitted = false;
+          try {
+            var el = document.querySelector('[ng-controller="studentMidSemSRSCtrl"]') || 
+                     document.querySelector('[ng-controller="studentSRSCtrl"]') || 
+                     document.body;
+            var scope = (typeof angular !== 'undefined' && angular.element) ? angular.element(el).scope() : null;
+            if (scope) {
+              scope.studentReviewJson = payload;
+              if (typeof scope.submit === 'function') {
+                scope.submit();
+                submitted = true;
+              }
+            }
+          } catch (eScope) {}
+
+          // Fallback to direct POST fetch to the SRS endpoint
+          if (!submitted) {
+            var url = isMid ? '/secure/studentMidSemSRS/submit' : '/secure/studentSRS/submit';
+            try {
+              await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+              });
+            } catch (fErr) {}
+          }
+
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'SRS_SUBMITTED',
+            status: 'success',
+            courseCode: payload.courseNumber || payload.courseCode,
+            message: 'Survey submitted successfully'
+          }));
+        } catch (err) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'SRS_SUBMITTED',
+            status: 'error',
+            courseCode: payload.courseNumber || payload.courseCode,
+            message: err.message || 'Submission failed'
+          }));
+        }
       })();
       true;
     `;

@@ -15,6 +15,9 @@ export const Theme = {
     
     error: '#FF5E5E',           // Soft alert red
     success: '#4CD964',         // Soft success green
+    successGreen: '#4CD964',    // Success green alias
+    dangerRed: '#FF5E5E',       // Danger red alias
+    accentOrange: '#FF7A00',    // Vibrant SRS accent orange
     border: '#3A3B43'           // Subtle divider borders
   },
   
