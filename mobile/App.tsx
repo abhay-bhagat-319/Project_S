@@ -19,6 +19,7 @@ import { SrsFormData } from './src/screens/CourseSrsModal';
 import AttendanceScreen from './src/screens/AttendanceScreen';
 import PortalWebviewScreen from './src/screens/PortalWebviewScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
+import AcademicSchedulesScreen from './src/screens/AcademicSchedulesScreen';
 import UpdateModal from './src/screens/UpdateModal';
 import BackgroundDownloadPill from './src/components/BackgroundDownloadPill';
 import { UpdateService, UpdateInfo } from './src/services/UpdateService';
@@ -38,6 +39,7 @@ function AppContent() {
   const insets = useSafeAreaInsets();
   const [appState, setAppState] = useState<AppState>('INITIALIZING');
   const [activeTab, setActiveTab] = useState<TabName>('Profile');
+  const [subScreen, setSubScreen] = useState<'academic_schedules' | null>(null);
   
   // Scraped Data
   const [profileData, setProfileData] = useState<ProfileData | null>(null);
@@ -565,10 +567,24 @@ function AppContent() {
     }
   };
 
+  const handleTabPress = (tab: TabName) => {
+    setSubScreen(null);
+    setActiveTab(tab);
+  };
+
   const renderActiveScreen = () => {
     switch (activeTab) {
       case 'Profile':
-        return <DashboardScreen profileData={profileData} />;
+        if (subScreen === 'academic_schedules') {
+          return <AcademicSchedulesScreen onBack={() => setSubScreen(null)} />;
+        }
+        return (
+          <DashboardScreen 
+            profileData={profileData} 
+            onNavigateToTab={(tab) => handleTabPress(tab as TabName)}
+            onOpenAcademicSchedules={() => setSubScreen('academic_schedules')}
+          />
+        );
       case 'Attendance':
         return (
           <AttendanceScreen 
@@ -644,16 +660,18 @@ function AppContent() {
       <StatusBar barStyle="light-content" backgroundColor={Theme.colors.background} />
       
       {/* Top Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>
-          {activeTab === 'Courses' ? 'My Courses' : activeTab === 'Portal' ? 'Shiksha Portal' : activeTab}
-        </Text>
-        {syncActive && (
-          <View style={styles.syncSpinner}>
-            <ActivityIndicator size="small" color={Theme.colors.primary} />
-          </View>
-        )}
-      </View>
+      {!subScreen && (
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>
+            {activeTab === 'Courses' ? 'My Courses' : activeTab === 'Portal' ? 'Shiksha Portal' : activeTab}
+          </Text>
+          {syncActive && (
+            <View style={styles.syncSpinner}>
+              <ActivityIndicator size="small" color={Theme.colors.primary} />
+            </View>
+          )}
+        </View>
+      )}
 
       {/* Screen Content Area */}
       <View style={styles.content}>
@@ -687,7 +705,7 @@ function AppContent() {
           
           <TouchableOpacity 
             style={[styles.navItem, activeTab === 'Profile' && styles.activeNavItem]}
-            onPress={() => setActiveTab('Profile')}
+            onPress={() => handleTabPress('Profile')}
             activeOpacity={0.7}
           >
             <Ionicons 
@@ -699,7 +717,7 @@ function AppContent() {
 
           <TouchableOpacity 
             style={[styles.navItem, activeTab === 'Attendance' && styles.activeNavItem]}
-            onPress={() => setActiveTab('Attendance')}
+            onPress={() => handleTabPress('Attendance')}
             activeOpacity={0.7}
           >
             <Ionicons 
@@ -711,7 +729,7 @@ function AppContent() {
 
           <TouchableOpacity 
             style={[styles.navItem, activeTab === 'Courses' && styles.activeNavItem]}
-            onPress={() => setActiveTab('Courses')}
+            onPress={() => handleTabPress('Courses')}
             activeOpacity={0.7}
           >
             <Ionicons 
@@ -723,7 +741,7 @@ function AppContent() {
 
           <TouchableOpacity 
             style={[styles.navItem, activeTab === 'Portal' && styles.activeNavItem]}
-            onPress={() => setActiveTab('Portal')}
+            onPress={() => handleTabPress('Portal')}
             activeOpacity={0.7}
           >
             <Ionicons 
@@ -735,7 +753,7 @@ function AppContent() {
 
           <TouchableOpacity 
             style={[styles.navItem, activeTab === 'Settings' && styles.activeNavItem]}
-            onPress={() => setActiveTab('Settings')}
+            onPress={() => handleTabPress('Settings')}
             activeOpacity={0.7}
           >
             <View style={styles.iconContainer}>

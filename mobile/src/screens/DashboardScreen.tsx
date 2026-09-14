@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { StyleSheet, Text, View, Image, ScrollView, TouchableOpacity, Modal, FlatList, Dimensions } from 'react-native';
+import { StyleSheet, Text, View, Image, ScrollView, TouchableOpacity, Modal, FlatList, Dimensions, Alert } from 'react-native';
 import Svg, { Line, Circle, Polyline, Text as SvgText, Rect, Path, Defs, LinearGradient, Stop, G } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,9 +8,11 @@ import { ProfileData } from '../services/CacheService';
 
 interface DashboardScreenProps {
   profileData: ProfileData | null;
+  onNavigateToTab?: (tab: 'Profile' | 'Attendance' | 'Courses' | 'Portal' | 'Settings') => void;
+  onOpenAcademicSchedules?: () => void;
 }
 
-export default function DashboardScreen({ profileData }: DashboardScreenProps) {
+export default function DashboardScreen({ profileData, onNavigateToTab, onOpenAcademicSchedules }: DashboardScreenProps) {
   const insets = useSafeAreaInsets();
   const [modalVisible, setModalVisible] = useState(false);
   const [modalType, setModalType] = useState<'passed' | 'failed'>('passed');
@@ -107,6 +109,64 @@ export default function DashboardScreen({ profileData }: DashboardScreenProps) {
             </View>
           </View>
         </View>
+      </View>
+
+      {/* Quick Access Action Bar */}
+      <Text style={styles.sectionTitle}>Quick Access</Text>
+      <View style={styles.quickAccessGrid}>
+        {/* DOAA Schedules */}
+        <TouchableOpacity
+          style={styles.quickActionTile}
+          activeOpacity={0.75}
+          onPress={() => onOpenAcademicSchedules && onOpenAcademicSchedules()}
+        >
+          <View style={[styles.quickActionIconCircle, { backgroundColor: 'rgba(139, 120, 255, 0.18)' }]}>
+            <Ionicons name="calendar" size={22} color={Theme.colors.primary} />
+          </View>
+          <Text style={styles.quickActionLabel} numberOfLines={2}>DOAA Sched</Text>
+        </TouchableOpacity>
+
+        {/* Timetable (Placeholder) */}
+        <TouchableOpacity
+          style={styles.quickActionTile}
+          activeOpacity={0.7}
+          onPress={() => Alert.alert('Timetable', 'My Timetable slot view will be available in the upcoming update!')}
+        >
+          <View style={[styles.quickActionIconCircle, { backgroundColor: 'rgba(255, 255, 255, 0.06)' }]}>
+            <Ionicons name="time-outline" size={22} color={Theme.colors.textSecondary} />
+          </View>
+          <Text style={styles.quickActionLabel} numberOfLines={1}>Timetable</Text>
+          <View style={styles.soonPill}>
+            <Text style={styles.soonPillText}>Soon</Text>
+          </View>
+        </TouchableOpacity>
+
+        {/* Report Cards (Placeholder) */}
+        <TouchableOpacity
+          style={styles.quickActionTile}
+          activeOpacity={0.7}
+          onPress={() => Alert.alert('Report Cards', 'Grade report download and transcript generation will be available in the upcoming update!')}
+        >
+          <View style={[styles.quickActionIconCircle, { backgroundColor: 'rgba(255, 255, 255, 0.06)' }]}>
+            <Ionicons name="newspaper-outline" size={22} color={Theme.colors.textSecondary} />
+          </View>
+          <Text style={styles.quickActionLabel} numberOfLines={1}>Reports</Text>
+          <View style={styles.soonPill}>
+            <Text style={styles.soonPillText}>Soon</Text>
+          </View>
+        </TouchableOpacity>
+
+        {/* Attendance Tab Switcher */}
+        <TouchableOpacity
+          style={styles.quickActionTile}
+          activeOpacity={0.75}
+          onPress={() => onNavigateToTab && onNavigateToTab('Attendance')}
+        >
+          <View style={[styles.quickActionIconCircle, { backgroundColor: 'rgba(208, 240, 228, 0.18)' }]}>
+            <Ionicons name="clipboard" size={22} color={Theme.colors.mint} />
+          </View>
+          <Text style={styles.quickActionLabel} numberOfLines={1}>Attendance</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Academic Progress Badges */}
@@ -403,6 +463,54 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: Theme.colors.textPrimary,
     marginBottom: Theme.spacing.gap,
+  },
+  quickAccessGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: Theme.spacing.gap * 1.5,
+    gap: 8,
+  },
+  quickActionTile: {
+    flex: 1,
+    backgroundColor: Theme.colors.surface,
+    borderRadius: Theme.radii.widget,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    minHeight: 84,
+    position: 'relative',
+  },
+  quickActionIconCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  quickActionLabel: {
+    color: Theme.colors.textPrimary,
+    fontSize: 11,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  soonPill: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 6,
+  },
+  soonPillText: {
+    color: Theme.colors.textSecondary,
+    fontSize: 8,
+    fontWeight: '700',
+    textTransform: 'uppercase',
   },
   badgesRow: {
     flexDirection: 'row',
