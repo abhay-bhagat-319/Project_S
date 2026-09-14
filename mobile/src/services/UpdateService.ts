@@ -1,5 +1,5 @@
 import { Platform, Linking } from 'react-native';
-import Constants from 'expo-constants';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as Application from 'expo-application';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
@@ -81,14 +81,24 @@ export class UpdateService {
   }
 
   /**
-   * Retrieves the current app version from app.json / native binary
+   * Retrieves the current app version dynamically:
+   * - In Expo Go: reads project manifest version from app.json (Constants.expoConfig.version)
+   * - In Native Standalone APK: reads OS Package Manager version (Application.nativeApplicationVersion)
    */
   public static getCurrentVersion(): string {
-    return (
-      Constants.expoConfig?.version ||
-      Application.nativeApplicationVersion ||
-      '1.0.0'
-    );
+    const isExpoGo =
+      Constants.appOwnership === 'expo' ||
+      Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+
+    if (isExpoGo) {
+      return Constants.expoConfig?.version || '1.0.0';
+    }
+
+    if (Application.nativeApplicationVersion) {
+      return Application.nativeApplicationVersion;
+    }
+
+    return Constants.expoConfig?.version || '1.0.0';
   }
 
   /**
