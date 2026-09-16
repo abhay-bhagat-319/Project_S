@@ -379,8 +379,8 @@ export const ScraperService = {
               var courseTitle = cells[1].innerText.trim();
               
               var instructorText = cells[2].innerText.trim();
-          // Clean instructor name from whitespace/newlines
-              var instructor = instructorText.replace(/\s+/g, ' ');
+              // Clean instructor name from whitespace/newlines
+              var instructor = instructorText.replace(/\\s+/g, ' ');
 
               var attendanceBtn = cells[3].querySelector('a[ng-click^="getAttendanceData"]');
               var ngClickAttr = attendanceBtn ? attendanceBtn.getAttribute('ng-click') : '';
