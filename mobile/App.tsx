@@ -6,6 +6,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 
+import PagerView from 'react-native-pager-view';
+
 import { Theme } from './src/Theme';
 import { SecureStorageService } from './src/services/SecureStorageService';
 import { CacheService, ProfileData, AttendanceData, CourseDetail } from './src/services/CacheService';
@@ -27,6 +29,10 @@ import { UpdateService, UpdateInfo } from './src/services/UpdateService';
 type AppState = 'INITIALIZING' | 'NEEDS_LOGIN' | 'LOCKED' | 'LOGGED_IN';
 type TabName = 'Profile' | 'Attendance' | 'Courses' | 'Portal' | 'Settings';
 
+const TABS: TabName[] = ['Profile', 'Attendance', 'Courses', 'Portal', 'Settings'];
+const getTabIndex = (tab: TabName): number => Math.max(0, TABS.indexOf(tab));
+const getTabFromIndex = (index: number): TabName => TABS[index] ?? 'Profile';
+
 export default function App() {
   return (
     <SafeAreaProvider>
@@ -40,6 +46,7 @@ function AppContent() {
   const [appState, setAppState] = useState<AppState>('INITIALIZING');
   const [activeTab, setActiveTab] = useState<TabName>('Profile');
   const [subScreen, setSubScreen] = useState<'academic_schedules' | null>(null);
+  const pagerRef = useRef<PagerView>(null);
   
   // Scraped Data
   const [profileData, setProfileData] = useState<ProfileData | null>(null);
