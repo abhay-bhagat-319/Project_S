@@ -579,68 +579,13 @@ function AppContent() {
     setActiveTab(tab);
   };
 
-  const renderActiveScreen = () => {
-    switch (activeTab) {
-      case 'Profile':
-        if (subScreen === 'academic_schedules') {
-          return <AcademicSchedulesScreen onBack={() => setSubScreen(null)} />;
-        }
-        return (
-          <DashboardScreen 
-            profileData={profileData} 
-            onNavigateToTab={(tab) => handleTabPress(tab as TabName)}
-            onOpenAcademicSchedules={() => setSubScreen('academic_schedules')}
-          />
-        );
-      case 'Attendance':
-        return (
-          <AttendanceScreen 
-            attendanceData={attendanceData} 
-            onRefresh={handleManualRefresh} 
-            refreshing={refreshing}
-            isOffline={isOffline}
-          />
-        );
-      case 'Courses':
-        return (
-          <CoursesScreen 
-            courses={courses} 
-            courseDetails={courseDetails}
-            onNavigateToTab={(tab) => setActiveTab(tab as TabName)}
-            onOpenSrs={handleOpenSrs}
-            onSubmitSrs={handleSubmitSrs}
-          />
-        );
-      case 'Portal':
-        return (
-          <PortalWebviewScreen 
-            credentials={credentials} 
-            targetUrl={portalTargetUrl}
-            onClearTargetUrl={() => setPortalTargetUrl(null)}
-          />
-        );
-      case 'Settings':
-        return (
-          <SettingsScreen 
-            onLogout={handleLogoutSuccess} 
-            onCredentialsUpdated={bootstrapApp}
-            hasUpdate={!!updateInfo?.hasUpdate}
-            updateInfo={updateInfo}
-            onUpdateStatusChecked={(info) => {
-              if (info.hasUpdate) {
-                setUpdateInfo(info);
-              } else {
-                setUpdateInfo(null);
-              }
-            }}
-            onOpenUpdateModal={(info) => {
-              setUpdateInfo(info);
-              setUpdateModalVisible(true);
-            }}
-          />
-        );
-      default:
-        return <DashboardScreen profileData={profileData} />;
+  const isPagerScrollEnabled = activeTab !== 'Portal' && subScreen === null;
+
+  const handlePageSelected = (e: any) => {
+    const pageIndex = e.nativeEvent.position;
+    const nextTab = getTabFromIndex(pageIndex);
+    if (nextTab !== activeTab) {
+      setActiveTab(nextTab);
     }
   };
 
@@ -680,9 +625,81 @@ function AppContent() {
         </View>
       )}
 
-      {/* Screen Content Area */}
+      {/* Screen Content Area with Native Gesture PagerView */}
       <View style={styles.content}>
-        {renderActiveScreen()}
+        <PagerView
+          ref={pagerRef}
+          style={styles.pagerView}
+          initialPage={getTabIndex(activeTab)}
+          onPageSelected={handlePageSelected}
+          scrollEnabled={isPagerScrollEnabled}
+          offscreenPageLimit={4}
+          overScrollMode="always"
+        >
+          {/* Tab 0: Profile / Dashboard */}
+          <View key="profile_page" style={styles.pageContainer}>
+            {subScreen === 'academic_schedules' ? (
+              <AcademicSchedulesScreen onBack={() => setSubScreen(null)} />
+            ) : (
+              <DashboardScreen 
+                profileData={profileData} 
+                onNavigateToTab={(tab) => handleTabPress(tab as TabName)}
+                onOpenAcademicSchedules={() => setSubScreen('academic_schedules')}
+              />
+            )}
+          </View>
+
+          {/* Tab 1: Attendance */}
+          <View key="attendance_page" style={styles.pageContainer}>
+            <AttendanceScreen 
+              attendanceData={attendanceData} 
+              onRefresh={handleManualRefresh} 
+              refreshing={refreshing}
+              isOffline={isOffline}
+            />
+          </View>
+
+          {/* Tab 2: Courses */}
+          <View key="courses_page" style={styles.pageContainer}>
+            <CoursesScreen 
+              courses={courses} 
+              courseDetails={courseDetails}
+              onNavigateToTab={(tab) => handleTabPress(tab as TabName)}
+              onOpenSrs={handleOpenSrs}
+              onSubmitSrs={handleSubmitSrs}
+            />
+          </View>
+
+          {/* Tab 3: Portal */}
+          <View key="portal_page" style={styles.pageContainer}>
+            <PortalWebviewScreen 
+              credentials={credentials} 
+              targetUrl={portalTargetUrl}
+              onClearTargetUrl={() => setPortalTargetUrl(null)}
+            />
+          </View>
+
+          {/* Tab 4: Settings */}
+          <View key="settings_page" style={styles.pageContainer}>
+            <SettingsScreen 
+              onLogout={handleLogoutSuccess} 
+              onCredentialsUpdated={bootstrapApp}
+              hasUpdate={!!updateInfo?.hasUpdate}
+              updateInfo={updateInfo}
+              onUpdateStatusChecked={(info) => {
+                if (info.hasUpdate) {
+                  setUpdateInfo(info);
+                } else {
+                  setUpdateInfo(null);
+                }
+              }}
+              onOpenUpdateModal={(info) => {
+                setUpdateInfo(info);
+                setUpdateModalVisible(true);
+              }}
+            />
+          </View>
+        </PagerView>
       </View>
 
       {/* Bottom Black Gradient Scrim (Underneath Navigation Bar) */}
@@ -922,5 +939,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#eab308', // Vibrant yellow notification dot
     borderWidth: 1.5,
     borderColor: Theme.colors.surface,
+  },
+  pagerView: {
+    flex: 1,
+  },
+  pageContainer: {
+    flex: 1,
   },
 });
