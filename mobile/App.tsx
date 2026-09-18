@@ -318,14 +318,16 @@ function AppContent() {
     setCourses([]);
     setCourseDetails({});
     setCredentials(null);
+    setSubScreen(null);
     setActiveTab('Profile');
+    pagerRef.current?.setPageWithoutAnimation(0);
     setAppState('NEEDS_LOGIN');
   };
 
   const handleOpenSrs = (courseCode: string) => {
     const srsUrl = `https://shiksha.iiserb.ac.in/secure/studentSRS/${courseCode}`;
     setPortalTargetUrl(srsUrl);
-    setActiveTab('Portal');
+    handleTabPress('Portal');
   };
 
   const handleSubmitSrs = async (course: Course, formData: SrsFormData): Promise<boolean> => {
@@ -577,6 +579,8 @@ function AppContent() {
   const handleTabPress = (tab: TabName) => {
     setSubScreen(null);
     setActiveTab(tab);
+    const targetIndex = getTabIndex(tab);
+    pagerRef.current?.setPageWithoutAnimation(targetIndex);
   };
 
   const isPagerScrollEnabled = activeTab !== 'Portal' && subScreen === null;
