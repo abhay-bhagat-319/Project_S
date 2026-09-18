@@ -631,6 +631,12 @@ function AppContent() {
 
       {/* Screen Content Area with Native Gesture PagerView */}
       <View style={styles.content}>
+        {/*
+          Native hardware-accelerated horizontal swipe pager.
+          - offscreenPageLimit: 4 keeps all tab views mounted to eliminate pop-in and preserve scroll positions
+          - scrollEnabled: dynamically locked on the Portal tab (so WebView captures touches) and during subscreen navigation
+          - overScrollMode: enables native Android edge stretch and iOS spring bounce
+        */}
         <PagerView
           ref={pagerRef}
           style={styles.pagerView}
