@@ -25,9 +25,23 @@ export interface CourseSRSStatus {
   isSubmitted?: boolean;
 }
 
+export interface ReportItem {
+  id: string;
+  type: string;
+  sem: string;
+  annotation: string;
+  file: string;
+  show?: boolean;
+  isCached?: boolean;
+  localUri?: string;
+  fileSizeBytes?: number;
+  fileSizeFormatted?: string;
+}
+
 const KEY_PROFILE_DATA = 'shiksha_cache_profile';
 const KEY_ATTENDANCE_DATA = 'shiksha_cache_attendance';
 const KEY_COURSE_DETAILS = 'shiksha_cache_course_details';
+const KEY_REPORTS_DATA = 'shiksha_cache_reports';
 const KEY_LAST_SYNC_TIME = 'shiksha_last_sync_time';
 const KEY_SRS_SUBMITTED = 'shiksha_cache_srs_submitted';
 
@@ -127,6 +141,21 @@ export const CacheService = {
   },
 
   /**
+   * Cache student grade reports metadata
+   */
+  async cacheReportsData(reports: ReportItem[]): Promise<void> {
+    await AsyncStorage.setItem(KEY_REPORTS_DATA, JSON.stringify(reports));
+  },
+
+  /**
+   * Retrieve cached student grade reports metadata
+   */
+  async getCachedReportsData(): Promise<ReportItem[] | null> {
+    const raw = await AsyncStorage.getItem(KEY_REPORTS_DATA);
+    return raw ? JSON.parse(raw) : null;
+  },
+
+  /**
    * Save the last successful sync time
    */
   async setLastSyncTime(timestamp: number): Promise<void> {
@@ -157,7 +186,7 @@ export const CacheService = {
    */
   async getCacheStats(): Promise<CacheStats> {
     try {
-      const keys = [KEY_PROFILE_DATA, KEY_ATTENDANCE_DATA, KEY_COURSE_DETAILS, KEY_LAST_SYNC_TIME];
+      const keys = [KEY_PROFILE_DATA, KEY_ATTENDANCE_DATA, KEY_COURSE_DETAILS, KEY_REPORTS_DATA, KEY_LAST_SYNC_TIME];
       let memoryBytes = 0;
       for (const k of keys) {
         const item = await AsyncStorage.getItem(k);
@@ -210,15 +239,20 @@ export const CacheService = {
   },
 
   /**
-   * Clear all cache on logout or user reset (wipes AsyncStorage and all update disk files)
+   * Clear all cache on logout or user reset (wipes AsyncStorage, update files, and report files)
    */
   async clearCache(): Promise<void> {
     await AsyncStorage.removeItem(KEY_PROFILE_DATA);
     await AsyncStorage.removeItem(KEY_ATTENDANCE_DATA);
     await AsyncStorage.removeItem(KEY_COURSE_DETAILS);
+    await AsyncStorage.removeItem(KEY_REPORTS_DATA);
     await AsyncStorage.removeItem(KEY_LAST_SYNC_TIME);
     await AsyncStorage.removeItem(KEY_SRS_SUBMITTED);
     await UpdateService.clearAllUpdateFiles();
+    try {
+      const { ReportsService } = require('./ReportsService');
+      await ReportsService.clearAllReportFiles();
+    } catch {}
   },
 };
 
