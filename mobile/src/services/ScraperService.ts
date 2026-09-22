@@ -1091,5 +1091,114 @@ export const ScraperService = {
       })();
       true;
     `;
+  },
+
+  /**
+   * JS script to inject on the reports page (/secure/studentReports)
+   * Extracts student grade reports and transcripts
+   */
+  getReportsScraperScript(): string {
+    return `
+      (function() {
+        try {
+          var reports = [];
+
+          // Strategy 1: Check Angular Scope
+          try {
+            var el = document.querySelector('[ng-controller="studentReportController"]') || 
+                     document.querySelector('[ng-controller]') || 
+                     document.body;
+            var scope = (typeof angular !== 'undefined' && angular.element) ? angular.element(el).scope() : null;
+            if (scope && Array.isArray(scope.studentReports) && scope.studentReports.length > 0) {
+              reports = scope.studentReports;
+            } else if (scope && Array.isArray(scope.reports) && scope.reports.length > 0) {
+              reports = scope.reports;
+            }
+          } catch (e1) {}
+
+          // Strategy 2: Extract JSON from ng-init attribute
+          if (!reports || reports.length === 0) {
+            try {
+              var initEls = Array.from(document.querySelectorAll('[ng-init]'));
+              for (var i = 0; i < initEls.length; i++) {
+                var initAttr = initEls[i].getAttribute('ng-init') || '';
+                var match = initAttr.match(/initReports\\s*\\(\\s*(\\[.*?\\])\\s*\\)/s);
+                if (match && match[1]) {
+                  reports = JSON.parse(match[1]);
+                  break;
+                }
+              }
+            } catch (e2) {}
+          }
+
+          // Strategy 3: Parse DOM Table Rows if Angular / ng-init didn't yield
+          if (!reports || reports.length === 0) {
+            try {
+              var rows = Array.from(document.querySelectorAll('table#dataTable tbody tr, table tbody tr'));
+              rows.forEach(function(row) {
+                var cells = row.querySelectorAll('td');
+                if (cells.length >= 4) {
+                  var sem = cells[1].innerText.trim();
+                  var type = cells[2].innerText.trim();
+                  var annotation = cells[3].innerText.trim();
+                  var link = row.querySelector('a[href*=".pdf"]');
+                  var file = link ? link.getAttribute('href') : '';
+                  if (sem && type) {
+                    reports.push({
+                      type: type,
+                      sem: sem,
+                      annotation: annotation || (type + ' for ' + sem),
+                      file: file,
+                      show: true
+                    });
+                  }
+                }
+              });
+            } catch (e3) {}
+          }
+
+          // Normalize and validate report items
+          var normalized = reports.map(function(r, idx) {
+            var fileUrl = r.file || '';
+            if (fileUrl && fileUrl.indexOf('http') !== 0) {
+              if (fileUrl.indexOf('/') === 0) {
+                fileUrl = 'https://shiksha.iiserb.ac.in' + fileUrl;
+              } else {
+                fileUrl = 'https://shiksha.iiserb.ac.in/' + fileUrl;
+              }
+            }
+
+            var type = (r.type || 'Grade Report').trim();
+            var sem = (r.sem || '').trim();
+            var annotation = (r.annotation || (type + (sem ? ' (' + sem + ')' : ''))).trim();
+            var safeId = (sem + '-' + type).toLowerCase().replace(/[^a-z0-9_-]/g, '_') || ('report_' + idx);
+
+            return {
+              id: safeId,
+              type: type,
+              sem: sem,
+              annotation: annotation,
+              file: fileUrl,
+              show: r.show !== false
+            };
+          }).filter(function(r) {
+            return r.file && r.file.length > 0;
+          });
+
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'REPORTS_SCRAPED',
+            status: 'success',
+            items: normalized
+          }));
+        } catch (err) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'REPORTS_SCRAPED',
+            status: 'error',
+            message: err.message || 'Failed to scrape reports'
+          }));
+        }
+      })();
+      true;
+    `;
   }
 };
