@@ -10,9 +10,10 @@ interface DashboardScreenProps {
   profileData: ProfileData | null;
   onNavigateToTab?: (tab: 'Profile' | 'Attendance' | 'Courses' | 'Portal' | 'Settings') => void;
   onOpenAcademicSchedules?: () => void;
+  onOpenReports?: () => void;
 }
 
-export default function DashboardScreen({ profileData, onNavigateToTab, onOpenAcademicSchedules }: DashboardScreenProps) {
+export default function DashboardScreen({ profileData, onNavigateToTab, onOpenAcademicSchedules, onOpenReports }: DashboardScreenProps) {
   const insets = useSafeAreaInsets();
   const [modalVisible, setModalVisible] = useState(false);
   const [modalType, setModalType] = useState<'passed' | 'failed'>('passed');
@@ -141,19 +142,16 @@ export default function DashboardScreen({ profileData, onNavigateToTab, onOpenAc
           </View>
         </TouchableOpacity>
 
-        {/* Report Cards (Placeholder) */}
+        {/* Grade Reports */}
         <TouchableOpacity
           style={styles.quickActionTile}
-          activeOpacity={0.7}
-          onPress={() => Alert.alert('Report Cards', 'Grade report download and transcript generation will be available in the upcoming update!')}
+          activeOpacity={0.75}
+          onPress={() => onOpenReports && onOpenReports()}
         >
-          <View style={[styles.quickActionIconCircle, { backgroundColor: 'rgba(255, 255, 255, 0.06)' }]}>
-            <Ionicons name="newspaper-outline" size={22} color={Theme.colors.textSecondary} />
+          <View style={[styles.quickActionIconCircle, { backgroundColor: 'rgba(255, 214, 232, 0.18)' }]}>
+            <Ionicons name="document-text" size={22} color={Theme.colors.pink} />
           </View>
           <Text style={styles.quickActionLabel} numberOfLines={1}>Reports</Text>
-          <View style={styles.soonPill}>
-            <Text style={styles.soonPillText}>Soon</Text>
-          </View>
         </TouchableOpacity>
 
         {/* Attendance Tab Switcher */}
