@@ -22,6 +22,7 @@ import AttendanceScreen from './src/screens/AttendanceScreen';
 import PortalWebviewScreen from './src/screens/PortalWebviewScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import AcademicSchedulesScreen from './src/screens/AcademicSchedulesScreen';
+import ReportsScreen from './src/screens/ReportsScreen';
 import UpdateModal from './src/screens/UpdateModal';
 import BackgroundDownloadPill from './src/components/BackgroundDownloadPill';
 import { UpdateService, UpdateInfo } from './src/services/UpdateService';
@@ -45,7 +46,7 @@ function AppContent() {
   const insets = useSafeAreaInsets();
   const [appState, setAppState] = useState<AppState>('INITIALIZING');
   const [activeTab, setActiveTab] = useState<TabName>('Profile');
-  const [subScreen, setSubScreen] = useState<'academic_schedules' | null>(null);
+  const [subScreen, setSubScreen] = useState<'academic_schedules' | 'reports' | null>(null);
   const pagerRef = useRef<PagerView>(null);
   
   // Scraped Data
@@ -468,6 +469,11 @@ function AppContent() {
         console.log('Injected attendance & course details scraper.');
         syncWebViewRef.current?.injectJavaScript(ScraperService.getAttendanceScraperScript());
       }, 1500);
+    } else if (url.includes('/secure/studentReports')) {
+      setTimeout(() => {
+        console.log('Injected reports scraper.');
+        syncWebViewRef.current?.injectJavaScript(ScraperService.getReportsScraperScript());
+      }, 1500);
     }
   };
 
@@ -550,10 +556,9 @@ function AppContent() {
             });
           }
 
-          console.log('Sync completed successfully!');
-          if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
-          setSyncActive(false);
-          setRefreshing(false);
+          // Now transition the WebView to the reports page
+          setSyncUrl('https://shiksha.iiserb.ac.in/secure/studentReports');
+          syncWebViewRef.current?.injectJavaScript(`window.location.href = "https://shiksha.iiserb.ac.in/secure/studentReports"; true;`);
         } else {
           console.log('Attendance scrape failed:', data.message);
           if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
@@ -562,6 +567,18 @@ function AppContent() {
         }
       } 
       
+      else if (data.type === 'REPORTS_SCRAPED') {
+        if (data.status === 'success') {
+          await CacheService.cacheReportsData(data.items || []);
+          console.log('Reports sync completed successfully! Total items:', data.items?.length);
+        } else {
+          console.log('Reports scrape notice:', data.message);
+        }
+        if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+        setSyncActive(false);
+        setRefreshing(false);
+      }
+
       else if (data.type === 'ERROR') {
         console.log('Scraper error:', data.message);
         if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
@@ -650,11 +667,18 @@ function AppContent() {
           <View key="profile_page" style={styles.pageContainer}>
             {subScreen === 'academic_schedules' ? (
               <AcademicSchedulesScreen onBack={() => setSubScreen(null)} />
+            ) : subScreen === 'reports' ? (
+              <ReportsScreen 
+                onBack={() => setSubScreen(null)} 
+                onRefreshPortal={startSync}
+                isSyncing={syncActive}
+              />
             ) : (
               <DashboardScreen 
                 profileData={profileData} 
                 onNavigateToTab={(tab) => handleTabPress(tab as TabName)}
                 onOpenAcademicSchedules={() => setSubScreen('academic_schedules')}
+                onOpenReports={() => setSubScreen('reports')}
               />
             )}
           </View>
