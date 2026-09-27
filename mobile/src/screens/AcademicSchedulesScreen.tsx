@@ -135,9 +135,25 @@ export default function AcademicSchedulesScreen({ onBack }: AcademicSchedulesScr
     }
   };
 
+  const getCategoryIcon = (category: DocCategory): keyof typeof Ionicons.glyphMap => {
+    switch (category) {
+      case 'CALENDAR':
+        return 'calendar';
+      case 'TIMETABLE':
+        return 'time';
+      case 'EXAM':
+        return 'newspaper';
+      case 'HOLIDAYS':
+        return 'sunny';
+      default:
+        return 'document-text';
+    }
+  };
+
   const renderDocCard = ({ item }: { item: AcademicDoc }) => {
     const isOpeningThis = activeOpeningId === item.id;
     const catColor = getCategoryColor(item.category);
+    const catIcon = getCategoryIcon(item.category);
 
     return (
       <TouchableOpacity
@@ -146,55 +162,40 @@ export default function AcademicSchedulesScreen({ onBack }: AcademicSchedulesScr
         onPress={() => handleOpenDoc(item)}
         disabled={isOpeningThis}
       >
-        <View style={styles.cardHeader}>
-          <View style={[styles.categoryPill, { backgroundColor: catColor }]}>
-            <Text style={styles.categoryPillText}>{item.category}</Text>
+        <View style={styles.cardContent}>
+          {/* Left Icon Pill */}
+          <View style={[styles.iconContainer, { backgroundColor: `${catColor}25` }]}>
+            <Ionicons name={catIcon} size={22} color={catColor} />
           </View>
 
-          {item.isCached ? (
-            <View style={styles.cachedBadge}>
-              <Ionicons name="checkmark-circle" size={14} color={Theme.colors.success} />
-              <Text style={styles.cachedBadgeText}>
-                {item.fileSizeFormatted ? `Cached • ${item.fileSizeFormatted}` : 'Cached'}
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.uncachedBadge}>
-              <Ionicons name="cloud-download-outline" size={14} color={Theme.colors.textSecondary} />
-              <Text style={styles.uncachedBadgeText}>Online</Text>
-            </View>
-          )}
-        </View>
-
-        <Text style={styles.cardTitle}>{item.title}</Text>
-        <Text style={styles.cardDesc}>{item.description}</Text>
-
-        <View style={styles.cardFooter}>
-          <View style={styles.footerLeft}>
-            <Ionicons name="document-text-outline" size={14} color={Theme.colors.textSecondary} />
-            <Text style={styles.footerFileName} numberOfLines={1}>
-              {item.fileName}
+          {/* Minimal Title & Meta */}
+          <View style={styles.textContainer}>
+            <Text style={styles.cardTitle} numberOfLines={2}>
+              {item.title}
+            </Text>
+            <Text style={styles.cardMetaText}>
+              {item.isCached
+                ? `PDF • ${item.fileSizeFormatted || 'Cached'}`
+                : 'PDF Document'}
             </Text>
           </View>
 
-          <View style={styles.actionBtnContainer}>
+          {/* Right Status / Progress Indicator */}
+          <View style={styles.actionContainer}>
             {isOpeningThis ? (
-              <View style={styles.openingIndicatorRow}>
+              <View style={styles.progressWrap}>
                 <ActivityIndicator size="small" color={Theme.colors.primary} />
-                <Text style={styles.openingText}>
-                  {downloadProgress > 0 ? `${Math.round(downloadProgress * 100)}%` : 'Opening...'}
-                </Text>
+                {downloadProgress > 0 && downloadProgress < 1 && (
+                  <Text style={styles.progressText}>{Math.round(downloadProgress * 100)}%</Text>
+                )}
+              </View>
+            ) : item.isCached ? (
+              <View style={styles.cachedBadge}>
+                <Ionicons name="checkmark-circle" size={18} color={Theme.colors.mint} />
               </View>
             ) : (
-              <View style={styles.openBtnPill}>
-                <Text style={styles.openBtnText}>
-                  {item.isCached ? 'Open PDF' : 'Download & Open'}
-                </Text>
-                <Ionicons
-                  name={item.isCached ? 'open-outline' : 'download-outline'}
-                  size={14}
-                  color={Theme.colors.textDark}
-                />
+              <View style={styles.openArrow}>
+                <Ionicons name="chevron-forward" size={18} color={Theme.colors.textSecondary} />
               </View>
             )}
           </View>
@@ -213,7 +214,6 @@ export default function AcademicSchedulesScreen({ onBack }: AcademicSchedulesScr
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
         >
           <Ionicons name="chevron-back" size={24} color={Theme.colors.textPrimary} />
-          <Text style={styles.backButtonText}>Profile</Text>
         </TouchableOpacity>
 
         <Text style={styles.headerTitle}>Academic Schedules</Text>
@@ -227,17 +227,9 @@ export default function AcademicSchedulesScreen({ onBack }: AcademicSchedulesScr
           {isRevalidating ? (
             <ActivityIndicator size="small" color={Theme.colors.primary} />
           ) : (
-            <Ionicons name="refresh-outline" size={22} color={Theme.colors.primary} />
+            <Ionicons name="refresh" size={22} color={Theme.colors.primary} />
           )}
         </TouchableOpacity>
-      </View>
-
-      {/* Subheader Notice */}
-      <View style={styles.syncBanner}>
-        <Ionicons name="shield-checkmark-outline" size={16} color={Theme.colors.primary} />
-        <Text style={styles.syncBannerText}>
-          Real-time synchronized with DOAA Academic Portal (iiserb.ac.in)
-        </Text>
       </View>
 
       {/* Category Filter Chips */}
@@ -316,47 +308,31 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: Theme.colors.border,
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
   },
   backButton: {
-    flexDirection: 'row',
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    justifyContent: 'center',
     alignItems: 'center',
-    paddingRight: 8,
-  },
-  backButtonText: {
-    color: Theme.colors.textPrimary,
-    fontSize: 16,
-    fontWeight: '600',
-    marginLeft: 2,
   },
   headerTitle: {
     fontSize: 18,
     fontWeight: '700',
     color: Theme.colors.textPrimary,
+    letterSpacing: 0.2,
   },
   refreshHeaderBtn: {
-    padding: 6,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
     justifyContent: 'center',
     alignItems: 'center',
-    minWidth: 32,
-  },
-  syncBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Theme.colors.surface,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    marginHorizontal: 16,
-    marginTop: 10,
-    borderRadius: Theme.radii.widget,
-    gap: 8,
-  },
-  syncBannerText: {
-    color: Theme.colors.textSecondary,
-    fontSize: 12,
-    flex: 1,
   },
   tabsContainer: {
     marginVertical: 10,
@@ -373,7 +349,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: Theme.radii.pill,
     borderWidth: 1,
-    borderColor: Theme.colors.border,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
   },
   tabChipActive: {
     backgroundColor: Theme.colors.lavender,
@@ -399,116 +375,68 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: Theme.colors.surface,
     borderRadius: Theme.radii.widget,
-    padding: 16,
     borderWidth: 1,
-    borderColor: Theme.colors.border,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    overflow: 'hidden',
   },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  categoryPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: Theme.radii.pill,
-  },
-  categoryPillText: {
-    color: Theme.colors.textDark,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  cachedBadge: {
+  cardContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(76, 217, 100, 0.12)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: Theme.radii.pill,
+    padding: 16,
   },
-  cachedBadgeText: {
-    color: Theme.colors.success,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  uncachedBadge: {
-    flexDirection: 'row',
+  iconContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: Theme.radii.pill,
+    marginRight: 14,
   },
-  uncachedBadgeText: {
-    color: Theme.colors.textSecondary,
-    fontSize: 11,
-    fontWeight: '500',
+  textContainer: {
+    flex: 1,
+    marginRight: 10,
   },
   cardTitle: {
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 15,
+    fontWeight: '600',
     color: Theme.colors.textPrimary,
+    lineHeight: 20,
     marginBottom: 4,
   },
-  cardDesc: {
-    fontSize: 13,
-    color: Theme.colors.textSecondary,
-    lineHeight: 18,
-    marginBottom: 12,
-  },
-  cardFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.06)',
-  },
-  footerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flex: 1,
-    marginRight: 12,
-  },
-  footerFileName: {
+  cardMetaText: {
     fontSize: 12,
     color: Theme.colors.textSecondary,
-    flex: 1,
+    fontWeight: '500',
   },
-  actionBtnContainer: {
-    minHeight: 32,
+  actionContainer: {
+    alignItems: 'center',
     justifyContent: 'center',
   },
-  openingIndicatorRow: {
-    flexDirection: 'row',
+  progressWrap: {
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    justifyContent: 'center',
   },
-  openingText: {
+  progressText: {
+    fontSize: 10,
     color: Theme.colors.primary,
-    fontSize: 12,
     fontWeight: '600',
+    marginTop: 2,
   },
-  openBtnPill: {
-    flexDirection: 'row',
+  cachedBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(208, 240, 228, 0.12)',
+    justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: Theme.colors.surfaceLight,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: Theme.radii.pill,
-    gap: 6,
   },
-  openBtnText: {
-    color: Theme.colors.textDark,
-    fontSize: 12,
-    fontWeight: '700',
+  openArrow: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   emptyContainer: {
     alignItems: 'center',
