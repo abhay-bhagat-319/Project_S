@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, Alert, StatusBar, Platform } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, Alert, StatusBar, Platform, BackHandler, ToastAndroid } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -19,7 +19,7 @@ import DashboardScreen from './src/screens/DashboardScreen';
 import CoursesScreen, { Course } from './src/screens/CoursesScreen';
 import { SrsFormData } from './src/screens/CourseSrsModal';
 import AttendanceScreen from './src/screens/AttendanceScreen';
-import PortalWebviewScreen from './src/screens/PortalWebviewScreen';
+import PortalWebviewScreen, { PortalWebviewHandle } from './src/screens/PortalWebviewScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import AcademicSchedulesScreen from './src/screens/AcademicSchedulesScreen';
 import ReportsScreen from './src/screens/ReportsScreen';
@@ -84,6 +84,63 @@ function AppContent() {
 
   const syncWebViewRef = useRef<WebView>(null);
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const portalWebviewRef = useRef<PortalWebviewHandle>(null);
+  const lastBackPressRef = useRef<number>(0);
+
+  // Android Hardware Back Button Navigation Handler
+  useEffect(() => {
+    const handleBackPress = () => {
+      // 1. If not logged in, allow default system exit/back
+      if (appState !== 'LOGGED_IN') {
+        return false;
+      }
+
+      // 2. If UpdateModal is open, dismiss it
+      if (updateModalVisible) {
+        setUpdateModalVisible(false);
+        return true;
+      }
+
+      // 3. If SubScreen is open (Academic Schedules or Reports), return to Dashboard
+      if (subScreen !== null) {
+        setSubScreen(null);
+        return true;
+      }
+
+      // 4. If on Portal tab, check if WebView has back history
+      if (activeTab === 'Portal') {
+        const handledByWebview = portalWebviewRef.current?.handleBackPress();
+        if (handledByWebview) {
+          return true;
+        }
+        // If webview cannot go back, switch to Profile tab
+        handleTabPress('Profile');
+        return true;
+      }
+
+      // 5. If on any other non-Profile tab, switch to Profile
+      if (activeTab !== 'Profile') {
+        handleTabPress('Profile');
+        return true;
+      }
+
+      // 6. If on Profile tab, double-tap back within 2000ms to exit
+      const now = Date.now();
+      if (now - lastBackPressRef.current < 2000) {
+        BackHandler.exitApp();
+        return true;
+      }
+
+      lastBackPressRef.current = now;
+      if (Platform.OS === 'android') {
+        ToastAndroid.show('Press back again to exit', ToastAndroid.SHORT);
+      }
+      return true;
+    };
+
+    const backSubscription = BackHandler.addEventListener('hardwareBackPress', handleBackPress);
+    return () => backSubscription.remove();
+  }, [appState, updateModalVisible, subScreen, activeTab]);
 
   useEffect(() => {
     bootstrapApp();
@@ -707,6 +764,7 @@ function AppContent() {
           {/* Tab 3: Portal */}
           <View key="portal_page" style={styles.pageContainer}>
             <PortalWebviewScreen 
+              ref={portalWebviewRef}
               credentials={credentials} 
               targetUrl={portalTargetUrl}
               onClearTargetUrl={() => setPortalTargetUrl(null)}
