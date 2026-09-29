@@ -9,6 +9,7 @@ import { CacheService } from '../services/CacheService';
 import { ScraperService } from '../services/ScraperService';
 import { UpdateService, UpdateInfo } from '../services/UpdateService';
 import { AppConfig } from '../constants/Config';
+import CreditsModal from './CreditsModal';
 
 interface SettingsScreenProps {
   onLogout: () => void;
@@ -37,6 +38,7 @@ export default function SettingsScreen({
   const [triggerVerify, setTriggerVerify] = useState(false);
   const [showUpdateForm, setShowUpdateForm] = useState(false);
   const [cacheSize, setCacheSize] = useState<string>('...');
+  const [creditsModalVisible, setCreditsModalVisible] = useState(false);
 
   const webViewRef = useRef<WebView>(null);
   const loginUrl = 'https://shiksha.iiserb.ac.in/login/';
@@ -365,6 +367,27 @@ export default function SettingsScreen({
         </TouchableOpacity>
       </View>
 
+      {/* About & Community Section */}
+      <Text style={styles.sectionTitle}>About & Credits</Text>
+      <View style={styles.sectionCard}>
+        <TouchableOpacity 
+          style={styles.settingItem} 
+          onPress={() => setCreditsModalVisible(true)}
+          activeOpacity={0.7}
+        >
+          <View style={styles.settingTextContainer}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={styles.settingLabel}>Project Credits & Contributors</Text>
+              <View style={styles.heartPill}>
+                <Ionicons name="heart" size={10} color="#ec4899" />
+              </View>
+            </View>
+            <Text style={styles.settingDescription}>Meet the maintainers and open-source contributors</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={Theme.colors.textSecondary} />
+        </TouchableOpacity>
+      </View>
+
       {/* Account Section */}
       <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
         <Ionicons name="log-out-outline" size={20} color={Theme.colors.textPrimary} style={styles.logoutIcon} />
@@ -394,6 +417,12 @@ export default function SettingsScreen({
           />
         </View>
       )}
+
+      {/* Credits & Contributors Modal */}
+      <CreditsModal 
+        visible={creditsModalVisible} 
+        onClose={() => setCreditsModalVisible(false)} 
+      />
 
     </ScrollView>
   );
@@ -549,5 +578,14 @@ const styles = StyleSheet.create({
     color: '#fef08a',
     fontSize: 11,
     fontWeight: '700',
+  },
+  heartPill: {
+    backgroundColor: 'rgba(236, 72, 153, 0.15)',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: Theme.radii.pill,
+    marginLeft: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
