@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, Platform, Animated } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
@@ -6,7 +6,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { ScraperService } from '../services/ScraperService';
 
-interface PortalWebviewScreenProps {
+export interface PortalWebviewHandle {
+  handleBackPress: () => boolean;
+}
+
+export interface PortalWebviewScreenProps {
   credentials: { username: string; password: string } | null;
   targetUrl?: string | null;
   onClearTargetUrl?: () => void;
@@ -21,11 +25,11 @@ const MOBILE_USER_AGENT = Platform.select({
   default: 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36',
 });
 
-export default function PortalWebviewScreen({
+const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenProps>(function PortalWebviewScreen({
   credentials,
   targetUrl,
   onClearTargetUrl,
-}: PortalWebviewScreenProps) {
+}, ref) {
   const insets = useSafeAreaInsets();
   const webViewRef = useRef<WebView>(null);
   const [currentUrl, setCurrentUrl] = useState<string>(targetUrl || DEFAULT_URL);
@@ -107,6 +111,16 @@ export default function PortalWebviewScreen({
     // Re-trigger layout optimization and viewport reset
     webViewRef.current?.injectJavaScript(ScraperService.getCssInjectionScript());
   };
+
+  useImperativeHandle(ref, () => ({
+    handleBackPress: () => {
+      if (canGoBack) {
+        webViewRef.current?.goBack();
+        return true;
+      }
+      return false;
+    },
+  }), [canGoBack]);
 
   return (
     <View style={styles.container}>
@@ -210,7 +224,7 @@ export default function PortalWebviewScreen({
       </View>
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   container: {
@@ -277,3 +291,5 @@ const styles = StyleSheet.create({
     backgroundColor: Theme.colors.background,
   },
 });
+
+export default PortalWebviewScreen;
