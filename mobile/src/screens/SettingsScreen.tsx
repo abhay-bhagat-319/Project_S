@@ -8,6 +8,7 @@ import { SecureStorageService } from '../services/SecureStorageService';
 import { CacheService } from '../services/CacheService';
 import { ScraperService } from '../services/ScraperService';
 import { UpdateService, UpdateInfo } from '../services/UpdateService';
+import { AppConfig } from '../constants/Config';
 
 interface SettingsScreenProps {
   onLogout: () => void;
@@ -163,6 +164,17 @@ export default function SettingsScreen({
       );
     } finally {
       setCheckingUpdate(false);
+    }
+  };
+
+  const handleOpenWhatsApp = async () => {
+    try {
+      await Linking.openURL(AppConfig.COMMUNITY_WHATSAPP_URL);
+    } catch (e) {
+      Alert.alert(
+        'Unable to Open Link',
+        'Could not open the WhatsApp invite link. Please check if you have WhatsApp installed or an active browser.'
+      );
     }
   };
 
@@ -326,6 +338,18 @@ export default function SettingsScreen({
               color={hasUpdate ? "#eab308" : Theme.colors.primary} 
             />
           )}
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.settingItem, styles.borderTop]} 
+          onPress={handleOpenWhatsApp}
+          activeOpacity={0.7}
+        >
+          <View style={styles.settingTextContainer}>
+            <Text style={styles.settingLabel}>WhatsApp Feedback Group</Text>
+            <Text style={styles.settingDescription}>Report bugs, suggest features & chat with devs</Text>
+          </View>
+          <Ionicons name="logo-whatsapp" size={20} color="#25D366" />
         </TouchableOpacity>
 
         <TouchableOpacity 
