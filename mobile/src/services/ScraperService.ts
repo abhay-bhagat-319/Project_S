@@ -238,22 +238,31 @@ export const ScraperService = {
             photoInfo = await extractPhoto(d);
           } catch(e) {}
 
+          var rawReports = [];
+          if (d && Array.isArray(d.reports) && d.reports.length > 0) {
+            rawReports = d.reports;
+          }
+
           window.ReactNativeWebView.postMessage(JSON.stringify({
             type: 'PROFILE_SCRAPED',
             status: 'success',
             name: d.name || '',
             roll: d.roll ? d.roll.toString() : '',
-            dept: (d.acadIISER && d.acadIISER.major) ? d.acadIISER.major.toUpperCase() : '',
-            passedCourses: (d.current && d.current.passedCourses) ? d.current.passedCourses : [],
-            failedCourses: (d.current && d.current.failedCourses) ? d.current.failedCourses : [],
+            dept: (d.acadIISER && d.acadIISER.major) ? d.acadIISER.major.toUpperCase() : (d.dept || ''),
+            passedCourses: (d.current && d.current.passedCourses) ? d.current.passedCourses : (d.passedCourses || []),
+            failedCourses: (d.current && d.current.failedCourses) ? d.current.failedCourses : (d.failedCourses || []),
             performance: d.performance || [],
+            reports: rawReports,
             photoUrl: photoInfo.photoUrl || '',
             photoBase64: photoInfo.photoBase64 || ''
           }));
         }
 
         function looksLikeProfile(obj) {
-          return obj && (obj.roll || obj.name) && obj.acadIISER;
+          if (!obj || typeof obj !== 'object') return false;
+          var hasId = !!(obj.roll || obj.name || obj.email || obj._id);
+          var hasData = !!(obj.acadIISER || obj.performance || obj.current || obj.passedCourses || obj.dept || obj.personal || obj.programme);
+          return hasId || hasData;
         }
 
         // --- Strategy 1: Intercept XHR at network level ---
@@ -315,12 +324,59 @@ export const ScraperService = {
               return;
             }
 
+            // Strategy 1: Check ng-init="initProfileInfo(...)" directly from DOM
+            try {
+              var initEls = Array.from(document.querySelectorAll('[ng-init]'));
+              for (var k = 0; k < initEls.length; k++) {
+                var initAttr = initEls[k].getAttribute('ng-init') || '';
+                if (initAttr.indexOf('initProfileInfo') !== -1) {
+                  var m = initAttr.match(/initProfileInfo\s*\(\s*['"]?(\{[\s\S]*?\})['"]?\s*\)/);
+                  if (!m) m = initAttr.match(/initProfileInfo\s*\(\s*['"]([\s\S]*?)['"]\s*\)/);
+                  if (m && m[1]) {
+                    var rawStr = m[1].replace(/&quot;|&#34;/g, '"').replace(/&amp;/g, '&');
+                    var parsedInit = JSON.parse(rawStr);
+                    if (looksLikeProfile(parsedInit)) {
+                      // Also enrich performance if initPrformanceRep exists
+                      var perfEl = document.querySelector('[ng-init*="initPrformanceRep"]');
+                      if (perfEl && (!parsedInit.performance || parsedInit.performance.length === 0)) {
+                        try {
+                          var perfAttr = perfEl.getAttribute('ng-init') || '';
+                          var mPerf = perfAttr.match(/initPrformanceRep\s*\(\s*['"]?(\{[\s\S]*?\})['"]?\s*\)/);
+                          if (mPerf && mPerf[1]) {
+                            var rawPerf = mPerf[1].replace(/&quot;|&#34;/g, '"').replace(/&amp;/g, '&');
+                            var pData = JSON.parse(rawPerf);
+                            if (pData && Array.isArray(pData.x)) {
+                              parsedInit.performance = pData.x.map(function(semName, sIdx) {
+                                return {
+                                  sem: semName,
+                                  spi: (pData.ySPI && pData.ySPI[sIdx] !== undefined) ? pData.ySPI[sIdx] : 0,
+                                  cpi: (pData.yCPI && pData.yCPI[sIdx] !== undefined) ? pData.yCPI[sIdx] : 0
+                                };
+                              });
+                            }
+                          }
+                        } catch(ePerf) {}
+                      }
+
+                      clearInterval(poll);
+                      postProfile(parsedInit);
+                      return;
+                    }
+                  }
+                }
+              }
+            } catch(eInit) {}
+
+            // Strategy 2: Check Angular scope
             var el = document.querySelector('[ng-controller]') || document.body;
-            var scope = (typeof angular !== 'undefined') ? angular.element(el).scope() : null;
-            if (scope && scope.studentData && looksLikeProfile(scope.studentData)) {
-              clearInterval(poll);
-              postProfile(scope.studentData);
-              return;
+            var scope = (typeof angular !== 'undefined' && angular.element) ? angular.element(el).scope() : null;
+            if (scope) {
+              var candidate = scope.studentData || scope.student || scope.profile || scope.userInfo || scope.user;
+              if (candidate && looksLikeProfile(candidate)) {
+                clearInterval(poll);
+                postProfile(candidate);
+                return;
+              }
             }
 
             if (attempts >= maxAttempts) {
@@ -1100,103 +1156,121 @@ export const ScraperService = {
   getReportsScraperScript(): string {
     return `
       (function() {
-        try {
-          var reports = [];
+        var done = false;
+        var attempts = 0;
+        var maxAttempts = 100; // 10 seconds
 
-          // Strategy 1: Check Angular Scope
+        var poll = setInterval(function() {
+          if (done) { clearInterval(poll); return; }
+          attempts++;
+
           try {
-            var el = document.querySelector('[ng-controller="studentReportController"]') || 
-                     document.querySelector('[ng-controller]') || 
-                     document.body;
-            var scope = (typeof angular !== 'undefined' && angular.element) ? angular.element(el).scope() : null;
-            if (scope && Array.isArray(scope.studentReports) && scope.studentReports.length > 0) {
-              reports = scope.studentReports;
-            } else if (scope && Array.isArray(scope.reports) && scope.reports.length > 0) {
-              reports = scope.reports;
-            }
-          } catch (e1) {}
+            var reports = [];
 
-          // Strategy 2: Extract JSON from ng-init attribute
-          if (!reports || reports.length === 0) {
+            // Strategy 1: Check Angular Scope
             try {
-              var initEls = Array.from(document.querySelectorAll('[ng-init]'));
-              for (var i = 0; i < initEls.length; i++) {
-                var initAttr = initEls[i].getAttribute('ng-init') || '';
-                var match = initAttr.match(/initReports\\s*\\(\\s*(\\[.*?\\])\\s*\\)/s);
-                if (match && match[1]) {
-                  reports = JSON.parse(match[1]);
-                  break;
-                }
+              var el = document.querySelector('[ng-controller="studentReportController"]') || 
+                       document.querySelector('[ng-controller]') || 
+                       document.body;
+              var scope = (typeof angular !== 'undefined' && angular.element) ? angular.element(el).scope() : null;
+              if (scope && Array.isArray(scope.studentReports) && scope.studentReports.length > 0) {
+                reports = scope.studentReports;
+              } else if (scope && Array.isArray(scope.reports) && scope.reports.length > 0) {
+                reports = scope.reports;
               }
-            } catch (e2) {}
-          }
+            } catch (e1) {}
 
-          // Strategy 3: Parse DOM Table Rows if Angular / ng-init didn't yield
-          if (!reports || reports.length === 0) {
-            try {
-              var rows = Array.from(document.querySelectorAll('table#dataTable tbody tr, table tbody tr'));
-              rows.forEach(function(row) {
-                var cells = row.querySelectorAll('td');
-                if (cells.length >= 4) {
-                  var sem = cells[1].innerText.trim();
-                  var type = cells[2].innerText.trim();
-                  var annotation = cells[3].innerText.trim();
-                  var link = row.querySelector('a[href*=".pdf"]');
-                  var file = link ? link.getAttribute('href') : '';
-                  if (sem && type) {
-                    reports.push({
-                      type: type,
-                      sem: sem,
-                      annotation: annotation || (type + ' for ' + sem),
-                      file: file,
-                      show: true
-                    });
+            // Strategy 2: Extract JSON from ng-init attribute
+            if (!reports || reports.length === 0) {
+              try {
+                var initEls = Array.from(document.querySelectorAll('[ng-init]'));
+                for (var i = 0; i < initEls.length; i++) {
+                  var initAttr = initEls[i].getAttribute('ng-init') || '';
+                  var match = initAttr.match(/initReports\\s*\\(\\s*(\\[.*?\\])\\s*\\)/s);
+                  if (match && match[1]) {
+                    var raw = match[1].replace(/&quot;|&#34;/g, '"').replace(/&amp;/g, '&');
+                    reports = JSON.parse(raw);
+                    break;
                   }
                 }
-              });
-            } catch (e3) {}
-          }
-
-          // Normalize and validate report items
-          var normalized = reports.map(function(r, idx) {
-            var fileUrl = r.file || '';
-            if (fileUrl && fileUrl.indexOf('http') !== 0) {
-              if (fileUrl.indexOf('/') === 0) {
-                fileUrl = 'https://shiksha.iiserb.ac.in' + fileUrl;
-              } else {
-                fileUrl = 'https://shiksha.iiserb.ac.in/' + fileUrl;
-              }
+              } catch (e2) {}
             }
 
-            var type = (r.type || 'Grade Report').trim();
-            var sem = (r.sem || '').trim();
-            var annotation = (r.annotation || (type + (sem ? ' (' + sem + ')' : ''))).trim();
-            var safeId = (sem + '-' + type).toLowerCase().replace(/[^a-z0-9_-]/g, '_') || ('report_' + idx);
+            // Strategy 3: Parse DOM Table Rows if Angular / ng-init didn't yield
+            if (!reports || reports.length === 0) {
+              try {
+                var rows = Array.from(document.querySelectorAll('table#dataTable tbody tr, table tbody tr'));
+                rows.forEach(function(row) {
+                  var cells = row.querySelectorAll('td');
+                  if (cells.length >= 4) {
+                    var sem = cells[1].innerText.trim();
+                    var type = cells[2].innerText.trim();
+                    var annotation = cells[3].innerText.trim();
+                    var link = row.querySelector('a[href*=".pdf"]');
+                    var file = link ? link.getAttribute('href') : '';
+                    if (sem && type) {
+                      reports.push({
+                        type: type,
+                        sem: sem,
+                        annotation: annotation || (type + ' for ' + sem),
+                        file: file,
+                        show: true
+                      });
+                    }
+                  }
+                });
+              } catch (e3) {}
+            }
 
-            return {
-              id: safeId,
-              type: type,
-              sem: sem,
-              annotation: annotation,
-              file: fileUrl,
-              show: r.show !== false
-            };
-          }).filter(function(r) {
-            return r.file && r.file.length > 0;
-          });
+            if ((reports && reports.length > 0) || attempts >= maxAttempts) {
+              clearInterval(poll);
+              done = true;
 
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'REPORTS_SCRAPED',
-            status: 'success',
-            items: normalized
-          }));
-        } catch (err) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'REPORTS_SCRAPED',
-            status: 'error',
-            message: err.message || 'Failed to scrape reports'
-          }));
-        }
+              // Normalize and validate report items
+              var normalized = (reports || []).map(function(r, idx) {
+                var fileUrl = r.file || '';
+                if (fileUrl && fileUrl.indexOf('http') !== 0) {
+                  if (fileUrl.indexOf('/') === 0) {
+                    fileUrl = 'https://shiksha.iiserb.ac.in' + fileUrl;
+                  } else {
+                    fileUrl = 'https://shiksha.iiserb.ac.in/' + fileUrl;
+                  }
+                }
+
+                var type = (r.type || 'Grade Report').trim();
+                var sem = (r.sem || '').trim();
+                var annotation = (r.annotation || (type + (sem ? ' (' + sem + ')' : ''))).trim();
+                var safeId = (sem + '-' + type).toLowerCase().replace(/[^a-z0-9_-]/g, '_') || ('report_' + idx);
+
+                return {
+                  id: safeId,
+                  type: type,
+                  sem: sem,
+                  annotation: annotation,
+                  file: fileUrl,
+                  show: r.show !== false
+                };
+              }).filter(function(r) {
+                return r.file && r.file.length > 0;
+              });
+
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'REPORTS_SCRAPED',
+                status: 'success',
+                items: normalized
+              }));
+            }
+          } catch (err) {
+            clearInterval(poll);
+            if (!done) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'REPORTS_SCRAPED',
+                status: 'error',
+                message: err.message || 'Failed to scrape reports'
+              }));
+            }
+          }
+        }, 100);
       })();
       true;
     `;
