@@ -545,14 +545,40 @@ function AppContent() {
             name: data.name,
             roll: data.roll,
             dept: data.dept,
-            passedCourses: data.passedCourses,
-            failedCourses: data.failedCourses,
-            performance: data.performance,
+            passedCourses: data.passedCourses || [],
+            failedCourses: data.failedCourses || [],
+            performance: data.performance || [],
             photoUrl: data.photoUrl,
             photoBase64: data.photoBase64,
           };
           setProfileData(profile);
           await CacheService.cacheProfileData(profile);
+
+          // If reports were embedded in student profile data, cache them immediately
+          if (Array.isArray(data.reports) && data.reports.length > 0) {
+            const normalizedReports = data.reports.map((r: any, idx: number) => {
+              let fileUrl = r.file || '';
+              if (fileUrl && fileUrl.indexOf('http') !== 0) {
+                fileUrl = fileUrl.indexOf('/') === 0 ? 'https://shiksha.iiserb.ac.in' + fileUrl : 'https://shiksha.iiserb.ac.in/' + fileUrl;
+              }
+              const type = (r.type || 'Grade Report').trim();
+              const sem = (r.sem || '').trim();
+              const annotation = (r.annotation || (type + (sem ? ' (' + sem + ')' : ''))).trim();
+              const safeId = (sem + '-' + type).toLowerCase().replace(/[^a-z0-9_-]/g, '_') || ('report_' + idx);
+              return {
+                id: safeId,
+                type: type,
+                sem: sem,
+                annotation: annotation,
+                file: fileUrl,
+                show: r.show !== false
+              };
+            }).filter((r: any) => r.file && r.file.length > 0);
+
+            if (normalizedReports.length > 0) {
+              await CacheService.cacheReportsData(normalizedReports);
+            }
+          }
 
           // Now transition the WebView to the courses page
           setSyncUrl('https://shiksha.iiserb.ac.in/secure/studentMyCourses');
