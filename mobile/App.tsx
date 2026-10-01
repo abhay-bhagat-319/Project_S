@@ -85,6 +85,7 @@ function AppContent() {
 
   const syncWebViewRef = useRef<WebView>(null);
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pageScrapeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const portalWebviewRef = useRef<PortalWebviewHandle>(null);
   const lastBackPressRef = useRef<number>(0);
 
@@ -516,21 +517,30 @@ function AppContent() {
     const url = syncCurrentUrl.current;
     if (!url) return;
 
+    if (pageScrapeTimeoutRef.current) {
+      clearTimeout(pageScrapeTimeoutRef.current);
+    }
+
     if (url.includes('/secure/studenthome')) {
-      // Delay to allow Angular to finish bootstrapping and populate ng-init
-      setTimeout(() => {
-        console.log('Injected profile scraper.');
-        syncWebViewRef.current?.injectJavaScript(ScraperService.getProfileScraperScript());
+      pageScrapeTimeoutRef.current = setTimeout(() => {
+        if (syncCurrentUrl.current.includes('/secure/studenthome')) {
+          console.log('Injected profile scraper.');
+          syncWebViewRef.current?.injectJavaScript(ScraperService.getProfileScraperScript());
+        }
       }, 1500);
     } else if (url.includes('/secure/studentMyCourses')) {
-      setTimeout(() => {
-        console.log('Injected attendance & course details scraper.');
-        syncWebViewRef.current?.injectJavaScript(ScraperService.getAttendanceScraperScript());
+      pageScrapeTimeoutRef.current = setTimeout(() => {
+        if (syncCurrentUrl.current.includes('/secure/studentMyCourses')) {
+          console.log('Injected attendance & course details scraper.');
+          syncWebViewRef.current?.injectJavaScript(ScraperService.getAttendanceScraperScript());
+        }
       }, 1500);
     } else if (url.includes('/secure/studentReports')) {
-      setTimeout(() => {
-        console.log('Injected reports scraper.');
-        syncWebViewRef.current?.injectJavaScript(ScraperService.getReportsScraperScript());
+      pageScrapeTimeoutRef.current = setTimeout(() => {
+        if (syncCurrentUrl.current.includes('/secure/studentReports')) {
+          console.log('Injected reports scraper.');
+          syncWebViewRef.current?.injectJavaScript(ScraperService.getReportsScraperScript());
+        }
       }, 1500);
     }
   };
@@ -586,11 +596,13 @@ function AppContent() {
           }
 
           // Now transition the WebView to the courses page
+          if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
           setSyncUrl('https://shiksha.iiserb.ac.in/secure/studentMyCourses');
           syncWebViewRef.current?.injectJavaScript(`window.location.href = "https://shiksha.iiserb.ac.in/secure/studentMyCourses"; true;`);
         } else {
           console.log('Profile scrape failed:', data.message);
           if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+          if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
           setSyncActive(false);
           setRefreshing(false);
         }
@@ -645,11 +657,13 @@ function AppContent() {
           }
 
           // Now transition the WebView to the reports page
+          if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
           setSyncUrl('https://shiksha.iiserb.ac.in/secure/studentReports');
           syncWebViewRef.current?.injectJavaScript(`window.location.href = "https://shiksha.iiserb.ac.in/secure/studentReports"; true;`);
         } else {
           console.log('Attendance scrape failed:', data.message);
           if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+          if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
           setSyncActive(false);
           setRefreshing(false);
         }
@@ -663,19 +677,26 @@ function AppContent() {
           console.log('Reports scrape notice:', data.message);
         }
         if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+        if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
         setSyncActive(false);
         setRefreshing(false);
       }
 
       else if (data.type === 'ERROR') {
-        console.log('Scraper error:', data.message);
+        console.log('Scraper notice/error:', data.message);
+        // Ignore stale page scope errors during transition between courses and reports
+        if (data.message && data.message.includes('Angular body scope not initialized') && syncCurrentUrl.current.includes('/secure/studentReports')) {
+          return;
+        }
         if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+        if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
         setSyncActive(false);
         setRefreshing(false);
       }
     } catch (e) {
       console.log('Error parsing sync WebView message:', e);
       if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+      if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
       setSyncActive(false);
       setRefreshing(false);
     }
