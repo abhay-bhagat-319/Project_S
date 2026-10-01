@@ -190,7 +190,16 @@ export class ReportsService {
     const finalPath = this.getReportLocalPath(report.id);
     const fileInfo = await FileSystem.getInfoAsync(finalPath);
     if (fileInfo.exists && !fileInfo.isDirectory && (fileInfo.size ?? 0) > 512) {
-      return finalPath;
+      try {
+        const header = await FileSystem.readAsStringAsync(finalPath, { length: 5 });
+        if (header.startsWith('%PDF')) {
+          return finalPath;
+        } else {
+          await FileSystem.deleteAsync(finalPath, { idempotent: true });
+        }
+      } catch {
+        await FileSystem.deleteAsync(finalPath, { idempotent: true });
+      }
     }
 
     if (onProgress) onProgress(0.2);
@@ -202,6 +211,10 @@ export class ReportsService {
 
     if (!base64Data) {
       throw new Error('WebView session not available to download report PDF.');
+    }
+
+    if (!base64Data.trim().startsWith('JVBER')) {
+      throw new Error('Downloaded report payload is not a valid PDF document.');
     }
 
     if (onProgress) onProgress(0.7);
@@ -247,8 +260,22 @@ export class ReportsService {
     const finalPath = this.getReportLocalPath(report.id);
     const fileInfo = await FileSystem.getInfoAsync(finalPath);
 
+    let isRealPdf = false;
+    if (fileInfo.exists && !fileInfo.isDirectory && (fileInfo.size ?? 0) > 512) {
+      try {
+        const header = await FileSystem.readAsStringAsync(finalPath, { length: 5 });
+        if (header.startsWith('%PDF')) {
+          isRealPdf = true;
+        } else {
+          await FileSystem.deleteAsync(finalPath, { idempotent: true });
+        }
+      } catch {
+        isRealPdf = false;
+      }
+    }
+
     let targetPath = finalPath;
-    if (!fileInfo.exists || fileInfo.isDirectory || (fileInfo.size ?? 0) < 512) {
+    if (!isRealPdf) {
       targetPath = await this.downloadReport(report, onProgress);
     }
 

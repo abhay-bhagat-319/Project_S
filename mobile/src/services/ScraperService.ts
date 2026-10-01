@@ -1287,20 +1287,55 @@ export const ScraperService = {
     return `
       (async function() {
         try {
-          var resp = await fetch(${escapedUrl});
+          var resp = await fetch(${escapedUrl}, {
+            method: 'GET',
+            credentials: 'include',
+            headers: {
+              'Accept': 'application/pdf,application/octet-stream,*/*'
+            }
+          });
           if (!resp.ok) {
             throw new Error('HTTP ' + resp.status + ': ' + resp.statusText);
           }
+
+          var finalUrl = resp.url || '';
+          var contentType = (resp.headers.get('content-type') || '').toLowerCase();
+          if (finalUrl.indexOf('/login') !== -1 || contentType.indexOf('text/html') !== -1) {
+            throw new Error('Session expired or portal returned HTML instead of PDF.');
+          }
+
           var blob = await resp.blob();
+          if (!blob || blob.size < 512) {
+            throw new Error('Downloaded file is empty or invalid (' + (blob ? blob.size : 0) + ' bytes).');
+          }
+
           var reader = new FileReader();
           reader.onloadend = function() {
-            var fullDataUrl = reader.result || '';
-            var base64 = fullDataUrl.indexOf(',') !== -1 ? fullDataUrl.split(',')[1] : fullDataUrl;
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-              type: 'REPORT_PDF_READY',
-              reportId: ${escapedId},
-              base64: base64
-            }));
+            try {
+              var fullDataUrl = reader.result || '';
+              var base64 = fullDataUrl.indexOf(',') !== -1 ? fullDataUrl.split(',')[1] : fullDataUrl;
+              
+              if (!base64 || base64.length < 100) {
+                throw new Error('Empty Base64 payload generated from PDF blob.');
+              }
+
+              // Base64 header for %PDF is JVBER
+              if (!base64.trim().startsWith('JVBER')) {
+                throw new Error('Received non-PDF payload from portal.');
+              }
+
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'REPORT_PDF_READY',
+                reportId: ${escapedId},
+                base64: base64
+              }));
+            } catch (innerErr) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'REPORT_PDF_FAILED',
+                reportId: ${escapedId},
+                message: innerErr.message || 'Invalid PDF content received'
+              }));
+            }
           };
           reader.onerror = function() {
             window.ReactNativeWebView.postMessage(JSON.stringify({
