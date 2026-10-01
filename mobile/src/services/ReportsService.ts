@@ -3,7 +3,76 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { CacheService, ReportItem } from './CacheService';
 
+export type PdfDownloaderFn = (fileUrl: string, reportId: string) => Promise<string>;
+
 export class ReportsService {
+  private static pdfDownloader: PdfDownloaderFn | null = null;
+  private static pendingRequests = new Map<string, {
+    resolve: (base64: string) => void;
+    reject: (err: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
+
+  /**
+   * Registers a bridge handler that can execute ScraperService.getPdfDownloadScript
+   * inside an active WebView session to bypass Android native OkHttp SSL trust anchor rejections.
+   */
+  public static registerPdfDownloader(downloader: PdfDownloaderFn): () => void {
+    this.pdfDownloader = downloader;
+    return () => {
+      if (this.pdfDownloader === downloader) {
+        this.pdfDownloader = null;
+      }
+    };
+  }
+
+  /**
+   * Dispatches incoming WebView message to any pending PDF download promise.
+   * Returns true if the message was handled.
+   */
+  public static handlePdfMessage(data: { type: string; reportId?: string; base64?: string; message?: string }): boolean {
+    if (!data || !data.type) return false;
+
+    if (data.type === 'REPORT_PDF_READY' && data.reportId && data.base64) {
+      const pending = this.pendingRequests.get(data.reportId);
+      if (pending) {
+        clearTimeout(pending.timer);
+        this.pendingRequests.delete(data.reportId);
+        pending.resolve(data.base64);
+        return true;
+      }
+    } else if (data.type === 'REPORT_PDF_FAILED' && data.reportId) {
+      const pending = this.pendingRequests.get(data.reportId);
+      if (pending) {
+        clearTimeout(pending.timer);
+        this.pendingRequests.delete(data.reportId);
+        pending.reject(new Error(data.message || 'PDF download failed in WebView session'));
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Creates a pending promise waiting for Base64 data from the WebView.
+   */
+  public static createPendingPdfDownload(reportId: string, timeoutMs: number = 30000): Promise<string> {
+    return new Promise((resolve, reject) => {
+      if (this.pendingRequests.has(reportId)) {
+        const old = this.pendingRequests.get(reportId)!;
+        clearTimeout(old.timer);
+        old.reject(new Error('Superceded by new download request'));
+      }
+
+      const timer = setTimeout(() => {
+        this.pendingRequests.delete(reportId);
+        reject(new Error('PDF download timed out. Please verify your connection and try again.'));
+      }, timeoutMs);
+
+      this.pendingRequests.set(reportId, { resolve, reject, timer });
+    });
+  }
+
   /**
    * Root directory where downloaded report PDFs are stored locally
    */
@@ -106,7 +175,7 @@ export class ReportsService {
   }
 
   /**
-   * Downloads a PDF report and saves it locally
+   * Downloads a PDF report inside WebView session as Base64 and saves it locally
    */
   public static async downloadReport(
     report: ReportItem,
@@ -119,40 +188,36 @@ export class ReportsService {
     }
 
     const finalPath = this.getReportLocalPath(report.id);
-    const tempPath = `${finalPath}.tmp`;
-
-    await FileSystem.deleteAsync(tempPath, { idempotent: true });
-
-    const downloadResumable = FileSystem.createDownloadResumable(
-      report.file,
-      tempPath,
-      {},
-      (progressEvent) => {
-        const total = progressEvent.totalBytesExpectedToWrite || 1;
-        const progress = progressEvent.totalBytesWritten / total;
-        if (onProgress) {
-          onProgress(Math.min(1, Math.max(0, progress)));
-        }
-      }
-    );
-
-    const result = await downloadResumable.downloadAsync();
-    if (!result || !result.uri) {
-      throw new Error('Download failed to return a valid local file.');
+    const fileInfo = await FileSystem.getInfoAsync(finalPath);
+    if (fileInfo.exists && !fileInfo.isDirectory && (fileInfo.size ?? 0) > 512) {
+      return finalPath;
     }
 
-    const downloadedInfo = await FileSystem.getInfoAsync(tempPath);
+    if (onProgress) onProgress(0.2);
+
+    let base64Data: string | null = null;
+    if (this.pdfDownloader) {
+      base64Data = await this.pdfDownloader(report.file, report.id);
+    }
+
+    if (!base64Data) {
+      throw new Error('WebView session not available to download report PDF.');
+    }
+
+    if (onProgress) onProgress(0.7);
+
+    // Save Base64 to disk
+    await FileSystem.writeAsStringAsync(finalPath, base64Data, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+
+    if (onProgress) onProgress(1.0);
+
+    const downloadedInfo = await FileSystem.getInfoAsync(finalPath);
     if (!downloadedInfo.exists || !downloadedInfo.size || downloadedInfo.size < 512) {
-      await FileSystem.deleteAsync(tempPath, { idempotent: true });
+      await FileSystem.deleteAsync(finalPath, { idempotent: true });
       throw new Error('Downloaded report is empty or invalid.');
     }
-
-    // Atomically swap temp to final
-    await FileSystem.deleteAsync(finalPath, { idempotent: true });
-    await FileSystem.moveAsync({
-      from: tempPath,
-      to: finalPath,
-    });
 
     // Update CacheService metadata
     const cachedList = (await CacheService.getCachedReportsData()) || [];
