@@ -1274,5 +1274,51 @@ export const ScraperService = {
       })();
       true;
     `;
+  },
+
+  /**
+   * Generates JS string to download a PDF within the authenticated WebView session
+   * and stream it back as Base64 to bypass Android OkHttp SSL trust anchor rejections.
+   */
+  getPdfDownloadScript(fileUrl: string, reportId: string): string {
+    const escapedUrl = JSON.stringify(fileUrl);
+    const escapedId = JSON.stringify(reportId);
+
+    return `
+      (async function() {
+        try {
+          var resp = await fetch(${escapedUrl});
+          if (!resp.ok) {
+            throw new Error('HTTP ' + resp.status + ': ' + resp.statusText);
+          }
+          var blob = await resp.blob();
+          var reader = new FileReader();
+          reader.onloadend = function() {
+            var fullDataUrl = reader.result || '';
+            var base64 = fullDataUrl.indexOf(',') !== -1 ? fullDataUrl.split(',')[1] : fullDataUrl;
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'REPORT_PDF_READY',
+              reportId: ${escapedId},
+              base64: base64
+            }));
+          };
+          reader.onerror = function() {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'REPORT_PDF_FAILED',
+              reportId: ${escapedId},
+              message: 'Failed to read PDF blob into base64'
+            }));
+          };
+          reader.readAsDataURL(blob);
+        } catch (err) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'REPORT_PDF_FAILED',
+            reportId: ${escapedId},
+            message: err.message || 'Error downloading PDF in WebView session'
+          }));
+        }
+      })();
+      true;
+    `;
   }
 };

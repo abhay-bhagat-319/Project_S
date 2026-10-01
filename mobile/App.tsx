@@ -12,6 +12,7 @@ import { Theme } from './src/Theme';
 import { SecureStorageService } from './src/services/SecureStorageService';
 import { CacheService, ProfileData, AttendanceData, CourseDetail } from './src/services/CacheService';
 import { ScraperService } from './src/services/ScraperService';
+import { ReportsService } from './src/services/ReportsService';
 
 import LockScreen from './src/screens/LockScreen';
 import LoginScreen from './src/screens/LoginScreen';
@@ -538,6 +539,10 @@ function AppContent() {
     try {
       const data = JSON.parse(event.nativeEvent.data);
       console.log('Sync message received:', data.type);
+
+      if (ReportsService.handlePdfMessage(data)) {
+        return;
+      }
 
       if (data.type === 'PROFILE_SCRAPED') {
         if (data.status === 'success') {

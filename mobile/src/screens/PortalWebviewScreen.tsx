@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { ScraperService } from '../services/ScraperService';
+import { ReportsService } from '../services/ReportsService';
 
 export interface PortalWebviewHandle {
   handleBackPress: () => boolean;
@@ -39,6 +40,17 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
   const [progress, setProgress] = useState(0);
   const [pageTitle, setPageTitle] = useState('Shiksha Portal');
 
+  // Register WebView as the authenticated PDF downloader bridge
+  useEffect(() => {
+    const unregister = ReportsService.registerPdfDownloader((fileUrl, reportId) => {
+      const pendingPromise = ReportsService.createPendingPdfDownload(reportId);
+      const script = ScraperService.getPdfDownloadScript(fileUrl, reportId);
+      webViewRef.current?.injectJavaScript(script);
+      return pendingPromise;
+    });
+    return unregister;
+  }, []);
+
   useEffect(() => {
     if (targetUrl && targetUrl !== currentUrl) {
       setCurrentUrl(targetUrl);
@@ -69,6 +81,9 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
   const handleMessage = (event: any) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
+      if (ReportsService.handlePdfMessage(data)) {
+        return;
+      }
       if (data.type === 'LOGIN_SUBMITTED') {
         console.log('PortalWebview: Auto-login submitted successfully.');
       }
