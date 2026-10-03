@@ -195,6 +195,12 @@ export default function UpdateModal({
                     <Ionicons name="arrow-forward" size={12} color={Theme.colors.textSecondary} style={{ marginHorizontal: 4 }} />
                     <Text style={styles.latestVersionText}>v{updateInfo.latestVersion}</Text>
                   </View>
+                  {updateInfo.apkArchitecture === 'arm64-v8a' && (
+                    <View style={[styles.sizeBadge, { backgroundColor: 'rgba(99, 102, 241, 0.15)' }]}>
+                      <Ionicons name="hardware-chip-outline" size={11} color={Theme.colors.primary} style={{ marginRight: 3 }} />
+                      <Text style={[styles.sizeBadgeText, { color: Theme.colors.primary }]}>ARM64</Text>
+                    </View>
+                  )}
                   {isApkCached ? (
                     <View style={[styles.sizeBadge, { backgroundColor: 'rgba(34, 197, 94, 0.15)' }]}>
                       <Ionicons name="checkmark-done" size={12} color="#22c55e" style={{ marginRight: 3 }} />

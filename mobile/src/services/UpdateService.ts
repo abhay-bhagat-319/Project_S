@@ -5,6 +5,8 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { NotificationService } from './NotificationService';
+
 export interface UpdateInfo {
   hasUpdate: boolean;
   currentVersion: string;
@@ -16,6 +18,8 @@ export interface UpdateInfo {
   htmlUrl: string;
   apkSizeFormatted?: string;
   apkSizeBytes?: number;
+  apkArchitecture?: 'arm64-v8a' | 'universal' | 'standard';
+  apkName?: string;
   isCached?: boolean;
 }
 
@@ -27,6 +31,61 @@ export class UpdateService {
   private static GITHUB_REPO = 'Project_S';
   private static RELEASES_API_URL = `https://api.github.com/repos/${UpdateService.GITHUB_OWNER}/${UpdateService.GITHUB_REPO}/releases/latest`;
   public static RELEASES_WEB_URL = `https://github.com/${UpdateService.GITHUB_OWNER}/${UpdateService.GITHUB_REPO}/releases/latest`;
+
+  /**
+   * Selects the most optimal APK asset from a release payload.
+   * Prioritizes targeted arm64-v8a APK (~20MB) for modern Android devices,
+   * falling back to universal (~70MB) or any generic APK asset.
+   */
+  public static selectBestApkAsset(assets: any[]): {
+    url: string;
+    size: number;
+    name: string;
+    architecture: 'arm64-v8a' | 'universal' | 'standard';
+  } | null {
+    if (!Array.isArray(assets) || assets.length === 0) return null;
+
+    const apkAssets = assets.filter((a: any) =>
+      typeof a.name === 'string' && a.name.toLowerCase().endsWith('.apk')
+    );
+
+    if (apkAssets.length === 0) return null;
+
+    // 1. Try to find arm64-v8a targeted APK (99.8% of modern student phones)
+    const arm64Asset = apkAssets.find((a: any) =>
+      /arm64[-_]?v8a/i.test(a.name) || /arm64/i.test(a.name)
+    );
+    if (arm64Asset) {
+      return {
+        url: arm64Asset.browser_download_url,
+        size: arm64Asset.size || 0,
+        name: arm64Asset.name,
+        architecture: 'arm64-v8a',
+      };
+    }
+
+    // 2. Fallback to universal APK
+    const universalAsset = apkAssets.find((a: any) =>
+      /universal/i.test(a.name)
+    );
+    if (universalAsset) {
+      return {
+        url: universalAsset.browser_download_url,
+        size: universalAsset.size || 0,
+        name: universalAsset.name,
+        architecture: 'universal',
+      };
+    }
+
+    // 3. Fallback to first available APK
+    const firstAsset = apkAssets[0];
+    return {
+      url: firstAsset.browser_download_url,
+      size: firstAsset.size || 0,
+      name: firstAsset.name,
+      architecture: 'standard',
+    };
+  }
 
   /**
    * Retrieves the persistent directory used to store downloaded APKs
@@ -157,21 +216,23 @@ export class UpdateService {
       const tagName = releaseData.tag_name || '';
       const latestVersion = this.cleanVersion(tagName) || currentVersion;
 
-      // Locate APK asset if available
+      // Locate and select the best APK asset (arm64-v8a preferred, universal fallback)
       let apkDownloadUrl: string | null = null;
       let apkSizeFormatted: string | undefined = undefined;
       let apkSizeBytes: number | undefined = undefined;
+      let apkArchitecture: 'arm64-v8a' | 'universal' | 'standard' = 'standard';
+      let apkName: string | undefined = undefined;
 
       if (Array.isArray(releaseData.assets)) {
-        const apkAsset = releaseData.assets.find((asset: any) => 
-          asset.name && asset.name.toLowerCase().endsWith('.apk')
-        );
+        const bestAsset = this.selectBestApkAsset(releaseData.assets);
 
-        if (apkAsset) {
-          apkDownloadUrl = apkAsset.browser_download_url;
-          apkSizeBytes = apkAsset.size;
-          if (apkAsset.size) {
-            const sizeInMb = (apkAsset.size / (1024 * 1024)).toFixed(1);
+        if (bestAsset) {
+          apkDownloadUrl = bestAsset.url;
+          apkSizeBytes = bestAsset.size;
+          apkArchitecture = bestAsset.architecture;
+          apkName = bestAsset.name;
+          if (bestAsset.size) {
+            const sizeInMb = (bestAsset.size / (1024 * 1024)).toFixed(1);
             apkSizeFormatted = `${sizeInMb} MB`;
           }
         }
@@ -193,6 +254,8 @@ export class UpdateService {
         htmlUrl: releaseData.html_url || this.RELEASES_WEB_URL,
         apkSizeFormatted,
         apkSizeBytes,
+        apkArchitecture,
+        apkName,
         isCached,
       };
     } catch (error) {
@@ -207,6 +270,49 @@ export class UpdateService {
         apkDownloadUrl: null,
         htmlUrl: this.RELEASES_WEB_URL,
       };
+    }
+  }
+
+  /**
+   * Silently pre-fetches the latest update in the background and sends a local notification
+   * when the file is verified and ready on disk for instant 1-tap installation.
+   */
+  public static async prefetchUpdateSilently(
+    info: UpdateInfo,
+    onProgress?: (fraction: number) => void
+  ): Promise<boolean> {
+    if (!info.hasUpdate || !info.apkDownloadUrl) return false;
+
+    try {
+      // Check if already cached
+      const isCached = await this.isApkCached(info.latestVersion, info.apkSizeBytes);
+      if (isCached) {
+        await NotificationService.notifyUpdateReady(info.latestVersion, info.releaseName);
+        return true;
+      }
+
+      // Download in background
+      await this.downloadApk(
+        info.apkDownloadUrl,
+        info.latestVersion,
+        info.apkSizeBytes,
+        (fraction) => {
+          if (onProgress) onProgress(fraction);
+        }
+      );
+
+      // Verify and notify
+      const verified = await this.isApkCached(info.latestVersion, info.apkSizeBytes);
+      if (verified) {
+        await NotificationService.notifyUpdateReady(info.latestVersion, info.releaseName);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.warn('[UpdateService] Silent prefetch failed:', e);
+      // If silent prefetch failed, still notify about update availability
+      await NotificationService.notifyUpdateAvailable(info.latestVersion, info.releaseName);
+      return false;
     }
   }
 
