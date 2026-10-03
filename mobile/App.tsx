@@ -27,6 +27,8 @@ import ReportsScreen from './src/screens/ReportsScreen';
 import UpdateModal from './src/screens/UpdateModal';
 import BackgroundDownloadPill from './src/components/BackgroundDownloadPill';
 import { UpdateService, UpdateInfo } from './src/services/UpdateService';
+import { NotificationService } from './src/services/NotificationService';
+import * as Notifications from 'expo-notifications';
 
 type AppState = 'INITIALIZING' | 'NEEDS_LOGIN' | 'LOCKED' | 'LOGGED_IN';
 type TabName = 'Profile' | 'Attendance' | 'Courses' | 'Portal' | 'Settings';
@@ -146,7 +148,37 @@ function AppContent() {
 
   useEffect(() => {
     bootstrapApp();
+    NotificationService.init().catch(() => {});
+
+    // Listen for notification tap responses
+    const responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data as Record<string, any> | undefined;
+      if (data?.action === 'INSTALL_UPDATE' && data.version) {
+        const versionStr = String(data.version);
+        UpdateService.installCachedApk(versionStr).catch((err) => {
+          Alert.alert('Install Failed', err?.message || 'Could not launch package installer.');
+        });
+      } else if (data?.action === 'OPEN_UPDATE_MODAL') {
+        setUpdateModalVisible(true);
+      }
+    });
+
+    // Handle cold launch from tapped notification
+    Notifications.getLastNotificationResponseAsync().then((response) => {
+      if (response) {
+        const data = response.notification.request.content.data as Record<string, any> | undefined;
+        if (data?.action === 'INSTALL_UPDATE' && data.version) {
+          const versionStr = String(data.version);
+          UpdateService.installCachedApk(versionStr).catch(() => {});
+        }
+      }
+    });
+
     checkAppUpdates();
+
+    return () => {
+      responseSubscription.remove();
+    };
   }, []);
 
   const checkAppUpdates = async () => {
@@ -154,12 +186,35 @@ function AppContent() {
       const info = await UpdateService.checkForUpdate();
       if (info.hasUpdate) {
         setUpdateInfo(info);
-        const isSnoozed = await UpdateService.isUpdateSnoozed(info.latestVersion);
-        if (!isSnoozed) {
-          setUpdateModalVisible(true);
+        // Prompt user on every launch if an update is available
+        setUpdateModalVisible(true);
+
+        // If not already cached on disk, silently prefetch in the background
+        if (!info.isCached && info.apkDownloadUrl) {
+          UpdateService.prefetchUpdateSilently(info, (progressFraction) => {
+            setBgDownload({
+              isDownloading: true,
+              progress: progressFraction,
+              isComplete: false,
+              versionTag: info.latestVersion,
+            });
+          }).then((downloaded) => {
+            if (downloaded) {
+              setBgDownload({
+                isDownloading: false,
+                progress: 1,
+                isComplete: true,
+                versionTag: info.latestVersion,
+              });
+              setUpdateInfo((prev) => (prev ? { ...prev, isCached: true } : prev));
+            } else {
+              setBgDownload((prev) => ({ ...prev, isDownloading: false }));
+            }
+          });
         }
       } else {
         setUpdateInfo(null);
+        NotificationService.clearUpdateNotification().catch(() => {});
       }
     } catch (err) {
       console.log('Startup update check error:', err);
