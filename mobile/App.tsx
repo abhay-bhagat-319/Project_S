@@ -174,10 +174,21 @@ function AppContent() {
       }
     });
 
+    // Subscribe to unified background download progress
+    const unsubscribeProgress = UpdateService.addProgressListener((fraction) => {
+      setBgDownload((prev) => ({
+        isDownloading: fraction > 0 && fraction < 1,
+        progress: fraction,
+        isComplete: fraction >= 1,
+        versionTag: prev.versionTag,
+      }));
+    });
+
     checkAppUpdates();
 
     return () => {
       responseSubscription.remove();
+      unsubscribeProgress();
     };
   }, []);
 
@@ -186,29 +197,15 @@ function AppContent() {
       const info = await UpdateService.checkForUpdate();
       if (info.hasUpdate) {
         setUpdateInfo(info);
+        setBgDownload((prev) => ({ ...prev, versionTag: info.latestVersion }));
         // Prompt user on every launch if an update is available
         setUpdateModalVisible(true);
 
         // If not already cached on disk, silently prefetch in the background
-        if (!info.isCached && info.apkDownloadUrl) {
-          UpdateService.prefetchUpdateSilently(info, (progressFraction) => {
-            setBgDownload({
-              isDownloading: true,
-              progress: progressFraction,
-              isComplete: false,
-              versionTag: info.latestVersion,
-            });
-          }).then((downloaded) => {
+        if (!info.isCached && info.apkDownloadUrl && !UpdateService.isDownloading(info.latestVersion)) {
+          UpdateService.prefetchUpdateSilently(info).then((downloaded) => {
             if (downloaded) {
-              setBgDownload({
-                isDownloading: false,
-                progress: 1,
-                isComplete: true,
-                versionTag: info.latestVersion,
-              });
               setUpdateInfo((prev) => (prev ? { ...prev, isCached: true } : prev));
-            } else {
-              setBgDownload((prev) => ({ ...prev, isDownloading: false }));
             }
           });
         }
@@ -218,48 +215,6 @@ function AppContent() {
       }
     } catch (err) {
       console.log('Startup update check error:', err);
-    }
-  };
-
-  const handleStartBackgroundDownload = async (info: UpdateInfo) => {
-    if (!info.apkDownloadUrl) return;
-    setBgDownload({
-      isDownloading: true,
-      progress: 0,
-      isComplete: false,
-      versionTag: info.latestVersion,
-    });
-
-    try {
-      await UpdateService.downloadApk(
-        info.apkDownloadUrl,
-        info.latestVersion,
-        info.apkSizeBytes,
-        (fraction) => {
-          setBgDownload((prev) => ({ ...prev, progress: fraction }));
-        }
-      );
-      setBgDownload((prev) => ({
-        ...prev,
-        isDownloading: false,
-        isComplete: true,
-      }));
-      setUpdateInfo((prev) => (prev ? { ...prev, isCached: true } : prev));
-      Alert.alert(
-        'Update Ready',
-        `Project_S v${info.latestVersion} is downloaded and ready to install.`,
-        [
-          { text: 'Later', style: 'cancel' },
-          {
-            text: 'Install Now',
-            onPress: () => UpdateService.installCachedApk(info.latestVersion),
-          },
-        ]
-      );
-    } catch (err: any) {
-      console.error('[App] Background download failed:', err);
-      setBgDownload((prev) => ({ ...prev, isDownloading: false }));
-      Alert.alert('Download Failed', 'Background download was interrupted. Please retry from Settings.');
     }
   };
 
@@ -1009,9 +964,7 @@ function AppContent() {
         visible={updateModalVisible}
         updateInfo={updateInfo}
         onClose={() => setUpdateModalVisible(false)}
-        onStartBackgroundDownload={handleStartBackgroundDownload}
         onSnooze={() => {}}
-        isBackgroundDownloading={bgDownload.isDownloading}
       />
 
       {/* Background WebView for syncing data */}

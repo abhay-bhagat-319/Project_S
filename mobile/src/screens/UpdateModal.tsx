@@ -19,21 +19,17 @@ interface UpdateModalProps {
   visible: boolean;
   updateInfo: UpdateInfo | null;
   onClose: () => void;
-  onStartBackgroundDownload?: (info: UpdateInfo) => void;
   onSnooze?: (versionTag: string) => void;
-  isBackgroundDownloading?: boolean;
 }
 
 type DownloadStatus = 'IDLE' | 'DOWNLOADING' | 'READY_TO_INSTALL' | 'ERROR';
-type ActiveInfoKey = 'DOWNLOAD_NOW' | 'DOWNLOAD_BG' | 'REMIND_LATER' | 'INSTALL_NOW' | null;
+type ActiveInfoKey = 'DOWNLOAD_NOW' | 'REMIND_LATER' | 'INSTALL_NOW' | null;
 
 export default function UpdateModal({
   visible,
   updateInfo,
   onClose,
-  onStartBackgroundDownload,
   onSnooze,
-  isBackgroundDownloading = false,
 }: UpdateModalProps) {
   const insets = useSafeAreaInsets();
   const [status, setStatus] = useState<DownloadStatus>('IDLE');
@@ -46,10 +42,34 @@ export default function UpdateModal({
     if (visible && updateInfo) {
       checkCacheStatus();
       setActiveInfo(null);
-      setStatus('IDLE');
-      setProgress(0);
       setErrorMessage('');
+
+      // Check if already downloading in background
+      if (UpdateService.isDownloading(updateInfo.latestVersion)) {
+        setStatus('DOWNLOADING');
+      } else {
+        setStatus('IDLE');
+      }
     }
+  }, [visible, updateInfo]);
+
+  // Subscribe to live background download progress
+  useEffect(() => {
+    if (!visible || !updateInfo) return;
+
+    const unsubscribe = UpdateService.addProgressListener((fraction) => {
+      setProgress(fraction);
+      if (fraction >= 1) {
+        setIsApkCached(true);
+        setStatus('READY_TO_INSTALL');
+      } else if (fraction > 0) {
+        setStatus('DOWNLOADING');
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, [visible, updateInfo]);
 
   const checkCacheStatus = async () => {
@@ -59,11 +79,14 @@ export default function UpdateModal({
       updateInfo.apkSizeBytes
     );
     setIsApkCached(cached);
+    if (cached) {
+      setStatus('READY_TO_INSTALL');
+    }
   };
 
   if (!updateInfo) return null;
 
-  const handleForegroundDownloadOrInstall = async () => {
+  const handleDownloadOrInstall = async () => {
     if (!updateInfo.apkDownloadUrl && !isApkCached) {
       await Linking.openURL(updateInfo.htmlUrl);
       onClose();
@@ -71,9 +94,15 @@ export default function UpdateModal({
     }
 
     try {
+      // If already cached, launch the installer immediately
       if (isApkCached) {
         await UpdateService.installCachedApk(updateInfo.latestVersion);
         onClose();
+        return;
+      }
+
+      // If already in progress, keep UI in downloading mode
+      if (UpdateService.isDownloading(updateInfo.latestVersion)) {
         return;
       }
 
@@ -81,7 +110,8 @@ export default function UpdateModal({
       setProgress(0);
       setErrorMessage('');
 
-      await UpdateService.downloadAndInstall(
+      // Start non-blocking background download
+      await UpdateService.downloadApk(
         updateInfo.apkDownloadUrl!,
         updateInfo.latestVersion,
         updateInfo.apkSizeBytes,
@@ -93,17 +123,10 @@ export default function UpdateModal({
       setStatus('READY_TO_INSTALL');
       setIsApkCached(true);
     } catch (err: any) {
-      console.error('[UpdateModal] Update failed:', err);
+      console.error('[UpdateModal] Download failed:', err);
       setStatus('ERROR');
-      setErrorMessage(err?.message || 'Failed to download or launch package installer.');
+      setErrorMessage(err?.message || 'Download was interrupted. Please retry.');
     }
-  };
-
-  const handleBackgroundDownload = () => {
-    if (onStartBackgroundDownload) {
-      onStartBackgroundDownload(updateInfo);
-    }
-    onClose();
   };
 
   const handleRemindLater = async () => {
@@ -112,11 +135,6 @@ export default function UpdateModal({
       onSnooze(updateInfo.latestVersion);
     }
     onClose();
-    Alert.alert(
-      'Update Snoozed',
-      'You will not be reminded for 24 hours. You can update anytime from the Settings menu.',
-      [{ text: 'OK' }]
-    );
   };
 
   const handleOpenBrowser = async () => {
@@ -132,23 +150,18 @@ export default function UpdateModal({
 
   const infoDescriptions: Record<string, { title: string; desc: string; icon: any }> = {
     DOWNLOAD_NOW: {
-      title: 'Download Now',
-      desc: 'Downloads the complete package actively on this screen and launches the Android Package Installer immediately.',
-      icon: 'download-outline',
+      title: 'Download Update',
+      desc: 'Downloads the update package in the background. You can close this screen or minimize the app freely while it downloads.',
+      icon: 'cloud-download-outline',
     },
     INSTALL_NOW: {
       title: 'Install Now',
       desc: 'The update package is already verified and saved on your phone. Opens the installer instantly without downloading again.',
       icon: 'checkmark-circle-outline',
     },
-    DOWNLOAD_BG: {
-      title: 'Download in Background',
-      desc: 'Downloads the update in the background while you continue using the app freely. You will see a live progress bar at the bottom.',
-      icon: 'cloud-download-outline',
-    },
     REMIND_LATER: {
       title: 'Remind Me Later',
-      desc: 'Snoozes this update prompt for 24 hours. Note: Some institutional portal scrapers or features might not work properly on older versions.',
+      desc: 'Dismisses this prompt for now. You can check for updates or install anytime from Settings.',
       icon: 'time-outline',
     },
   };
@@ -158,18 +171,14 @@ export default function UpdateModal({
       visible={visible}
       animationType="slide"
       transparent={true}
-      onRequestClose={() => {
-        if (!isDownloading) onClose();
-      }}
+      onRequestClose={onClose}
       statusBarTranslucent={true}
     >
       <View style={styles.modalOverlay}>
         <TouchableOpacity
           style={styles.modalDismiss}
           activeOpacity={1}
-          onPress={() => {
-            if (!isDownloading) onClose();
-          }}
+          onPress={onClose}
         />
 
         <View
@@ -216,11 +225,9 @@ export default function UpdateModal({
               </View>
             </View>
 
-            {!isDownloading && (
-              <TouchableOpacity style={styles.closeBtn} onPress={onClose} activeOpacity={0.7}>
-                <Ionicons name="close" size={18} color={Theme.colors.textPrimary} />
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity style={styles.closeBtn} onPress={onClose} activeOpacity={0.7}>
+              <Ionicons name="close" size={18} color={Theme.colors.textPrimary} />
+            </TouchableOpacity>
           </View>
 
           {/* Release Title */}
@@ -261,7 +268,7 @@ export default function UpdateModal({
               <View style={styles.progressInfoRow}>
                 <View style={styles.progressStatusRow}>
                   <ActivityIndicator size="small" color={Theme.colors.primary} style={{ marginRight: 6 }} />
-                  <Text style={styles.progressStatusText}>Downloading package...</Text>
+                  <Text style={styles.progressStatusText}>Downloading update in background...</Text>
                 </View>
                 <Text style={styles.progressPercentText}>{Math.round(progress * 100)}%</Text>
               </View>
@@ -287,34 +294,36 @@ export default function UpdateModal({
             </View>
           )}
 
-          {/* 3 Action Buttons Stack */}
+          {/* Unified Action Buttons Container */}
           <View style={styles.actionButtonsContainer}>
-            {/* Button 1: Download Now / Install Now */}
+            {/* Unified Primary Button: Download Update / Install Now */}
             <View style={styles.buttonWithInfoRow}>
               <TouchableOpacity
                 style={[
                   styles.actionBtn,
                   isApkCached ? styles.installBtn : styles.primaryBtn,
-                  isDownloading && styles.primaryBtnDisabled
+                  isDownloading && styles.downloadingBtn
                 ]}
-                onPress={handleForegroundDownloadOrInstall}
-                disabled={isDownloading}
+                onPress={handleDownloadOrInstall}
                 activeOpacity={0.8}
               >
                 {isDownloading ? (
-                  <Text style={styles.primaryBtnText}>Downloading ({Math.round(progress * 100)}%)...</Text>
+                  <View style={styles.btnRow}>
+                    <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 8 }} />
+                    <Text style={styles.primaryBtnText}>Downloading ({Math.round(progress * 100)}%)...</Text>
+                  </View>
                 ) : (
-                  <>
+                  <View style={styles.btnRow}>
                     <Ionicons
-                      name={isApkCached ? 'shield-checkmark-outline' : 'download-outline'}
+                      name={isApkCached ? 'shield-checkmark-outline' : 'cloud-download-outline'}
                       size={18}
                       color="#ffffff"
                       style={{ marginRight: 6 }}
                     />
                     <Text style={styles.primaryBtnText}>
-                      {isApkCached ? 'Install Now' : status === 'ERROR' ? 'Retry Download' : 'Download Now'}
+                      {isApkCached ? 'Install Now' : status === 'ERROR' ? 'Retry Download' : 'Download Update'}
                     </Text>
-                  </>
+                  </View>
                 )}
               </TouchableOpacity>
               <TouchableOpacity
@@ -330,68 +339,33 @@ export default function UpdateModal({
               </TouchableOpacity>
             </View>
 
-            {/* Button 2: Download in Background (Hidden if already cached) */}
-            {!isApkCached && !isDownloading && (
-              <View style={styles.buttonWithInfoRow}>
-                <TouchableOpacity
-                  style={[
-                    styles.actionBtn,
-                    styles.secondaryActionBtn,
-                    isBackgroundDownloading && styles.primaryBtnDisabled
-                  ]}
-                  onPress={handleBackgroundDownload}
-                  disabled={isBackgroundDownloading}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="cloud-download-outline" size={17} color={Theme.colors.lavender} style={{ marginRight: 6 }} />
-                  <Text style={styles.secondaryActionBtnText}>
-                    {isBackgroundDownloading ? 'Downloading in background...' : 'Download in Background'}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.infoIconBtn}
-                  onPress={() => toggleInfo('DOWNLOAD_BG')}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons
-                    name="information-circle-outline"
-                    size={20}
-                    color={activeInfo === 'DOWNLOAD_BG' ? Theme.colors.primary : Theme.colors.textSecondary}
-                  />
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* Button 3: Remind Me Later */}
-            {!isDownloading && (
-              <View style={styles.buttonWithInfoRow}>
-                <TouchableOpacity
-                  style={[styles.actionBtn, styles.tertiaryActionBtn]}
-                  onPress={handleRemindLater}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="time-outline" size={16} color={Theme.colors.textSecondary} style={{ marginRight: 6 }} />
-                  <Text style={styles.tertiaryActionBtnText}>Remind Me Later</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.infoIconBtn}
-                  onPress={() => toggleInfo('REMIND_LATER')}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons
-                    name="information-circle-outline"
-                    size={20}
-                    color={activeInfo === 'REMIND_LATER' ? Theme.colors.primary : Theme.colors.textSecondary}
-                  />
-                </TouchableOpacity>
-              </View>
-            )}
+            {/* Secondary Button: Remind Me Later */}
+            <View style={styles.buttonWithInfoRow}>
+              <TouchableOpacity
+                style={[styles.actionBtn, styles.tertiaryActionBtn]}
+                onPress={handleRemindLater}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="time-outline" size={16} color={Theme.colors.textSecondary} style={{ marginRight: 6 }} />
+                <Text style={styles.tertiaryActionBtnText}>Remind Me Later</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.infoIconBtn}
+                onPress={() => toggleInfo('REMIND_LATER')}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name="information-circle-outline"
+                  size={20}
+                  color={activeInfo === 'REMIND_LATER' ? Theme.colors.primary : Theme.colors.textSecondary}
+                />
+              </TouchableOpacity>
+            </View>
 
             {/* GitHub Link footer */}
             <TouchableOpacity
               style={styles.gitHubLink}
               onPress={handleOpenBrowser}
-              disabled={isDownloading}
               activeOpacity={0.7}
             >
               <Ionicons name="logo-github" size={14} color={Theme.colors.textSecondary} style={{ marginRight: 5 }} />
@@ -634,6 +608,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  btnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   actionBtn: {
     flex: 1,
     flexDirection: 'row',
@@ -650,6 +629,9 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 4,
   },
+  downloadingBtn: {
+    backgroundColor: 'rgba(99, 102, 241, 0.85)',
+  },
   installBtn: {
     backgroundColor: '#16a34a', // Green for instant install
     shadowColor: '#16a34a',
@@ -657,16 +639,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 4,
-  },
-  secondaryActionBtn: {
-    backgroundColor: 'rgba(139, 120, 255, 0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(139, 120, 255, 0.3)',
-  },
-  secondaryActionBtnText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Theme.colors.lavender,
   },
   tertiaryActionBtn: {
     backgroundColor: 'transparent',
@@ -684,9 +656,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 4,
-  },
-  primaryBtnDisabled: {
-    opacity: 0.6,
   },
   primaryBtnText: {
     fontSize: 14,
