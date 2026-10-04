@@ -1,16 +1,6 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
-
-// Configure notification behavior when app is in the foreground
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 
 const UPDATE_NOTIFICATION_CHANNEL_ID = 'app-updates';
 const UPDATE_NOTIFICATION_ID = 'project-s-app-update';
@@ -19,12 +9,39 @@ export class NotificationService {
   private static isInitialized = false;
 
   /**
-   * Initializes notification channels and permissions for Android
+   * Returns true if notifications are fully supported on this runtime environment.
+   * In Expo Go (SDK 53+), native notification features are restricted.
+   */
+  public static isSupported(): boolean {
+    const isExpoGo =
+      Constants.appOwnership === 'expo' ||
+      Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+    return !isExpoGo;
+  }
+
+  /**
+   * Initializes notification channels, handlers, and permissions for Android standalone builds.
+   * Safe no-op in Expo Go to prevent runtime crashes.
    */
   public static async init(): Promise<boolean> {
+    if (!this.isSupported()) {
+      return false;
+    }
+
     if (this.isInitialized) return true;
 
     try {
+      // Lazy configure foreground handler only on supported native runtimes
+      Notifications.setNotificationHandler({
+        handleNotification: async () => ({
+          shouldShowAlert: true,
+          shouldPlaySound: true,
+          shouldSetBadge: false,
+          shouldShowBanner: true,
+          shouldShowList: true,
+        }),
+      });
+
       if (Platform.OS === 'android') {
         await Notifications.setNotificationChannelAsync(UPDATE_NOTIFICATION_CHANNEL_ID, {
           name: 'App Updates',
@@ -54,9 +71,65 @@ export class NotificationService {
   }
 
   /**
+   * Registers a listener for user interaction with notifications (tap/action).
+   * Returns an unsubscribe function.
+   */
+  public static registerResponseListener(
+    onAction: (action: 'INSTALL_UPDATE' | 'OPEN_UPDATE_MODAL', version?: string) => void
+  ): () => void {
+    if (!this.isSupported()) {
+      return () => {};
+    }
+
+    try {
+      const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+        const data = response.notification.request.content.data as Record<string, any> | undefined;
+        const action = data?.action;
+        const version = data?.version ? String(data.version) : undefined;
+
+        if (action === 'INSTALL_UPDATE' || action === 'OPEN_UPDATE_MODAL') {
+          onAction(action, version);
+        }
+      });
+
+      return () => {
+        subscription.remove();
+      };
+    } catch {
+      return () => {};
+    }
+  }
+
+  /**
+   * Checks if the app was launched directly by tapping a notification.
+   */
+  public static async checkColdLaunchResponse(
+    onAction: (action: 'INSTALL_UPDATE' | 'OPEN_UPDATE_MODAL', version?: string) => void
+  ): Promise<void> {
+    if (!this.isSupported()) return;
+
+    try {
+      const response = await Notifications.getLastNotificationResponseAsync();
+      if (response) {
+        const data = response.notification.request.content.data as Record<string, any> | undefined;
+        const action = data?.action;
+        const version = data?.version ? String(data.version) : undefined;
+
+        if (action === 'INSTALL_UPDATE' || action === 'OPEN_UPDATE_MODAL') {
+          onAction(action, version);
+        }
+      }
+    } catch {
+      // Ignore
+    }
+  }
+
+  /**
    * Sends a local notification when an update has been pre-downloaded and is ready to install
    */
   public static async notifyUpdateReady(version: string, releaseName?: string): Promise<void> {
+    if (!this.isSupported()) return;
+
     try {
       await this.init();
       const title = 'Update Ready to Install 🚀';
@@ -88,6 +161,8 @@ export class NotificationService {
    * Sends a local notification when an update is available (before/without prefetch)
    */
   public static async notifyUpdateAvailable(version: string, releaseName?: string): Promise<void> {
+    if (!this.isSupported()) return;
+
     try {
       await this.init();
       const title = 'New Update Available 🌟';
@@ -117,6 +192,8 @@ export class NotificationService {
    * Clears the update notification from the system tray
    */
   public static async clearUpdateNotification(): Promise<void> {
+    if (!this.isSupported()) return;
+
     try {
       await Notifications.dismissNotificationAsync(UPDATE_NOTIFICATION_ID);
     } catch (err) {

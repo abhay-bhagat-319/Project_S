@@ -28,7 +28,6 @@ import UpdateModal from './src/screens/UpdateModal';
 import BackgroundDownloadPill from './src/components/BackgroundDownloadPill';
 import { UpdateService, UpdateInfo } from './src/services/UpdateService';
 import { NotificationService } from './src/services/NotificationService';
-import * as Notifications from 'expo-notifications';
 
 type AppState = 'INITIALIZING' | 'NEEDS_LOGIN' | 'LOCKED' | 'LOGGED_IN';
 type TabName = 'Profile' | 'Attendance' | 'Courses' | 'Portal' | 'Settings';
@@ -151,28 +150,22 @@ function AppContent() {
     NotificationService.init().catch(() => {});
 
     // Listen for notification tap responses
-    const responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      const data = response.notification.request.content.data as Record<string, any> | undefined;
-      if (data?.action === 'INSTALL_UPDATE' && data.version) {
-        const versionStr = String(data.version);
-        UpdateService.installCachedApk(versionStr).catch((err) => {
+    const unsubscribeNotification = NotificationService.registerResponseListener((action, version) => {
+      if (action === 'INSTALL_UPDATE' && version) {
+        UpdateService.installCachedApk(version).catch((err) => {
           Alert.alert('Install Failed', err?.message || 'Could not launch package installer.');
         });
-      } else if (data?.action === 'OPEN_UPDATE_MODAL') {
+      } else if (action === 'OPEN_UPDATE_MODAL') {
         setUpdateModalVisible(true);
       }
     });
 
     // Handle cold launch from tapped notification
-    Notifications.getLastNotificationResponseAsync().then((response) => {
-      if (response) {
-        const data = response.notification.request.content.data as Record<string, any> | undefined;
-        if (data?.action === 'INSTALL_UPDATE' && data.version) {
-          const versionStr = String(data.version);
-          UpdateService.installCachedApk(versionStr).catch(() => {});
-        }
+    NotificationService.checkColdLaunchResponse((action, version) => {
+      if (action === 'INSTALL_UPDATE' && version) {
+        UpdateService.installCachedApk(version).catch(() => {});
       }
-    });
+    }).catch(() => {});
 
     // Subscribe to unified background download progress
     const unsubscribeProgress = UpdateService.addProgressListener((fraction) => {
@@ -187,7 +180,7 @@ function AppContent() {
     checkAppUpdates();
 
     return () => {
-      responseSubscription.remove();
+      unsubscribeNotification();
       unsubscribeProgress();
     };
   }, []);
