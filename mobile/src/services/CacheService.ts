@@ -38,9 +38,29 @@ export interface ReportItem {
   fileSizeFormatted?: string;
 }
 
+export interface CourseMarkItem {
+  componentName: string;
+  maxMarks: number;
+  scoredMarks?: number;
+  weightage?: string;
+  grade?: string;
+  remarks?: string;
+}
+
+export interface CourseMarksData {
+  courseCode: string;
+  courseTitle?: string;
+  components: CourseMarkItem[];
+  totalScore?: number;
+  totalMax?: number;
+  grade?: string;
+  lastUpdated?: string;
+}
+
 const KEY_PROFILE_DATA = 'shiksha_cache_profile';
 const KEY_ATTENDANCE_DATA = 'shiksha_cache_attendance';
 const KEY_COURSE_DETAILS = 'shiksha_cache_course_details';
+const KEY_COURSE_MARKS_PREFIX = 'shiksha_cache_marks_';
 const KEY_REPORTS_DATA = 'shiksha_cache_reports';
 const KEY_LAST_SYNC_TIME = 'shiksha_last_sync_time';
 const KEY_SRS_SUBMITTED = 'shiksha_cache_srs_submitted';
@@ -208,6 +228,29 @@ export const CacheService = {
       return { totalBytes, formatted, memoryBytes, diskBytes };
     } catch {
       return { totalBytes: 0, formatted: '0 KB', memoryBytes: 0, diskBytes: 0 };
+    }
+  },
+
+  /**
+   * Cache course marks data for an individual course
+   */
+  async cacheCourseMarks(courseCode: string, data: CourseMarksData): Promise<void> {
+    try {
+      await AsyncStorage.setItem(`${KEY_COURSE_MARKS_PREFIX}${courseCode}`, JSON.stringify(data));
+    } catch (e) {
+      console.error('Error caching course marks:', e);
+    }
+  },
+
+  /**
+   * Get cached course marks data for an individual course
+   */
+  async getCachedCourseMarks(courseCode: string): Promise<CourseMarksData | null> {
+    try {
+      const raw = await AsyncStorage.getItem(`${KEY_COURSE_MARKS_PREFIX}${courseCode}`);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
     }
   },
 

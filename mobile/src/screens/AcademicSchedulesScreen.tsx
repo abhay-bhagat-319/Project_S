@@ -53,8 +53,6 @@ export default function AcademicSchedulesScreen({ onBack }: AcademicSchedulesScr
 
   useEffect(() => {
     loadDocs();
-    // Opportunistic header revalidation on screen entry
-    handleRevalidate(false);
   }, [loadDocs]);
 
   const handleRevalidate = async (showToast = true) => {
@@ -285,6 +283,7 @@ export default function AcademicSchedulesScreen({ onBack }: AcademicSchedulesScr
             onRefresh={handlePullRefresh}
             tintColor={Theme.colors.primary}
             colors={[Theme.colors.primary]}
+            progressBackgroundColor={Theme.colors.surface}
           />
         }
         ListEmptyComponent={

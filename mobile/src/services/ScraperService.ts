@@ -1,5 +1,49 @@
 export const ScraperService = {
   /**
+   * Generates the JS string to wipe all cookies, sessionStorage, and localStorage in the WebView
+   */
+  getSessionPurgeScript(): string {
+    return `
+      (function() {
+        function safePost(obj) {
+          try {
+            if (window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === 'function') {
+              window.ReactNativeWebView.postMessage(JSON.stringify(obj));
+            }
+          } catch (e) {}
+        }
+
+        try {
+          // Clear Web Storage
+          try { localStorage.clear(); } catch (e) {}
+          try { sessionStorage.clear(); } catch (e) {}
+
+          // Expire all cookies across path variations
+          try {
+            var cookies = document.cookie.split(";");
+            for (var i = 0; i < cookies.length; i++) {
+              var cookie = cookies[i];
+              var eqPos = cookie.indexOf("=");
+              var name = eqPos > -1 ? cookie.substr(0, eqPos).trim() : cookie.trim();
+              if (name) {
+                document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/";
+                document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/secure";
+                document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/login";
+                document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;domain=" + window.location.hostname + ";path=/";
+              }
+            }
+          } catch (e) {}
+
+          safePost({ type: 'SESSION_PURGED' });
+        } catch (err) {
+          safePost({ type: 'SESSION_PURGED' });
+        }
+      })();
+      true;
+    `;
+  },
+
+  /**
    * Generates the JS string to inject into the LDAP login form page
    */
   getLoginInjectionScript(username: string, password: string): string {
@@ -17,12 +61,34 @@ export const ScraperService = {
         }
 
         try {
+          // If already on secure landing page, authentication is already valid
+          if (window.location.href.includes('/secure/') || window.location.href.includes('/secure')) {
+            safePost({ type: 'AUTH_SUCCESS' });
+            return;
+          }
+
+          // If on LDAP progress page, do not inject form scraper or throw error
+          if (window.location.href.includes('ldap_login_progress') || window.location.href.includes('login_progress')) {
+            return;
+          }
+
           if (!window.location.href.includes('/login')) {
             return;
           }
 
           var retries = 150; // Try for up to 15 seconds
           var checkExist = setInterval(function() {
+            if (window.location.href.includes('/secure/') || window.location.href.includes('/secure')) {
+              clearInterval(checkExist);
+              safePost({ type: 'AUTH_SUCCESS' });
+              return;
+            }
+
+            if (window.location.href.includes('ldap_login_progress') || window.location.href.includes('login_progress')) {
+              clearInterval(checkExist);
+              return;
+            }
+
             if (!window.location.href.includes('/login')) {
               clearInterval(checkExist);
               return;
@@ -100,12 +166,12 @@ export const ScraperService = {
               retries--;
               if (retries <= 0) {
                 clearInterval(checkExist);
-                safePost({ type: 'ERROR', message: 'Timed out waiting for portal login form elements.' });
+                safePost({ type: 'AUTH_FAILED', message: 'Timed out waiting for portal login form elements.' });
               }
             }
           }, 100);
         } catch (e) {
-          safePost({ type: 'ERROR', message: e.message });
+          safePost({ type: 'AUTH_FAILED', message: e.message });
         }
       })();
       true;
@@ -379,6 +445,19 @@ export const ScraperService = {
               }
             }
 
+            // Strategy 3: Check #userInfo hidden DOM element
+            try {
+              var infoEl = document.getElementById('userInfo');
+              if (infoEl && infoEl.innerText && infoEl.innerText.trim().startsWith('{')) {
+                var pData = JSON.parse(infoEl.innerText.trim());
+                if (looksLikeProfile(pData)) {
+                  clearInterval(poll);
+                  postProfile(pData);
+                  return;
+                }
+              }
+            } catch(eJson) {}
+
             if (attempts >= maxAttempts) {
               clearInterval(poll);
               if (!done) {
@@ -407,37 +486,91 @@ export const ScraperService = {
 
 
   /**
-   * JS script to inject on the courses page (/secure/studentMyCourses)
-   * It scrapes course rows and uses fetch() requests in parallel to get attendance statistics.
+   * Lean attendance scraper script (/secure/studentMyCourses)
+   * Fetches only attendance statistics with a strict 4s per-endpoint timeout guard.
    */
-  getAttendanceScraperScript(): string {
+  getAttendanceScraperScript(knownRoll: string = ''): string {
+    const escapedKnownRoll = JSON.stringify(knownRoll || '');
     return `
       (function() {
         var attempts = 0;
-        var maxAttempts = 300; // 15 seconds (every 50ms)
+        var maxAttempts = 200; // 10 seconds (every 50ms)
         var done = false;
+        var fallbackRoll = ${escapedKnownRoll};
+
+        function fetchWithTimeout(url, options, timeoutMs) {
+          timeoutMs = timeoutMs || 4000;
+          return new Promise(function(resolve) {
+            var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+            if (controller && options) {
+              options.signal = controller.signal;
+            }
+            var timer = setTimeout(function() {
+              if (controller) {
+                try { controller.abort(); } catch(e) {}
+              }
+              resolve(null);
+            }, timeoutMs);
+
+            fetch(url, options).then(function(res) {
+              clearTimeout(timer);
+              if (!res || !res.ok) { resolve(null); return; }
+              return res.json().then(function(json) {
+                resolve(json);
+              }).catch(function() { resolve(null); });
+            }).catch(function() {
+              clearTimeout(timer);
+              resolve(null);
+            });
+          });
+        }
+
+        function getStudentRoll(bodyScope, ctrlScope) {
+          if (fallbackRoll && fallbackRoll.trim().length > 0) return fallbackRoll.trim();
+          if (bodyScope && bodyScope.userInfo && bodyScope.userInfo.roll) return bodyScope.userInfo.roll.toString();
+          if (ctrlScope && ctrlScope.userInfo && ctrlScope.userInfo.roll) return ctrlScope.userInfo.roll.toString();
+          if (ctrlScope && ctrlScope.roll) return ctrlScope.roll.toString();
+          try {
+            var infoEl = document.getElementById('userInfo');
+            if (infoEl && infoEl.innerText) {
+              var parsed = JSON.parse(infoEl.innerText);
+              if (parsed && parsed.roll) return parsed.roll.toString();
+            }
+          } catch(e) {}
+          return '';
+        }
 
         var poll = setInterval(async function() {
           if (done) { clearInterval(poll); return; }
           attempts++;
 
           try {
-            var bodyScope = (typeof angular !== 'undefined' && angular.element) ? angular.element(document.body).scope() : null;
-            var rows = Array.from(document.querySelectorAll('#dataTable tbody tr'));
+            var el = document.querySelector('[ng-controller="studentMyCourse"]') || 
+                     document.querySelector('[ng-controller]') || 
+                     document.body;
+            var ctrlScope = (typeof angular !== 'undefined' && angular.element) ? angular.element(el).scope() : null;
+            var bodyScope = (typeof angular !== 'undefined' && angular.element) ? angular.element(document.body).scope() : ctrlScope;
+            
+            var rows = Array.from(document.querySelectorAll('#dataTable tbody tr, table tbody tr'));
             var hasRows = rows.length > 0 && rows[0].querySelectorAll('td').length >= 3;
             var isEmptyTable = rows.length === 1 && rows[0].innerText.toLowerCase().includes('no data');
+            var currentRoll = getStudentRoll(bodyScope, ctrlScope);
 
-            if (bodyScope && bodyScope.userInfo && (hasRows || isEmptyTable || attempts >= 30)) {
+            if ((hasRows || isEmptyTable) && (currentRoll || attempts >= 20)) {
               clearInterval(poll);
               done = true;
-              await runScraper(bodyScope, rows);
+              await runScraper(bodyScope, ctrlScope, rows, currentRoll);
             } else if (attempts >= maxAttempts) {
               clearInterval(poll);
               done = true;
-              window.ReactNativeWebView.postMessage(JSON.stringify({
-                type: 'ERROR',
-                message: 'Timed out waiting for courses table to render.'
-              }));
+              if (hasRows || isEmptyTable) {
+                await runScraper(bodyScope, ctrlScope, rows, currentRoll);
+              } else {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'ERROR',
+                  message: 'Timed out waiting for courses table to render.'
+                }));
+              }
             }
           } catch (e) {
             clearInterval(poll);
@@ -446,332 +579,489 @@ export const ScraperService = {
           }
         }, 50);
 
-        async function runScraper(bodyScope, rows) {
+        async function runScraper(bodyScope, ctrlScope, rows, roll) {
           try {
-            var roll = bodyScope.userInfo.roll;
+            if (!roll) {
+              roll = getStudentRoll(bodyScope, ctrlScope);
+            }
 
-            // Parse course rows from dataTable
             if (rows.length === 0 || (rows.length === 1 && rows[0].innerText.toLowerCase().includes('no data'))) {
               window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ATTENDANCE_SCRAPED', status: 'success', items: [] }));
               return;
             }
 
-          var courses = rows.map(function(row) {
-            var cells = row.querySelectorAll('td');
-            if (cells.length >= 4) {
-              var courseCode = cells[0].innerText.trim();
-              var courseTitle = cells[1].innerText.trim();
-              
-              var instructorText = cells[2].innerText.trim();
-              // Clean instructor name from whitespace/newlines
-              var instructor = instructorText.replace(/\\s+/g, ' ');
+            var courses = rows.map(function(row) {
+              var cells = row.querySelectorAll('td');
+              if (cells.length >= 4) {
+                var courseCode = cells[0].innerText.trim();
+                var courseTitle = cells[1].innerText.trim();
+                var instructor = cells[2].innerText.trim().replace(/\\s+/g, ' ');
 
-              var attendanceBtn = cells[3].querySelector('a[ng-click^="getAttendanceData"]');
-              var ngClickAttr = attendanceBtn ? attendanceBtn.getAttribute('ng-click') : '';
-              var argMatch = ngClickAttr.match(/getAttendanceData\('(.*)'\)/);
-              var attendanceArg = argMatch ? argMatch[1] : (courseCode + ',');
+                var attendanceBtn = cells[3].querySelector('a[ng-click^="getAttendanceData"]');
+                var ngClickAttr = attendanceBtn ? attendanceBtn.getAttribute('ng-click') : '';
+                var argMatch = ngClickAttr.match(/getAttendanceData\\('(.*)'\\)/);
+                var attendanceArg = argMatch ? argMatch[1] : (courseCode + ',');
 
-              // Parse SRS Buttons (Mid-Sem and End-Sem)
-              var midSemBtn = cells[3].querySelector('a[href*="studentMidSemSRS"]');
-              var midSemHref = midSemBtn ? midSemBtn.getAttribute('href') : '';
-              var midSemAvailable = !!midSemHref && midSemHref.indexOf('studentMidSemSRS') !== -1;
+                var midSemBtn = cells[3].querySelector('a[href*="studentMidSemSRS"]');
+                var midSemHref = midSemBtn ? midSemBtn.getAttribute('href') : '';
+                var midSemAvailable = !!midSemHref && midSemHref.indexOf('studentMidSemSRS') !== -1;
 
-              var endSemBtn = cells[3].querySelector('a[href*="studentSRS"]:not([href*="studentMidSemSRS"])');
-              var endSemHref = endSemBtn ? endSemBtn.getAttribute('href') : '';
-              var endSemAvailable = !!endSemHref && endSemHref.indexOf('studentSRS') !== -1;
-
-              return {
-                courseCode: courseCode,
-                courseTitle: courseTitle,
-                instructor: instructor,
-                attendanceArg: attendanceArg,
-                srsStatus: {
-                  midSemAvailable: midSemAvailable,
-                  midSemUrl: midSemAvailable ? midSemHref : (midSemBtn ? midSemBtn.getAttribute('href') : undefined),
-                  endSemAvailable: endSemAvailable,
-                  endSemUrl: endSemAvailable ? endSemHref : (endSemBtn ? endSemBtn.getAttribute('href') : undefined)
-                }
-              };
-            }
-            return null;
-          }).filter(Boolean);
-
-          function parseRecords(raw) {
-            if (!raw) return [];
-            var list = [];
-            
-            if (Array.isArray(raw)) {
-              for (var i = 0; i < raw.length; i++) {
-                var item = raw[i];
-                if (!item) continue;
-                
-                if (typeof item === 'string') {
-                  var parts = item.split(/[:,-]/);
-                  list.push({ date: parts[0] ? parts[0].trim() : item, status: parts[1] ? parts[1].trim() : 'Present' });
-                } else if (Array.isArray(item)) {
-                  list.push({ date: (item[0] || '').toString(), status: (item[1] || 'Present').toString() });
-                } else if (typeof item === 'object') {
-                  var keys = Object.keys(item);
-                  var dateVal = '';
-                  var statusVal = '';
-                  
-                  // Find date field
-                  for (var k = 0; k < keys.length; k++) {
-                    var lk = keys[k].toLowerCase();
-                    if (lk.includes('date') || lk.includes('day') || lk.includes('time') || lk.includes('session')) {
-                      dateVal = item[keys[k]];
-                      break;
-                    }
-                  }
-                  
-                  // Find status field
-                  for (var k = 0; k < keys.length; k++) {
-                    var lk = keys[k].toLowerCase();
-                    if (lk.includes('status') || lk.includes('attend') || lk.includes('present') || lk.includes('mark') || lk.includes('state')) {
-                      statusVal = item[keys[k]];
-                      break;
-                    }
-                  }
-                  
-                  // Fallbacks if not found by name
-                  if (!dateVal && keys.length > 0) dateVal = item[keys[0]];
-                  if (!statusVal && keys.length > 1) statusVal = item[keys[1]];
-                  if (!statusVal && keys.length === 1 && typeof dateVal === 'string' && (dateVal === 'P' || dateVal === 'A' || dateVal.toLowerCase().includes('present'))) {
-                    statusVal = dateVal;
-                    dateVal = keys[0];
-                  }
-                  
-                  function normalizeDate(ds) {
-                    if (!ds) return '';
-                    var str = ds.toString().trim();
-                    var ymd = str.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
-                    if (ymd) return ymd[3].padStart(2, '0') + '-' + ymd[2].padStart(2, '0') + '-' + ymd[1];
-                    var y8 = str.match(/^(\d{4})(\d{2})(\d{2})$/);
-                    if (y8) return y8[3] + '-' + y8[2] + '-' + y8[1];
-                    var dmy = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
-                    if (dmy) return dmy[1].padStart(2, '0') + '-' + dmy[2].padStart(2, '0') + '-' + dmy[3];
-                    return str;
-                  }
-
-                  if (dateVal || statusVal) {
-                    list.push({ date: normalizeDate(dateVal), status: (statusVal || 'Present').toString() });
-                  }
-                }
-              }
-            } else if (typeof raw === 'object') {
-              var objKeys = Object.keys(raw);
-              for (var i = 0; i < objKeys.length; i++) {
-                var k = objKeys[i];
-                var v = raw[k];
-                if (v && typeof v === 'object' && !Array.isArray(v)) {
-                  var inner = parseRecords([v]);
-                  if (inner.length > 0) list.push(inner[0]);
-                } else if (v) {
-                  list.push({ date: normalizeDate(k), status: v.toString() });
-                }
-              }
-            }
-            return list;
-          }
-
-
-          // Helper to clean HTML strings in webview context
-          function cleanHtmlText(html) {
-            if (!html) return '';
-            var temp = html
-              .replace(/<br\\s*[\\/]?>/gi, '\\n')
-              .replace(/<\\/p>/gi, '\\n\\n')
-              .replace(/<[^>]+>/g, '')
-              .replace(/&nbsp;/g, ' ')
-              .replace(/&amp;/g, '&')
-              .replace(/&lt;/g, '<')
-              .replace(/&gt;/g, '>')
-              .replace(/&quot;/g, '"')
-              .replace(/&#39;/g, "'")
-              .replace(/[ \\t]+/g, ' ')
-              .replace(/\\n\\s*\\n/g, '\\n\\n')
-              .trim();
-            return temp;
-          }
-
-          function parseHtmlList(html) {
-            if (!html) return [];
-            var liMatches = html.match(/<li[^>]*>(.*?)<\\/li>/gis);
-            if (liMatches && liMatches.length > 0) {
-              return liMatches.map(function(item) {
-                return cleanHtmlText(item);
-              }).filter(function(i) { return i.length > 0; });
-            }
-            var text = cleanHtmlText(html);
-            if (!text) return [];
-            var lines = text.split('\\n').map(function(l) { return l.trim(); }).filter(Boolean);
-            if (lines.length > 1) {
-              return lines.map(function(l) { return l.replace(/^\\d+[\\.\\)]\\s*/, '').trim(); }).filter(Boolean);
-            }
-            return [text];
-          }
-
-          // Fetch attendance data (summary + date-wise records) in parallel
-          var fetchPromises = courses.map(async function(course) {
-            try {
-              var response = await fetch('/secure/studentMyCourseAttendance', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ courseId: course.attendanceArg, roll: roll })
-              });
-              
-              var resJson = await response.json();
-              if (resJson && resJson.status === 'ok') {
-                var total = resJson.totalClasses || 0;
-                var present = resJson.presentClasses || 0;
-
-                // Extract date-wise records from all potential locations
-                var records = parseRecords(resJson.data || resJson.records || resJson.userAttendanceInfo || resJson.relPresentdays);
-
-                // Fallback: If 0 records, try previous attendance endpoint
-                if (records.length === 0) {
-                  try {
-                    var prevRes = await fetch('/secure/myCoursePreviousAttendance', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ cnum: course.courseCode })
-                    });
-                    var prevJson = await prevRes.json();
-                    if (prevJson && prevJson.status === 'ok') {
-                      records = parseRecords(prevJson.attendanceRecord || prevJson.data || prevJson.records);
-                    }
-                  } catch (e2) {}
-                }
-
-                var total = (typeof resJson.totalClasses === 'number' && resJson.totalClasses > 0) ? resJson.totalClasses : 0;
-                var present = (typeof resJson.presentClasses === 'number' && resJson.presentClasses > 0) ? resJson.presentClasses : 0;
-
-                if (records.length > 0) {
-                  var recPresent = records.filter(function(r) {
-                    var st = (r.status || '').toLowerCase();
-                    return st.includes('present') || st === 'p';
-                  }).length;
-                  
-                  if (total === 0 || total < records.length) {
-                    total = records.length;
-                  }
-                  if (present === 0 || present < recPresent) {
-                    present = recPresent;
-                  }
-                }
-
-                var absent = Math.max(0, total - present);
-                var percentage = total > 0 
-                  ? (present / total) * 100 
-                  : (resJson.relPresentPercentage ? parseFloat(resJson.relPresentPercentage) : 100);
+                var endSemBtn = cells[3].querySelector('a[href*="studentSRS"]:not([href*="studentMidSemSRS"])');
+                var endSemHref = endSemBtn ? endSemBtn.getAttribute('href') : '';
+                var endSemAvailable = !!endSemHref && endSemHref.indexOf('studentSRS') !== -1;
 
                 return {
-                  courseCode: course.courseCode,
-                  courseTitle: course.courseTitle,
-                  instructor: course.instructor,
-                  present: present,
-                  absent: absent,
-                  totalClasses: total,
-                  percentage: percentage,
-                  records: records,
-                  srsStatus: course.srsStatus
+                  courseCode: courseCode,
+                  courseTitle: courseTitle,
+                  instructor: instructor,
+                  attendanceArg: attendanceArg,
+                  srsStatus: {
+                    midSemAvailable: midSemAvailable,
+                    midSemUrl: midSemAvailable ? midSemHref : undefined,
+                    endSemAvailable: endSemAvailable,
+                    endSemUrl: endSemAvailable ? endSemHref : undefined
+                  }
                 };
               }
-            } catch (err) {}
-            return {
-              courseCode: course.courseCode,
-              courseTitle: course.courseTitle,
-              instructor: course.instructor,
-              present: 0, absent: 0, totalClasses: 0, percentage: 0, records: [],
-              srsStatus: course.srsStatus
-            };
-          });
+              return null;
+            }).filter(Boolean);
 
-          // Extract Course Details from Angular scope and modal controller
-          var detailsMap = {};
-          try {
-            var el = document.querySelector('[ng-controller="studentMyCourse"]') || document.body;
-            var ctrlScope = (typeof angular !== 'undefined' && angular.element) ? angular.element(el).scope() : null;
-
-            courses.forEach(function(course) {
-              var cCode = course.courseCode;
-              var d = null;
-
-              if (ctrlScope && typeof ctrlScope.currentCoursesDetail === 'function') {
-                try {
-                  ctrlScope.currentCoursesDetail(cCode);
-                  if (ctrlScope.currentCourseDetail) {
-                    d = ctrlScope.currentCourseDetail;
-                  }
-                } catch(e) {}
-              }
-
-              if (!d && ctrlScope) {
-                var possibleLists = [ctrlScope.myCourses, ctrlScope.courses, ctrlScope.allCourses, ctrlScope.currentCourses];
-                for (var li = 0; li < possibleLists.length; li++) {
-                  var list = possibleLists[li];
-                  if (Array.isArray(list)) {
-                    for (var cidx = 0; cidx < list.length; cidx++) {
-                      var item = list[cidx];
-                      if (item && (item["Course Number"] === cCode || item.courseCode === cCode || item.cnum === cCode)) {
-                        d = item;
+            function parseRecords(raw) {
+              if (!raw) return [];
+              var list = [];
+              if (Array.isArray(raw)) {
+                for (var i = 0; i < raw.length; i++) {
+                  var item = raw[i];
+                  if (!item) continue;
+                  if (typeof item === 'string') {
+                    var parts = item.split(/[:,-]/);
+                    list.push({ date: parts[0] ? parts[0].trim() : item, status: parts[1] ? parts[1].trim() : 'Present' });
+                  } else if (Array.isArray(item)) {
+                    list.push({ date: (item[0] || '').toString(), status: (item[1] || 'Present').toString() });
+                  } else if (typeof item === 'object') {
+                    var keys = Object.keys(item);
+                    var dateVal = '';
+                    var statusVal = '';
+                    for (var k = 0; k < keys.length; k++) {
+                      var lk = keys[k].toLowerCase();
+                      if (lk.includes('date') || lk.includes('day') || lk.includes('time') || lk.includes('session')) {
+                        dateVal = item[keys[k]];
                         break;
                       }
                     }
+                    for (var k = 0; k < keys.length; k++) {
+                      var lk = keys[k].toLowerCase();
+                      if (lk.includes('status') || lk.includes('attend') || lk.includes('present') || lk.includes('mark') || lk.includes('state')) {
+                        statusVal = item[keys[k]];
+                        break;
+                      }
+                    }
+                    if (!dateVal && keys.length > 0) dateVal = item[keys[0]];
+                    if (!statusVal && keys.length > 1) statusVal = item[keys[1]];
+
+                    function normalizeDate(ds) {
+                      if (!ds) return '';
+                      var str = ds.toString().trim();
+                      var ymd = str.match(/^(\\d{4})[-/.](\\d{1,2})[-/.](\\d{1,2})/);
+                      if (ymd) return ymd[3].padStart(2, '0') + '-' + ymd[2].padStart(2, '0') + '-' + ymd[1];
+                      var y8 = str.match(/^(\\d{4})(\\d{2})(\\d{2})$/);
+                      if (y8) return y8[3] + '-' + y8[2] + '-' + y8[1];
+                      var dmy = str.match(/^(\\d{1,2})[-/.](\\d{1,2})[-/.](\\d{4})/);
+                      if (dmy) return dmy[1].padStart(2, '0') + '-' + dmy[2].padStart(2, '0') + '-' + dmy[3];
+                      return str;
+                    }
+
+                    if (dateVal || statusVal) {
+                      list.push({ date: normalizeDate(dateVal), status: (statusVal || 'Present').toString() });
+                    }
                   }
-                  if (d) break;
                 }
               }
+              return list;
+            }
 
-              if (d) {
-                detailsMap[cCode] = {
-                  courseCode: cCode,
-                  courseTitle: cleanHtmlText(d["Course Title"] || d.courseTitle || course.courseTitle),
-                  credits: (d["Credits"] || d.credits || '4').toString(),
-                  slot: (d["Slot"] || d.slot || 'N/A').toString(),
-                  instructors: cleanHtmlText(d["Instructors"] || d.instructors || course.instructor),
-                  tutors: cleanHtmlText(d["Tutors"] || d.tutors || ''),
-                  teachingAssistants: cleanHtmlText(d["Teaching Assistants"] || d.teachingAssistants || ''),
-                  prerequisites: cleanHtmlText(d["Prerequisites"] || d.prerequisites || ''),
-                  otherPrerequisites: cleanHtmlText(d["Other Prerequisites"] || d.otherPrerequisites || ''),
-                  learningObjectives: parseHtmlList(d["Learning Objectives"] || d.learningObjectives || ''),
-                  textBooks: parseHtmlList(d["Text Books"] || d.textBooks || ''),
-                  referenceBooks: parseHtmlList(d["Reference Books"] || d.referenceBooks || ''),
-                  content: cleanHtmlText(d["Content"] || d.content || ''),
-                  remark: cleanHtmlText(d["Remark"] || d.remark || '')
-                };
-              }
+            // Bounded parallel fetch for all attendance endpoints
+            var fetchPromises = courses.map(async function(course) {
+              try {
+                var resJson = await fetchWithTimeout('/secure/studentMyCourseAttendance', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ courseId: course.attendanceArg, roll: roll })
+                }, 4000);
+
+                if (resJson && resJson.status === 'ok') {
+                  var total = (typeof resJson.totalClasses === 'number' && resJson.totalClasses > 0) ? resJson.totalClasses : 0;
+                  var present = (typeof resJson.presentClasses === 'number' && resJson.presentClasses > 0) ? resJson.presentClasses : 0;
+                  var records = parseRecords(resJson.data || resJson.records || resJson.userAttendanceInfo || resJson.relPresentdays);
+
+                  if (records.length === 0) {
+                    var prevJson = await fetchWithTimeout('/secure/myCoursePreviousAttendance', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ cnum: course.courseCode })
+                    }, 3000);
+                    if (prevJson && prevJson.status === 'ok') {
+                      records = parseRecords(prevJson.attendanceRecord || prevJson.data || prevJson.records);
+                    }
+                  }
+
+                  if (records.length > 0) {
+                    var recPresent = records.filter(function(r) {
+                      var st = (r.status || '').toLowerCase();
+                      return st.includes('present') || st === 'p';
+                    }).length;
+                    if (total === 0 || total < records.length) total = records.length;
+                    if (present === 0 || present < recPresent) present = recPresent;
+                  }
+
+                  var absent = Math.max(0, total - present);
+                  var percentage = total > 0 
+                    ? (present / total) * 100 
+                    : (resJson.relPresentPercentage ? parseFloat(resJson.relPresentPercentage) : 100);
+
+                  return {
+                    courseCode: course.courseCode,
+                    courseTitle: course.courseTitle,
+                    instructor: course.instructor,
+                    present: present,
+                    absent: absent,
+                    totalClasses: total,
+                    percentage: percentage,
+                    records: records,
+                    srsStatus: course.srsStatus
+                  };
+                }
+              } catch (err) {}
+
+              return {
+                courseCode: course.courseCode,
+                courseTitle: course.courseTitle,
+                instructor: course.instructor,
+                present: 0, absent: 0, totalClasses: 0, percentage: 0, records: [],
+                srsStatus: course.srsStatus
+              };
             });
-          } catch (e) {}
 
-          var photoUrl = (bodyScope.userInfo && bodyScope.userInfo.profilePicture) ? bodyScope.userInfo.profilePicture : '';
-          var photoBase64 = '';
-          if (photoUrl) {
-            try {
-              var res = await fetch(photoUrl);
-              var blob = await res.blob();
-              photoBase64 = await new Promise(function(resolve) {
-                var reader = new FileReader();
-                reader.onloadend = function() { resolve(reader.result || ''); };
-                reader.onerror = function() { resolve(''); };
-                reader.readAsDataURL(blob);
+            var results = await Promise.all(fetchPromises);
+
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'ATTENDANCE_SCRAPED',
+              status: 'success',
+              items: results
+            }));
+          } catch (e) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ERROR', message: 'Attendance scrape failed: ' + e.message }));
+          }
+        }
+      })();
+      true;
+    `;
+  },
+
+  /**
+   * Scraper script specifically for Courses catalog metadata and SRS status (/secure/studentMyCourses)
+   */
+  getCoursesScraperScript(): string {
+    return `
+      (function() {
+        var attempts = 0;
+        var maxAttempts = 200;
+        var done = false;
+
+        function cleanHtmlText(html) {
+          if (!html) return '';
+          return html
+            .replace(/<br\\s*[\\/]?>/gi, '\\n')
+            .replace(/<\\/p>/gi, '\\n\\n')
+            .replace(/<[^>]+>/g, '')
+            .replace(/&nbsp;/g, ' ')
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .replace(/[ \\t]+/g, ' ')
+            .replace(/\\n\\s*\\n/g, '\\n\\n')
+            .trim();
+        }
+
+        function parseHtmlList(html) {
+          if (!html) return [];
+          var liMatches = html.match(/<li[^>]*>(.*?)<\\/li>/gis);
+          if (liMatches && liMatches.length > 0) {
+            return liMatches.map(function(item) {
+              return cleanHtmlText(item);
+            }).filter(function(i) { return i.length > 0; });
+          }
+          var text = cleanHtmlText(html);
+          if (!text) return [];
+          var lines = text.split('\\n').map(function(l) { return l.trim(); }).filter(Boolean);
+          if (lines.length > 1) {
+            return lines.map(function(l) { return l.replace(/^\\d+[\\.\\)]\\s*/, '').trim(); }).filter(Boolean);
+          }
+          return [text];
+        }
+
+        var poll = setInterval(function() {
+          if (done) { clearInterval(poll); return; }
+          attempts++;
+
+          try {
+            var rows = Array.from(document.querySelectorAll('#dataTable tbody tr, table tbody tr'));
+            var hasRows = rows.length > 0 && rows[0].querySelectorAll('td').length >= 3;
+            var isEmptyTable = rows.length === 1 && rows[0].innerText.toLowerCase().includes('no data');
+
+            if (hasRows || isEmptyTable || attempts >= maxAttempts) {
+              clearInterval(poll);
+              done = true;
+
+              if (rows.length === 0 || (rows.length === 1 && rows[0].innerText.toLowerCase().includes('no data'))) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'COURSES_SCRAPED',
+                  status: 'success',
+                  items: [],
+                  courseDetails: {}
+                }));
+                return;
+              }
+
+              var el = document.querySelector('[ng-controller="studentMyCourse"]') || document.body;
+              var ctrlScope = (typeof angular !== 'undefined' && angular.element) ? angular.element(el).scope() : null;
+
+              var courses = rows.map(function(row) {
+                var cells = row.querySelectorAll('td');
+                if (cells.length >= 4) {
+                  var courseCode = cells[0].innerText.trim();
+                  var courseTitle = cells[1].innerText.trim();
+                  var instructor = cells[2].innerText.trim().replace(/\\s+/g, ' ');
+
+                  var midSemBtn = cells[3].querySelector('a[href*="studentMidSemSRS"]');
+                  var midSemHref = midSemBtn ? midSemBtn.getAttribute('href') : '';
+                  var midSemAvailable = !!midSemHref && midSemHref.indexOf('studentMidSemSRS') !== -1;
+
+                  var endSemBtn = cells[3].querySelector('a[href*="studentSRS"]:not([href*="studentMidSemSRS"])');
+                  var endSemHref = endSemBtn ? endSemBtn.getAttribute('href') : '';
+                  var endSemAvailable = !!endSemHref && endSemHref.indexOf('studentSRS') !== -1;
+
+                  return {
+                    courseCode: courseCode,
+                    courseTitle: courseTitle,
+                    instructor: instructor,
+                    srsStatus: {
+                      midSemAvailable: midSemAvailable,
+                      midSemUrl: midSemAvailable ? midSemHref : undefined,
+                      endSemAvailable: endSemAvailable,
+                      endSemUrl: endSemAvailable ? endSemHref : undefined
+                    }
+                  };
+                }
+                return null;
+              }).filter(Boolean);
+
+              var detailsMap = {};
+              if (ctrlScope) {
+                var possibleLists = [ctrlScope.myCourses, ctrlScope.courses, ctrlScope.allCourses, ctrlScope.currentCourses];
+                courses.forEach(function(course) {
+                  var cCode = course.courseCode;
+                  var d = null;
+                  for (var li = 0; li < possibleLists.length; li++) {
+                    var list = possibleLists[li];
+                    if (Array.isArray(list)) {
+                      for (var cidx = 0; cidx < list.length; cidx++) {
+                        var item = list[cidx];
+                        if (item && (item["Course Number"] === cCode || item.courseCode === cCode || item.cnum === cCode)) {
+                          d = item;
+                          break;
+                        }
+                      }
+                    }
+                    if (d) break;
+                  }
+
+                  if (d) {
+                    detailsMap[cCode] = {
+                      courseCode: cCode,
+                      courseTitle: cleanHtmlText(d["Course Title"] || d.courseTitle || course.courseTitle),
+                      credits: (d["Credits"] || d.credits || '4').toString(),
+                      slot: (d["Slot"] || d.slot || 'N/A').toString(),
+                      instructors: cleanHtmlText(d["Instructors"] || d.instructors || course.instructor),
+                      tutors: cleanHtmlText(d["Tutors"] || d.tutors || ''),
+                      teachingAssistants: cleanHtmlText(d["Teaching Assistants"] || d.teachingAssistants || ''),
+                      prerequisites: cleanHtmlText(d["Prerequisites"] || d.prerequisites || ''),
+                      otherPrerequisites: cleanHtmlText(d["Other Prerequisites"] || d.otherPrerequisites || ''),
+                      learningObjectives: parseHtmlList(d["Learning Objectives"] || d.learningObjectives || ''),
+                      textBooks: parseHtmlList(d["Text Books"] || d.textBooks || ''),
+                      referenceBooks: parseHtmlList(d["Reference Books"] || d.referenceBooks || ''),
+                      content: cleanHtmlText(d["Content"] || d.content || ''),
+                      remark: cleanHtmlText(d["Remark"] || d.remark || '')
+                    };
+                  }
+                });
+              }
+
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'COURSES_SCRAPED',
+                status: 'success',
+                items: courses,
+                courseDetails: detailsMap
+              }));
+            }
+          } catch (e) {
+            clearInterval(poll);
+            done = true;
+            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ERROR', message: 'Courses scrape error: ' + e.message }));
+          }
+        }, 50);
+      })();
+      true;
+    `;
+  },
+
+  /**
+   * Priority Marks Streamer script:
+   * Immediately scrapes marks for priorityCourseCode with a 4s timeout and sends COURSE_MARKS_STREAMED,
+   * then fetches the remaining courses in the background.
+   */
+  getCourseMarksScraperScript(priorityCourseCode: string = '', allCourseCodes: string[] = [], knownRoll: string = ''): string {
+    const escapedPriority = JSON.stringify(priorityCourseCode || '');
+    const escapedCodes = JSON.stringify(allCourseCodes || []);
+    const escapedRoll = JSON.stringify(knownRoll || '');
+
+    return `
+      (function() {
+        var priorityCode = ${escapedPriority};
+        var courseCodes = ${escapedCodes};
+        var knownRoll = ${escapedRoll};
+
+        function fetchWithTimeout(url, options, timeoutMs) {
+          timeoutMs = timeoutMs || 4000;
+          return new Promise(function(resolve) {
+            var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+            if (controller && options) {
+              options.signal = controller.signal;
+            }
+            var timer = setTimeout(function() {
+              if (controller) {
+                try { controller.abort(); } catch(e) {}
+              }
+              resolve(null);
+            }, timeoutMs);
+
+            fetch(url, options).then(function(res) {
+              clearTimeout(timer);
+              if (!res || !res.ok) { resolve(null); return; }
+              return res.json().then(function(json) {
+                resolve(json);
+              }).catch(function() { resolve(null); });
+            }).catch(function() {
+              clearTimeout(timer);
+              resolve(null);
+            });
+          });
+        }
+
+        function extractAssessments(resJson) {
+          var items = [];
+          if (!resJson) return items;
+          var data = resJson.data || resJson.records || resJson.marks || resJson;
+          if (Array.isArray(data)) {
+            for (var i = 0; i < data.length; i++) {
+              var m = data[i];
+              if (!m) continue;
+              items.push({
+                name: (m.name || m.title || m.assessment || m.examType || m.component || ('Assessment ' + (i + 1))).toString(),
+                scored: parseFloat(m.scored || m.marks || m.score || m.obtained || '0') || 0,
+                max: parseFloat(m.max || m.total || m.outOf || '100') || 100,
+                weightage: m.weightage ? (m.weightage.toString() + '%') : undefined,
+                classAverage: m.classAverage !== undefined ? parseFloat(m.classAverage) : undefined
               });
-            } catch(e) {}
+            }
+          } else if (typeof data === 'object') {
+            var keys = Object.keys(data);
+            for (var i = 0; i < keys.length; i++) {
+              var k = keys[i];
+              var v = data[k];
+              if (typeof v === 'number' || typeof v === 'string') {
+                items.push({
+                  name: k,
+                  scored: parseFloat(v) || 0,
+                  max: 100
+                });
+              } else if (v && typeof v === 'object') {
+                items.push({
+                  name: (v.name || v.title || k).toString(),
+                  scored: parseFloat(v.scored || v.marks || v.score || '0') || 0,
+                  max: parseFloat(v.max || v.total || '100') || 100
+                });
+              }
+            }
+          }
+          return items;
+        }
+
+        async function fetchMarksForCourse(cCode) {
+          try {
+            var resJson = await fetchWithTimeout('/secure/studentCourseMarks', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ cnum: cCode, courseCode: cCode, roll: knownRoll })
+            }, 4000);
+
+            var items = extractAssessments(resJson);
+            return {
+              courseCode: cCode,
+              items: items,
+              timestamp: new Date().toISOString()
+            };
+          } catch (e) {
+            return {
+              courseCode: cCode,
+              items: [],
+              timestamp: new Date().toISOString()
+            };
+          }
+        }
+
+        async function runMarksStreamer() {
+          var allMarksMap = {};
+
+          // Phase 1: Immediately fetch priority course first
+          if (priorityCode && priorityCode.trim().length > 0) {
+            var priorityMarks = await fetchMarksForCourse(priorityCode.trim());
+            allMarksMap[priorityCode.trim()] = priorityMarks;
+
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'COURSE_MARKS_STREAMED',
+              courseCode: priorityCode.trim(),
+              marksData: priorityMarks
+            }));
           }
 
-          var results = await Promise.all(fetchPromises);
+          // Phase 2: Asynchronously fetch the remaining courses
+          var remainingCodes = courseCodes.filter(function(c) {
+            return c && c !== priorityCode;
+          });
+
+          for (var i = 0; i < remainingCodes.length; i++) {
+            var code = remainingCodes[i];
+            var mData = await fetchMarksForCourse(code);
+            allMarksMap[code] = mData;
+
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'COURSE_MARKS_STREAMED',
+              courseCode: code,
+              marksData: mData
+            }));
+          }
 
           window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'ATTENDANCE_SCRAPED',
+            type: 'ALL_COURSE_MARKS_SCRAPED',
             status: 'success',
-            items: results,
-            courseDetails: detailsMap,
-            photoUrl: photoUrl,
-            photoBase64: photoBase64
+            allMarks: allMarksMap
           }));
-        } catch (e) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ERROR', message: 'Attendance scrape failed: ' + e.message }));
         }
+
+        runMarksStreamer();
       })();
       true;
     `;

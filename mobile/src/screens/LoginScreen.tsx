@@ -1,11 +1,9 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ActivityIndicator, Alert, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
-import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
-import { ScraperService } from '../services/ScraperService';
-import { SecureStorageService } from '../services/SecureStorageService';
+import { SessionLifecycleManager } from '../services/SessionLifecycleManager';
 
 interface LoginScreenProps {
   onSuccess: (username: string) => void;
@@ -17,76 +15,35 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
-  const [triggerVerify, setTriggerVerify] = useState(false);
-  
-  const webViewRef = useRef<WebView>(null);
-  const loginUrl = 'https://shiksha.iiserb.ac.in/login/';
 
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleLogin = async () => {
+    const trimmedUser = username.trim();
+    const trimmedPass = password.trim();
 
-  const handleLogin = () => {
-    if (!username.trim() || !password.trim()) {
+    if (!trimmedUser || !trimmedPass) {
       Alert.alert('Required Fields', 'Please enter both username and password.');
       return;
     }
+
     setLoading(true);
-    setLoadingMessage('Initializing connection to portal...');
-    setTriggerVerify(true);
+    setLoadingMessage('Verifying credentials with Shiksha portal...');
 
-    // Timeout safety guard - 20 seconds maximum
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    timeoutRef.current = setTimeout(() => {
-      setLoading(false);
-      setTriggerVerify(false);
-      Alert.alert('Connection Timeout', 'Portal verification took too long. Please verify your internet connection or LDAP credentials.');
-    }, 20000);
-  };
-
-  const handleWebViewMessage = (event: any) => {
     try {
-      const data = JSON.parse(event.nativeEvent.data);
-      if (data.type === 'LOGIN_SUBMITTED') {
-        setLoadingMessage('Verifying credentials on portal...');
-      } else if (data.type === 'AUTH_FAILED') {
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      const result = await SessionLifecycleManager.authenticate(trimmedUser, trimmedPass);
+
+      if (result.success) {
         setLoading(false);
-        setTriggerVerify(false);
-        Alert.alert('Authentication Failed', data.message || 'Invalid username or password.');
-      } else if (data.type === 'ERROR') {
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        onSuccess(trimmedUser);
+      } else {
         setLoading(false);
-        setTriggerVerify(false);
-        Alert.alert('Verification Failed', data.message || 'An error occurred during verification.');
+        Alert.alert(
+          result.code === 'AUTH_FAILED' ? 'Authentication Failed' : 'Connection Notice',
+          result.message || 'Invalid username or password.'
+        );
       }
-    } catch (e) {
-      console.log('Error parsing WebView message:', e);
-    }
-  };
-
-  const handleNavigationStateChange = async (navState: any) => {
-    const { url } = navState;
-    console.log('Login WebView URL changed to:', url);
-
-    // If navigated to secure portal area, authentication was successful!
-    if (url && (url.includes('/secure/') || url.includes('/secure'))) {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      await SecureStorageService.saveCredentials(username.trim(), password.trim());
+    } catch (e: any) {
       setLoading(false);
-      setTriggerVerify(false);
-      onSuccess(username.trim());
-    } else if (url && url.includes('/login') && triggerVerify) {
-      // Re-inject script in case page reloaded or navigated to login variant
-      webViewRef.current?.injectJavaScript(
-        ScraperService.getLoginInjectionScript(username.trim(), password.trim())
-      );
-    }
-  };
-
-  const handleLoadEnd = () => {
-    if (triggerVerify) {
-      webViewRef.current?.injectJavaScript(
-        ScraperService.getLoginInjectionScript(username.trim(), password.trim())
-      );
+      Alert.alert('Connection Notice', e?.message || 'Unable to connect to portal. Please try again.');
     }
   };
 
@@ -156,47 +113,6 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
             </TouchableOpacity>
           )}
         </View>
-
-        {/* Background verification WebView (attached with 1x1 opacity to prevent Chromium timer throttling in release builds) */}
-        {triggerVerify && (
-          <View 
-            style={{ position: 'absolute', bottom: 0, right: 0, width: 1, height: 1, opacity: 0.01 }} 
-            pointerEvents="none"
-          >
-            <WebView
-              ref={webViewRef}
-              source={{ uri: loginUrl }}
-              javaScriptEnabled={true}
-              domStorageEnabled={true}
-              sharedCookiesEnabled={true}
-              thirdPartyCookiesEnabled={true}
-              mixedContentMode="always"
-              setSupportMultipleWindows={false}
-              originWhitelist={['*']}
-              onMessage={handleWebViewMessage}
-              onNavigationStateChange={handleNavigationStateChange}
-              onLoadEnd={handleLoadEnd}
-              onError={(e) => {
-                console.warn('Login WebView Error:', e.nativeEvent);
-                if (timeoutRef.current) clearTimeout(timeoutRef.current);
-                setLoading(false);
-                setTriggerVerify(false);
-                Alert.alert('Connection Error', e.nativeEvent.description || 'Unable to connect to portal server.');
-              }}
-              onHttpError={(e) => {
-                console.warn('Login WebView HTTP Error:', e.nativeEvent);
-                if (e.nativeEvent.statusCode >= 500) {
-                  if (timeoutRef.current) clearTimeout(timeoutRef.current);
-                  setLoading(false);
-                  setTriggerVerify(false);
-                  Alert.alert('Portal Server Down', `Shiksha portal returned HTTP ${e.nativeEvent.statusCode}.`);
-                }
-              }}
-              injectedJavaScript={ScraperService.getLoginInjectionScript(username.trim(), password.trim())}
-              userAgent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36"
-            />
-          </View>
-        )}
       </ScrollView>
     </KeyboardAvoidingView>
   );

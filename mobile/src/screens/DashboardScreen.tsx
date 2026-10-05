@@ -99,6 +99,7 @@ export default function DashboardScreen({
             onRefresh={onRefresh}
             tintColor={Theme.colors.primary}
             colors={[Theme.colors.primary]}
+            progressBackgroundColor={Theme.colors.surface}
           />
         ) : undefined
       }

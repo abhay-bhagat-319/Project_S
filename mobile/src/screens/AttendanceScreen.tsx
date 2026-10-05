@@ -228,6 +228,7 @@ export default function AttendanceScreen({ attendanceData, onRefresh, refreshing
             onRefresh={onRefresh}
             colors={[Theme.colors.primary]}
             tintColor={Theme.colors.primary}
+            progressBackgroundColor={Theme.colors.surface}
           />
         }
         ListEmptyComponent={
@@ -236,7 +237,15 @@ export default function AttendanceScreen({ attendanceData, onRefresh, refreshing
               styles.emptyContainer, 
               { paddingBottom: Theme.layout.baseScrollBottomPadding + insets.bottom }
             ]}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                colors={[Theme.colors.primary]}
+                tintColor={Theme.colors.primary}
+                progressBackgroundColor={Theme.colors.surface}
+              />
+            }
           >
             <Ionicons name="calendar-outline" size={54} color={Theme.colors.textSecondary} />
             <Text style={styles.emptyTitle}>No Attendance Data</Text>

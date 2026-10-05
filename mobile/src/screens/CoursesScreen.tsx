@@ -24,6 +24,7 @@ interface CoursesScreenProps {
   onSubmitSrs?: (course: Course, data: SrsFormData) => Promise<boolean>;
   onRefresh?: () => Promise<void>;
   refreshing?: boolean;
+  onRefreshMarks?: (courseCode: string) => Promise<any>;
 }
 
 export default function CoursesScreen({
@@ -34,6 +35,7 @@ export default function CoursesScreen({
   onSubmitSrs,
   onRefresh,
   refreshing = false,
+  onRefreshMarks,
 }: CoursesScreenProps) {
   const insets = useSafeAreaInsets();
   const [selectedDetail, setSelectedDetail] = useState<CourseDetail | null>(null);
@@ -212,6 +214,7 @@ export default function CoursesScreen({
               onRefresh={onRefresh}
               tintColor={Theme.colors.primary}
               colors={[Theme.colors.primary]}
+              progressBackgroundColor={Theme.colors.surface}
             />
           ) : undefined
         }
@@ -230,6 +233,7 @@ export default function CoursesScreen({
         courseCode={marksModalCourse?.courseCode || ''}
         courseTitle={marksModalCourse?.courseTitle || ''}
         onClose={() => setMarksModalCourse(null)}
+        onRefreshMarks={onRefreshMarks}
       />
 
       {/* Course SRS Survey Modal */}
