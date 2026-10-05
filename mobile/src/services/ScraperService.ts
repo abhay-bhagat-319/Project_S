@@ -1143,272 +1143,59 @@ export const ScraperService = {
   },
 
   /**
-   * Injects CSS styles and responsive DOM enhancements to make the webview look and feel native on mobile screens.
+   * Injects Desktop Viewport meta tags and high-DPI desktop styling
    */
-  getCssInjectionScript(): string {
-    const css = `
-      /* Global Box Sizing & Mobile Viewport Constraints */
-      *, *::before, *::after {
-        box-sizing: border-box !important;
-      }
-      html, body {
-        width: 100% !important;
-        max-width: 100vw !important;
-        overflow-x: hidden !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        -webkit-text-size-adjust: 100% !important;
-        -webkit-tap-highlight-color: transparent !important;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
-        background-color: #f8fafc !important;
-      }
-
-      /* Hide Desktop Headers, Sidebars, Footers & Crumbs */
-      #header, 
-      #left-sidebar-nav, 
-      .leftside-navigation, 
-      footer.page-footer, 
-      .footer-fixed,
-      .sidebar-collapse,
-      .breadcrumbs-nav,
-      #breadcrumbs-wrapper,
-      .page-topbar {
-        display: none !important;
-      }
-
-      /* Adjust Main Wrapper & Content Container */
-      #main {
-        padding-left: 0 !important;
-        padding-right: 0 !important;
-        padding-top: 0 !important;
-        margin-top: 0 !important;
-        width: 100% !important;
-        max-width: 100vw !important;
-        min-height: auto !important;
-      }
-      #content {
-        padding: 10px 12px !important;
-        margin: 0 !important;
-        width: 100% !important;
-        max-width: 100vw !important;
-        min-height: calc(100vh - 80px) !important;
-      }
-      .wrapper {
-        width: 100% !important;
-        max-width: 100vw !important;
-        padding: 0 !important;
-        margin: 0 !important;
-      }
-      .container {
-        width: 100% !important;
-        max-width: 100% !important;
-        padding: 0 !important;
-        margin: 0 !important;
-      }
-
-      /* Responsive Flex Grid for Materialize Columns */
-      .row {
-        margin-left: 0 !important;
-        margin-right: 0 !important;
-        margin-bottom: 12px !important;
-        display: flex !important;
-        flex-wrap: wrap !important;
-        width: 100% !important;
-      }
-      .row .col {
-        padding: 4px !important;
-        float: none !important;
-        flex: 1 1 100% !important;
-        max-width: 100% !important;
-      }
-
-      /* Overhaul Broken Materialize Responsive Table Styles */
-      .responsiveTable, 
-      .dataTables_wrapper,
-      .table-responsive,
-      .table-wrapper {
-        display: block !important;
-        width: 100% !important;
-        max-width: 100% !important;
-        overflow-x: auto !important;
-        -webkit-overflow-scrolling: touch !important;
-        margin: 10px 0 !important;
-        border-radius: 10px !important;
-        border: 1px solid #e2e8f0 !important;
-        background: #ffffff !important;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
-      }
-
-      table,
-      table.mdl-data-table,
-      table.responsiveTable {
-        width: 100% !important;
-        min-width: 520px !important;
-        border-collapse: collapse !important;
-        display: table !important;
-        margin: 0 !important;
-      }
-      table thead,
-      .responsiveTable thead {
-        display: table-header-group !important;
-        float: none !important;
-        width: auto !important;
-        background-color: #f1f5f9 !important;
-      }
-      table thead tr,
-      .responsiveTable thead tr {
-        display: table-row !important;
-        border-bottom: 2px solid #cbd5e1 !important;
-      }
-      table tbody,
-      .responsiveTable tbody {
-        display: table-row-group !important;
-        width: auto !important;
-        white-space: normal !important;
-      }
-      table tbody tr,
-      .responsiveTable tbody tr {
-        display: table-row !important;
-        border-bottom: 1px solid #e2e8f0 !important;
-        height: auto !important;
-      }
-      table th, 
-      table td,
-      .responsiveTable th, 
-      .responsiveTable td {
-        display: table-cell !important;
-        padding: 10px 12px !important;
-        font-size: 13px !important;
-        line-height: 1.45 !important;
-        text-align: left !important;
-        white-space: normal !important;
-        vertical-align: middle !important;
-      }
-      table th,
-      .responsiveTable th {
-        font-weight: 600 !important;
-        color: #334155 !important;
-      }
-
-      /* Card and Panel Elements */
-      .card, .card-panel {
-        border-radius: 14px !important;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05) !important;
-        margin: 10px 0 !important;
-        background: #ffffff !important;
-        border: 1px solid #e2e8f0 !important;
-        max-width: 100% !important;
-        overflow: hidden !important;
-      }
-      .card .card-content {
-        padding: 16px !important;
-      }
-      .card-title {
-        font-size: 17px !important;
-        font-weight: 600 !important;
-        line-height: 1.3 !important;
-      }
-
-      /* Form Inputs & Controls */
-      .input-field {
-        margin-top: 12px !important;
-        margin-bottom: 16px !important;
-        width: 100% !important;
-      }
-      input[type=text], 
-      input[type=password], 
-      input[type=email], 
-      input[type=date], 
-      select, 
-      textarea {
-        font-size: 16px !important; /* Prevents auto-zoom in iOS Safari */
-        box-sizing: border-box !important;
-        height: 46px !important;
-        border-radius: 8px !important;
-        padding: 0 12px !important;
-        border: 1px solid #cbd5e1 !important;
-        background-color: #ffffff !important;
-        width: 100% !important;
-      }
-      textarea {
-        height: 90px !important;
-        padding: 10px 12px !important;
-      }
-
-      /* Modals & Dialogs */
-      .modal {
-        width: 92% !important;
-        max-width: 480px !important;
-        max-height: 85vh !important;
-        top: 6% !important;
-        border-radius: 16px !important;
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25) !important;
-        overflow-y: auto !important;
-      }
-      .modal .modal-content {
-        padding: 18px !important;
-      }
-      .modal-overlay {
-        opacity: 0.5 !important;
-      }
-
-      /* Buttons & Floating Actions */
-      .btn, .btn-large, .btn-flat {
-        border-radius: 8px !important;
-        height: 42px !important;
-        line-height: 42px !important;
-        font-size: 14px !important;
-        font-weight: 600 !important;
-        text-transform: none !important;
-      }
-      .fixed-action-btn {
-        bottom: 96px !important;
-        right: 18px !important;
-      }
-    `;
-
+  getDesktopViewportScript(): string {
     return `
       (function() {
         try {
-          // Enforce/Update mobile viewport
+          // 1. Enforce Desktop Viewport with smooth zoom capabilities
           var meta = document.querySelector('meta[name="viewport"]');
           if (!meta) {
             meta = document.createElement('meta');
             meta.name = 'viewport';
             document.head.appendChild(meta);
           }
-          meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=3.0, minimum-scale=0.8, user-scalable=yes';
+          meta.content = 'width=1280, initial-scale=0.32, minimum-scale=0.2, maximum-scale=4.0, user-scalable=yes';
 
-          // Inject or update responsive stylesheet
-          var existingStyle = document.getElementById('shiksha-mobile-responsive-style');
-          if (existingStyle) {
-            existingStyle.innerHTML = ${JSON.stringify(css)};
-          } else {
-            var style = document.createElement('style');
-            style.id = 'shiksha-mobile-responsive-style';
-            style.type = 'text/css';
-            style.innerHTML = ${JSON.stringify(css)};
+          // 2. Inject subtle desktop readability styles without breaking tables or hiding navigation
+          var style = document.getElementById('__project_s_desktop_css');
+          if (!style) {
+            style = document.createElement('style');
+            style.id = '__project_s_desktop_css';
             document.head.appendChild(style);
           }
-
-          // Wrap any uncontained tables into a scrollable container
-          var tables = document.querySelectorAll('table');
-          tables.forEach(function(table) {
-            var parent = table.parentElement;
-            if (!parent.classList.contains('responsiveTable') && 
-                !parent.classList.contains('dataTables_wrapper') && 
-                !parent.classList.contains('table-responsive')) {
-              var wrapper = document.createElement('div');
-              wrapper.className = 'table-responsive';
-              parent.insertBefore(wrapper, table);
-              wrapper.appendChild(table);
+          style.innerHTML = \`
+            html, body {
+              width: 1280px !important;
+              min-width: 1280px !important;
+              overflow-x: auto !important;
+              -webkit-text-size-adjust: 100% !important;
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+              background-color: #f8fafc !important;
+              -webkit-font-smoothing: antialiased !important;
             }
-          });
+            #main, .wrapper, #content, .container {
+              width: 1280px !important;
+              max-width: 1280px !important;
+              box-sizing: border-box !important;
+            }
+            /* Smooth touch scrolling for nested tables */
+            table, .responsiveTable, .dataTables_wrapper {
+              -webkit-overflow-scrolling: touch !important;
+            }
+            /* Clean rounded cards and subtle shadow */
+            .card, .card-panel {
+              border-radius: 8px !important;
+              box-shadow: 0 1px 4px rgba(0,0,0,0.06) !important;
+            }
+          \`;
         } catch (e) {}
       })();
       true;
     `;
   },
+
 
   /**
    * Injected script to submit SRS questionnaire directly within the authenticated portal context
