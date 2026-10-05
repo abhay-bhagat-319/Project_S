@@ -563,10 +563,42 @@ function AppContent() {
       Alert.alert('Submission Error', 'Failed to submit survey. Please try again.');
       return false;
     }
-  };
-
-  // Track current sync URL so onLoadEnd knows which page finished loading
+  };  // Track current sync URL so onLoadEnd knows which page finished loading
   const syncCurrentUrl = useRef<string>('');
+  const isRecoveringSession = useRef<boolean>(false);
+
+  const handleSessionRecoveryAndRetry = async () => {
+    if (isRecoveringSession.current) return;
+    isRecoveringSession.current = true;
+    console.log('[PortalSyncEngine] Active portal session invalidated on server. Attempting silent session recovery...');
+
+    try {
+      const recovered = await SessionLifecycleManager.silentReauthenticate();
+      if (recovered) {
+        console.log('[PortalSyncEngine] Silent session recovery succeeded! Retrying sync with refreshed session cookies...');
+        isRecoveringSession.current = false;
+        
+        let targetUrl = 'https://shiksha.iiserb.ac.in/secure/studenthome';
+        if (syncScopeRef.current === 'ATTENDANCE' || syncScopeRef.current === 'COURSES' || syncScopeRef.current === 'MARKS') {
+          targetUrl = 'https://shiksha.iiserb.ac.in/secure/studentMyCourses';
+        } else if (syncScopeRef.current === 'REPORTS') {
+          targetUrl = 'https://shiksha.iiserb.ac.in/secure/studentReports';
+        }
+
+        setSyncUrl(targetUrl);
+        syncWebViewRef.current?.injectJavaScript(`window.location.href = ${JSON.stringify(targetUrl)}; true;`);
+      } else {
+        console.warn('[PortalSyncEngine] Silent session recovery failed. Portal credentials may have changed.');
+        isRecoveringSession.current = false;
+        finishSync();
+        setAppState('NEEDS_LOGIN');
+      }
+    } catch (e) {
+      console.warn('[PortalSyncEngine] Error during silent recovery:', e);
+      isRecoveringSession.current = false;
+      finishSync();
+    }
+  };
 
   // WebView scraping execution coordinators
   const handleSyncNavigationStateChange = (navState: any) => {
@@ -574,26 +606,28 @@ function AppContent() {
     syncCurrentUrl.current = url || '';
     console.log('Sync WebView URL:', url);
 
-    // Inject credentials whenever we land on any login page
-    if (url && url.includes('/login')) {
-      if (credentials) {
-        console.log('Injecting credentials into sync WebView...');
-        syncWebViewRef.current?.injectJavaScript(
-          ScraperService.getLoginInjectionScript(credentials.username, credentials.password)
-        );
-      } else {
-        setSyncActive(false);
-        setRefreshing(false);
-        setAppState('NEEDS_LOGIN');
+    // If redirected to login while sync is active, server invalidated the session
+    if (url && (url.includes('/login') || url.includes('ldap_login_progress')) && syncActive) {
+      if (!isRecoveringSession.current) {
+        handleSessionRecoveryAndRetry();
       }
     }
-  };  // Inject scrapers immediately upon page load (Angular readiness is polled dynamically)
+  };
+
+  // Inject scrapers immediately upon page load (Angular readiness is polled dynamically)
   const handleSyncLoadEnd = () => {
     const url = syncCurrentUrl.current;
     if (!url) return;
 
     if (pageScrapeTimeoutRef.current) {
       clearTimeout(pageScrapeTimeoutRef.current);
+    }
+
+    if (url.includes('/login') || url.includes('ldap_login_progress')) {
+      if (syncActive && !isRecoveringSession.current) {
+        handleSessionRecoveryAndRetry();
+      }
+      return;
     }
 
     if (url.includes('/secure/studenthome')) {
@@ -793,7 +827,11 @@ function AppContent() {
         if (data.message && data.message.includes('Angular body scope not initialized') && syncCurrentUrl.current.includes('/secure/studentReports')) {
           return;
         }
-        finishSync();
+        if (!isRecoveringSession.current) {
+          handleSessionRecoveryAndRetry();
+        } else {
+          finishSync();
+        }
       }
     } catch (e) {
       console.log('Error parsing sync WebView message:', e);
