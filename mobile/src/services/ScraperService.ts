@@ -311,7 +311,7 @@ export const ScraperService = {
 
         // --- Strategy 2: Poll Angular scope ---
         var attempts = 0;
-        var maxAttempts = 200; // 20 seconds
+        var maxAttempts = 375; // 15 seconds (every 40ms)
 
         var poll = setInterval(function() {
           if (done) { clearInterval(poll); return; }
@@ -394,7 +394,7 @@ export const ScraperService = {
               window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ERROR', message: 'Poll error: ' + e.message }));
             }
           }
-        }, 100);
+        }, 40);
       })();
       true;
     `;
@@ -412,21 +412,49 @@ export const ScraperService = {
    */
   getAttendanceScraperScript(): string {
     return `
-      (async function() {
-        try {
-          var bodyScope = angular.element(document.body).scope();
-          if (!bodyScope || !bodyScope.userInfo) {
-            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ERROR', message: 'Angular body scope not initialized' }));
-            return;
-          }
-          var roll = bodyScope.userInfo.roll;
+      (function() {
+        var attempts = 0;
+        var maxAttempts = 300; // 15 seconds (every 50ms)
+        var done = false;
 
-          // Parse course rows from dataTable
-          var rows = Array.from(document.querySelectorAll('#dataTable tbody tr'));
-          if (rows.length === 0) {
-            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ATTENDANCE_SCRAPED', status: 'success', items: [] }));
-            return;
+        var poll = setInterval(async function() {
+          if (done) { clearInterval(poll); return; }
+          attempts++;
+
+          try {
+            var bodyScope = (typeof angular !== 'undefined' && angular.element) ? angular.element(document.body).scope() : null;
+            var rows = Array.from(document.querySelectorAll('#dataTable tbody tr'));
+            var hasRows = rows.length > 0 && rows[0].querySelectorAll('td').length >= 3;
+            var isEmptyTable = rows.length === 1 && rows[0].innerText.toLowerCase().includes('no data');
+
+            if (bodyScope && bodyScope.userInfo && (hasRows || isEmptyTable || attempts >= 30)) {
+              clearInterval(poll);
+              done = true;
+              await runScraper(bodyScope, rows);
+            } else if (attempts >= maxAttempts) {
+              clearInterval(poll);
+              done = true;
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'ERROR',
+                message: 'Timed out waiting for courses table to render.'
+              }));
+            }
+          } catch (e) {
+            clearInterval(poll);
+            done = true;
+            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ERROR', message: 'Attendance poll error: ' + e.message }));
           }
+        }, 50);
+
+        async function runScraper(bodyScope, rows) {
+          try {
+            var roll = bodyScope.userInfo.roll;
+
+            // Parse course rows from dataTable
+            if (rows.length === 0 || (rows.length === 1 && rows[0].innerText.toLowerCase().includes('no data'))) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ATTENDANCE_SCRAPED', status: 'success', items: [] }));
+              return;
+            }
 
           var courses = rows.map(function(row) {
             var cells = row.querySelectorAll('td');
@@ -1158,7 +1186,7 @@ export const ScraperService = {
       (function() {
         var done = false;
         var attempts = 0;
-        var maxAttempts = 100; // 10 seconds
+        var maxAttempts = 300; // 15 seconds (every 50ms)
 
         var poll = setInterval(function() {
           if (done) { clearInterval(poll); return; }
@@ -1270,7 +1298,7 @@ export const ScraperService = {
               }));
             }
           }
-        }, 100);
+        }, 50);
       })();
       true;
     `;
