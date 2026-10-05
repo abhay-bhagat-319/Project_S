@@ -404,6 +404,12 @@ export class UpdateService {
 
     const downloadExecutor = async (): Promise<string> => {
       try {
+        const updateDir = this.getUpdatesDirectory();
+        const dirInfo = await FileSystem.getInfoAsync(updateDir);
+        if (!dirInfo.exists) {
+          await FileSystem.makeDirectoryAsync(updateDir, { intermediates: true });
+        }
+
         const progressCallback = (downloadProgress: FileSystem.DownloadProgressData) => {
           const total = downloadProgress.totalBytesExpectedToWrite || expectedSize || 1;
           const progress = Math.min(1, Math.max(0, downloadProgress.totalBytesWritten / total));
