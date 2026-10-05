@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, Linking, ScrollView, Alert } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -23,14 +23,6 @@ const DEFAULT_URL = 'https://shiksha.iiserb.ac.in/secure/studenthome';
 const DESKTOP_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 
-const QUICK_JUMP_LINKS = [
-  { label: 'Home', icon: 'home-outline' as const, url: 'https://shiksha.iiserb.ac.in/secure/studenthome' },
-  { label: 'My Courses', icon: 'book-outline' as const, url: 'https://shiksha.iiserb.ac.in/secure/studentMyCourses' },
-  { label: 'Dues & Fees', icon: 'card-outline' as const, url: 'https://shiksha.iiserb.ac.in/secure/studentdues' },
-  { label: 'Reports', icon: 'document-text-outline' as const, url: 'https://shiksha.iiserb.ac.in/secure/studentReports' },
-  { label: 'Thesis', icon: 'school-outline' as const, url: 'https://shiksha.iiserb.ac.in/secure/studentthesis' },
-];
-
 const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenProps>(function PortalWebviewScreen({
   credentials,
   targetUrl,
@@ -38,6 +30,7 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
 }, ref) {
   const insets = useSafeAreaInsets();
   const webViewRef = useRef<WebView>(null);
+  const [initialSource] = useState({ uri: targetUrl || DEFAULT_URL });
   const [currentUrl, setCurrentUrl] = useState<string>(targetUrl || DEFAULT_URL);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
@@ -106,12 +99,23 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
 
   const goBack = () => {
     if (canGoBack) {
+      // First try history back in JS context which bypasses synthetic redirect loops, fallback to native goBack
+      webViewRef.current?.injectJavaScript(`
+        if (window.history.length > 1) {
+          window.history.back();
+        }
+        true;
+      `);
       webViewRef.current?.goBack();
     }
   };
 
   const goForward = () => {
     if (canGoForward) {
+      webViewRef.current?.injectJavaScript(`
+        window.history.forward();
+        true;
+      `);
       webViewRef.current?.goForward();
     }
   };
@@ -124,32 +128,10 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
     webViewRef.current?.injectJavaScript(`window.location.href = "${DEFAULT_URL}"; true;`);
   };
 
-  const navigateTo = (url: string) => {
-    setCurrentUrl(url);
-    webViewRef.current?.injectJavaScript(`window.location.href = ${JSON.stringify(url)}; true;`);
-  };
-
-  const handleOpenExternal = async () => {
-    try {
-      const canOpen = await Linking.canOpenURL(currentUrl);
-      if (canOpen) {
-        await Linking.openURL(currentUrl);
-      } else {
-        Alert.alert('Unable to Open', 'Could not open URL in external browser.');
-      }
-    } catch {
-      Alert.alert('Browser Notice', 'Could not launch default web browser.');
-    }
-  };
-
-  const handleResetZoom = () => {
-    webViewRef.current?.injectJavaScript(ScraperService.getDesktopViewportScript());
-  };
-
   useImperativeHandle(ref, () => ({
     handleBackPress: () => {
       if (canGoBack) {
-        webViewRef.current?.goBack();
+        goBack();
         return true;
       }
       return false;
@@ -195,64 +177,14 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
             <Ionicons name="home" size={18} color={Theme.colors.primary} />
           </TouchableOpacity>
 
-          {/* URL Display Pill */}
+          {/* Clean URL Display Pill */}
           <View style={styles.urlIndicator}>
-            <Ionicons name="desktop-outline" size={13} color={Theme.colors.primary} style={{ marginRight: 4 }} />
+            <Ionicons name="globe-outline" size={13} color={Theme.colors.primary} style={{ marginRight: 5 }} />
             <Text style={styles.urlText} numberOfLines={1} ellipsizeMode="tail">
               {currentUrl.replace('https://', '')}
             </Text>
           </View>
-
-          {/* Reset Zoom / Fit to Screen */}
-          <TouchableOpacity 
-            style={styles.navBtn} 
-            onPress={handleResetZoom} 
-            activeOpacity={0.7}
-            accessibilityLabel="Fit / Reset Zoom"
-          >
-            <Ionicons name="scan-outline" size={17} color={Theme.colors.textPrimary} />
-          </TouchableOpacity>
-
-          {/* Open in External Browser */}
-          <TouchableOpacity 
-            style={[styles.navBtn, { marginRight: 0 }]} 
-            onPress={handleOpenExternal} 
-            activeOpacity={0.7}
-            accessibilityLabel="Open in External Browser"
-          >
-            <Ionicons name="open-outline" size={17} color={Theme.colors.textPrimary} />
-          </TouchableOpacity>
         </View>
-
-        {/* Quick Jump Shortcuts Bar */}
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false} 
-          contentContainerStyle={styles.quickJumpContent}
-          style={styles.quickJumpRow}
-        >
-          {QUICK_JUMP_LINKS.map((link) => {
-            const isActive = currentUrl.includes(link.url);
-            return (
-              <TouchableOpacity
-                key={link.label}
-                style={[styles.chip, isActive && styles.chipActive]}
-                onPress={() => navigateTo(link.url)}
-                activeOpacity={0.75}
-              >
-                <Ionicons 
-                  name={link.icon} 
-                  size={13} 
-                  color={isActive ? Theme.colors.textDark : Theme.colors.textSecondary} 
-                  style={{ marginRight: 5 }} 
-                />
-                <Text style={[styles.chipText, isActive && styles.chipTextActive]}>
-                  {link.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
 
         {/* Loading Progress Bar */}
         {loading && progress < 1 && (
@@ -271,7 +203,7 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
       >
         <WebView
           ref={webViewRef}
-          source={{ uri: currentUrl }}
+          source={initialSource}
           javaScriptEnabled={true}
           domStorageEnabled={true}
           sharedCookiesEnabled={true}
@@ -310,14 +242,13 @@ const styles = StyleSheet.create({
     backgroundColor: Theme.colors.surface,
     paddingHorizontal: 12,
     paddingTop: 8,
-    paddingBottom: 6,
+    paddingBottom: 8,
     borderBottomWidth: 1,
     borderBottomColor: Theme.colors.border,
   },
   controlsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
   },
   navBtn: {
     width: 34,
@@ -338,9 +269,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.3)',
     borderRadius: Theme.radii.pill,
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 7,
     marginLeft: 2,
-    marginRight: 6,
   },
   urlText: {
     flex: 1,
@@ -348,43 +278,11 @@ const styles = StyleSheet.create({
     color: Theme.colors.textSecondary,
     fontWeight: '500',
   },
-  quickJumpRow: {
-    marginTop: 2,
-    marginBottom: 4,
-  },
-  quickJumpContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 2,
-  },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 14,
-    marginRight: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  chipActive: {
-    backgroundColor: Theme.colors.primary,
-    borderColor: Theme.colors.primary,
-  },
-  chipText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Theme.colors.textSecondary,
-  },
-  chipTextActive: {
-    color: Theme.colors.textDark,
-  },
   progressBarTrack: {
     height: 2.5,
     backgroundColor: 'rgba(255, 255, 255, 0.05)',
     width: '100%',
-    marginTop: 4,
+    marginTop: 6,
     borderRadius: 1.5,
     overflow: 'hidden',
   },
