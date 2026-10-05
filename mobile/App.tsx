@@ -44,6 +44,8 @@ export default function App() {
   );
 }
 
+export type SyncScope = 'ALL' | 'ATTENDANCE' | 'PROFILE' | 'REPORTS';
+
 function AppContent() {
   const insets = useSafeAreaInsets();
   const [appState, setAppState] = useState<AppState>('INITIALIZING');
@@ -59,7 +61,9 @@ function AppContent() {
   
   // Sync States
   const [syncActive, setSyncActive] = useState(false);
-  const [syncUrl, setSyncUrl] = useState('https://shiksha.iiserb.ac.in/secure/studenthome');
+  const [syncScope, setSyncScope] = useState<SyncScope>('ALL');
+  const syncScopeRef = useRef<SyncScope>('ALL');
+  const [syncUrl, setSyncUrl] = useState('https://shiksha.iiserb.ac.in/secure/studentMyCourses');
   const [refreshing, setRefreshing] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   
@@ -229,6 +233,10 @@ function AppContent() {
       if (creds) {
         const isBioEnabled = await SecureStorageService.isBiometricsEnabled();
         if (isBioEnabled) {
+          // Pre-warm attendance session in background while LockScreen is active
+          syncScopeRef.current = 'ATTENDANCE';
+          setSyncScope('ATTENDANCE');
+          setSyncUrl('https://shiksha.iiserb.ac.in/secure/studentMyCourses');
           setAppState('LOCKED');
         } else {
           await loadCacheAndLogin();
@@ -290,7 +298,7 @@ function AppContent() {
     // Check sync cooldown
     const needsSync = await CacheService.isSyncCooledDown();
     if (needsSync) {
-      startSync();
+      startSync('ALL');
     }
   };
 
@@ -307,7 +315,7 @@ function AppContent() {
     }
   };
 
-  const startSync = async () => {
+  const startSync = async (scope: SyncScope = 'ALL') => {
     const offline = await checkOfflineStatus();
     if (offline) {
       setIsOffline(true);
@@ -324,24 +332,34 @@ function AppContent() {
     }
     setCredentials(creds);
 
-    console.log('Starting portal sync...');
+    console.log(`Starting portal sync [scope: ${scope}]...`);
+    syncScopeRef.current = scope;
+    setSyncScope(scope);
     setSyncActive(true);
 
     // Timeout safety guard - 35 seconds maximum
     if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
     syncTimeoutRef.current = setTimeout(() => {
-      console.log('Sync timed out after 35s');
+      console.log(`Sync timed out after 35s [scope: ${syncScopeRef.current}]`);
       setSyncActive(false);
       setRefreshing(false);
     }, 35000);
 
-    // Always start from login so Angular completes its full auth flow.
-    setSyncUrl('https://shiksha.iiserb.ac.in/login');
+    // Direct Session Navigation: Navigate directly to target secure page
+    let targetUrl = 'https://shiksha.iiserb.ac.in/secure/studenthome';
+    if (scope === 'ATTENDANCE') {
+      targetUrl = 'https://shiksha.iiserb.ac.in/secure/studentMyCourses';
+    } else if (scope === 'REPORTS') {
+      targetUrl = 'https://shiksha.iiserb.ac.in/secure/studentReports';
+    }
+
+    setSyncUrl(targetUrl);
+    syncWebViewRef.current?.injectJavaScript(`window.location.href = "${targetUrl}"; true;`);
   };
 
-  const handleManualRefresh = async () => {
+  const handleManualRefresh = async (scope: SyncScope = 'ATTENDANCE') => {
     setRefreshing(true);
-    await startSync();
+    await startSync(scope);
   };
 
   // Top level state callbacks
@@ -515,7 +533,7 @@ function AppContent() {
     }
   };
 
-  // Inject scrapers only after the page has fully loaded (Angular bootstrapped)
+  // Inject scrapers immediately upon page load (Angular readiness is polled dynamically)
   const handleSyncLoadEnd = () => {
     const url = syncCurrentUrl.current;
     if (!url) return;
@@ -525,26 +543,22 @@ function AppContent() {
     }
 
     if (url.includes('/secure/studenthome')) {
-      pageScrapeTimeoutRef.current = setTimeout(() => {
-        if (syncCurrentUrl.current.includes('/secure/studenthome')) {
-          console.log('Injected profile scraper.');
-          syncWebViewRef.current?.injectJavaScript(ScraperService.getProfileScraperScript());
-        }
-      }, 1500);
+      if (syncScopeRef.current === 'ATTENDANCE') {
+        // Redirect directly if landed on home after auth but requested attendance
+        syncWebViewRef.current?.injectJavaScript(`window.location.href = "https://shiksha.iiserb.ac.in/secure/studentMyCourses"; true;`);
+      } else if (syncScopeRef.current === 'REPORTS') {
+        // Redirect directly if landed on home after auth but requested reports
+        syncWebViewRef.current?.injectJavaScript(`window.location.href = "https://shiksha.iiserb.ac.in/secure/studentReports"; true;`);
+      } else {
+        console.log('Injected profile scraper (dynamic polling).');
+        syncWebViewRef.current?.injectJavaScript(ScraperService.getProfileScraperScript());
+      }
     } else if (url.includes('/secure/studentMyCourses')) {
-      pageScrapeTimeoutRef.current = setTimeout(() => {
-        if (syncCurrentUrl.current.includes('/secure/studentMyCourses')) {
-          console.log('Injected attendance & course details scraper.');
-          syncWebViewRef.current?.injectJavaScript(ScraperService.getAttendanceScraperScript());
-        }
-      }, 1500);
+      console.log('Injected attendance & course details scraper (dynamic polling).');
+      syncWebViewRef.current?.injectJavaScript(ScraperService.getAttendanceScraperScript());
     } else if (url.includes('/secure/studentReports')) {
-      pageScrapeTimeoutRef.current = setTimeout(() => {
-        if (syncCurrentUrl.current.includes('/secure/studentReports')) {
-          console.log('Injected reports scraper.');
-          syncWebViewRef.current?.injectJavaScript(ScraperService.getReportsScraperScript());
-        }
-      }, 1500);
+      console.log('Injected reports scraper (dynamic polling).');
+      syncWebViewRef.current?.injectJavaScript(ScraperService.getReportsScraperScript());
     }
   };
 
@@ -598,10 +612,18 @@ function AppContent() {
             }
           }
 
-          // Now transition the WebView to the courses page
-          if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
-          setSyncUrl('https://shiksha.iiserb.ac.in/secure/studentMyCourses');
-          syncWebViewRef.current?.injectJavaScript(`window.location.href = "https://shiksha.iiserb.ac.in/secure/studentMyCourses"; true;`);
+          if (syncScopeRef.current === 'PROFILE') {
+            console.log('Scoped PROFILE sync completed successfully.');
+            if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+            if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
+            setSyncActive(false);
+            setRefreshing(false);
+          } else {
+            // Full sync cascade: transition WebView to courses page
+            if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
+            setSyncUrl('https://shiksha.iiserb.ac.in/secure/studentMyCourses');
+            syncWebViewRef.current?.injectJavaScript(`window.location.href = "https://shiksha.iiserb.ac.in/secure/studentMyCourses"; true;`);
+          }
         } else {
           console.log('Profile scrape failed:', data.message);
           if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
@@ -659,10 +681,18 @@ function AppContent() {
             });
           }
 
-          // Now transition the WebView to the reports page
-          if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
-          setSyncUrl('https://shiksha.iiserb.ac.in/secure/studentReports');
-          syncWebViewRef.current?.injectJavaScript(`window.location.href = "https://shiksha.iiserb.ac.in/secure/studentReports"; true;`);
+          if (syncScopeRef.current === 'ATTENDANCE') {
+            console.log('Scoped ATTENDANCE sync completed successfully.');
+            if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+            if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
+            setSyncActive(false);
+            setRefreshing(false);
+          } else {
+            // Full sync cascade: transition WebView to reports page
+            if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
+            setSyncUrl('https://shiksha.iiserb.ac.in/secure/studentReports');
+            syncWebViewRef.current?.injectJavaScript(`window.location.href = "https://shiksha.iiserb.ac.in/secure/studentReports"; true;`);
+          }
         } else {
           console.log('Attendance scrape failed:', data.message);
           if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
@@ -733,7 +763,33 @@ function AppContent() {
   }
 
   if (appState === 'LOCKED') {
-    return <LockScreen onUnlock={handleUnlockSuccess} />;
+    return (
+      <View style={{ flex: 1, backgroundColor: Theme.colors.background }}>
+        <LockScreen onUnlock={handleUnlockSuccess} />
+        {/* Hidden background WebView for pre-warming attendance session during biometric prompt */}
+        <View 
+          style={{ position: 'absolute', bottom: 0, right: 0, width: 1, height: 1, opacity: 0.01 }} 
+          pointerEvents="none"
+        >
+          <WebView
+            ref={syncWebViewRef}
+            source={{ uri: syncUrl }}
+            javaScriptEnabled={true}
+            domStorageEnabled={true}
+            sharedCookiesEnabled={true}
+            thirdPartyCookiesEnabled={true}
+            mixedContentMode="always"
+            setSupportMultipleWindows={false}
+            originWhitelist={['*']}
+            onMessage={handleSyncMessage}
+            onNavigationStateChange={handleSyncNavigationStateChange}
+            onLoadEnd={handleSyncLoadEnd}
+            injectedJavaScriptBeforeContentLoaded={ScraperService.getEarlyInterceptScript()}
+            userAgent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36"
+          />
+        </View>
+      </View>
+    );
   }
 
   if (appState === 'NEEDS_LOGIN') {
@@ -782,8 +838,8 @@ function AppContent() {
             ) : subScreen === 'reports' ? (
               <ReportsScreen 
                 onBack={() => setSubScreen(null)} 
-                onRefreshPortal={startSync}
-                isSyncing={syncActive}
+                onRefreshPortal={() => startSync('REPORTS')}
+                isSyncing={syncActive && syncScope === 'REPORTS'}
               />
             ) : (
               <DashboardScreen 
@@ -791,6 +847,8 @@ function AppContent() {
                 onNavigateToTab={(tab) => handleTabPress(tab as TabName)}
                 onOpenAcademicSchedules={() => setSubScreen('academic_schedules')}
                 onOpenReports={() => setSubScreen('reports')}
+                onRefresh={() => handleManualRefresh('PROFILE')}
+                refreshing={refreshing && syncScope === 'PROFILE'}
               />
             )}
           </View>
@@ -799,8 +857,8 @@ function AppContent() {
           <View key="attendance_page" style={styles.pageContainer}>
             <AttendanceScreen 
               attendanceData={attendanceData} 
-              onRefresh={handleManualRefresh} 
-              refreshing={refreshing}
+              onRefresh={() => handleManualRefresh('ATTENDANCE')} 
+              refreshing={refreshing && syncScope === 'ATTENDANCE'}
               isOffline={isOffline}
             />
           </View>
@@ -813,6 +871,8 @@ function AppContent() {
               onNavigateToTab={(tab) => handleTabPress(tab as TabName)}
               onOpenSrs={handleOpenSrs}
               onSubmitSrs={handleSubmitSrs}
+              onRefresh={() => handleManualRefresh('ATTENDANCE')}
+              refreshing={refreshing && syncScope === 'ATTENDANCE'}
             />
           </View>
 
