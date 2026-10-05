@@ -232,6 +232,7 @@ export default function ReportsScreen({
               onRefresh={handleManualRefresh}
               tintColor={Theme.colors.primary}
               colors={[Theme.colors.primary]}
+              progressBackgroundColor={Theme.colors.surface}
             />
           }
         />

@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { SecureStorageService } from '../services/SecureStorageService';
 import { CacheService } from '../services/CacheService';
+import { SessionLifecycleManager } from '../services/SessionLifecycleManager';
 import { ScraperService } from '../services/ScraperService';
 import { UpdateService, UpdateInfo } from '../services/UpdateService';
 import { AppConfig } from '../constants/Config';
@@ -192,6 +193,8 @@ export default function SettingsScreen({
           onPress: async () => {
             await SecureStorageService.clearCredentials();
             await CacheService.clearCache();
+            // Fire session purge asynchronously
+            SessionLifecycleManager.purgeSession().catch(() => {});
             onLogout();
           }
         }
@@ -304,11 +307,7 @@ export default function SettingsScreen({
         </View>
 
         <TouchableOpacity 
-          style={[
-            styles.settingItem, 
-            styles.borderTop,
-            hasUpdate && styles.highlightedUpdateItem
-          ]} 
+          style={[styles.settingItem, styles.borderTop]} 
           onPress={handleCheckForUpdates}
           disabled={checkingUpdate}
           activeOpacity={0.7}
@@ -327,7 +326,7 @@ export default function SettingsScreen({
                 </View>
               )}
             </View>
-            <Text style={[styles.settingDescription, hasUpdate && { color: Theme.colors.lavender }]}>
+            <Text style={[styles.settingDescription, hasUpdate && { color: '#fef08a' }]}>
               {hasUpdate ? 'Tap to view details and install the latest update' : 'Fetch latest release notes & APK from GitHub'}
             </Text>
           </View>
@@ -336,7 +335,7 @@ export default function SettingsScreen({
           ) : (
             <Ionicons 
               name={hasUpdate ? "arrow-forward-circle" : "cloud-download-outline"} 
-              size={hasUpdate ? 24 : 20} 
+              size={hasUpdate ? 22 : 20} 
               color={hasUpdate ? "#eab308" : Theme.colors.primary} 
             />
           )}
@@ -550,14 +549,6 @@ const styles = StyleSheet.create({
     color: '#f87171',
     fontSize: 11,
     fontWeight: '700',
-  },
-  highlightedUpdateItem: {
-    backgroundColor: 'rgba(234, 179, 8, 0.12)',
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: 'rgba(234, 179, 8, 0.5)',
-    marginVertical: 4,
-    paddingHorizontal: 14,
   },
   highlightedUpdateText: {
     color: '#fef08a',

@@ -1,9 +1,20 @@
-import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 
 const UPDATE_NOTIFICATION_CHANNEL_ID = 'app-updates';
 const UPDATE_NOTIFICATION_ID = 'project-s-app-update';
+
+let _notificationsModule: typeof import('expo-notifications') | null = null;
+function getNotifications(): typeof import('expo-notifications') | null {
+  if (!_notificationsModule) {
+    try {
+      _notificationsModule = require('expo-notifications');
+    } catch {
+      _notificationsModule = null;
+    }
+  }
+  return _notificationsModule;
+}
 
 export class NotificationService {
   private static isInitialized = false;
@@ -27,6 +38,9 @@ export class NotificationService {
     if (!this.isSupported()) {
       return false;
     }
+
+    const Notifications = getNotifications();
+    if (!Notifications) return false;
 
     if (this.isInitialized) return true;
 
@@ -81,6 +95,9 @@ export class NotificationService {
       return () => {};
     }
 
+    const Notifications = getNotifications();
+    if (!Notifications) return () => {};
+
     try {
       const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
         const data = response.notification.request.content.data as Record<string, any> | undefined;
@@ -108,6 +125,9 @@ export class NotificationService {
   ): Promise<void> {
     if (!this.isSupported()) return;
 
+    const Notifications = getNotifications();
+    if (!Notifications) return;
+
     try {
       const response = await Notifications.getLastNotificationResponseAsync();
       if (response) {
@@ -129,6 +149,9 @@ export class NotificationService {
    */
   public static async notifyUpdateReady(version: string, releaseName?: string): Promise<void> {
     if (!this.isSupported()) return;
+
+    const Notifications = getNotifications();
+    if (!Notifications) return;
 
     try {
       await this.init();
@@ -163,6 +186,9 @@ export class NotificationService {
   public static async notifyUpdateAvailable(version: string, releaseName?: string): Promise<void> {
     if (!this.isSupported()) return;
 
+    const Notifications = getNotifications();
+    if (!Notifications) return;
+
     try {
       await this.init();
       const title = 'New Update Available 🌟';
@@ -193,6 +219,9 @@ export class NotificationService {
    */
   public static async clearUpdateNotification(): Promise<void> {
     if (!this.isSupported()) return;
+
+    const Notifications = getNotifications();
+    if (!Notifications) return;
 
     try {
       await Notifications.dismissNotificationAsync(UPDATE_NOTIFICATION_ID);

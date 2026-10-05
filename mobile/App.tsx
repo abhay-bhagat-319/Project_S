@@ -13,6 +13,7 @@ import { SecureStorageService } from './src/services/SecureStorageService';
 import { CacheService, ProfileData, AttendanceData, CourseDetail } from './src/services/CacheService';
 import { ScraperService } from './src/services/ScraperService';
 import { ReportsService } from './src/services/ReportsService';
+import { SessionLifecycleManager } from './src/services/SessionLifecycleManager';
 
 import LockScreen from './src/screens/LockScreen';
 import LoginScreen from './src/screens/LoginScreen';
@@ -44,7 +45,7 @@ export default function App() {
   );
 }
 
-export type SyncScope = 'ALL' | 'ATTENDANCE' | 'PROFILE' | 'REPORTS';
+export type SyncScope = 'ALL' | 'ATTENDANCE' | 'COURSES' | 'MARKS' | 'PROFILE' | 'REPORTS';
 
 function AppContent() {
   const insets = useSafeAreaInsets();
@@ -63,6 +64,9 @@ function AppContent() {
   const [syncActive, setSyncActive] = useState(false);
   const [syncScope, setSyncScope] = useState<SyncScope>('ALL');
   const syncScopeRef = useRef<SyncScope>('ALL');
+  const priorityCourseCodeRef = useRef<string>('');
+  const marksResolveMapRef = useRef<Record<string, (marks: any) => void>>({});
+  const syncResolverRef = useRef<(() => void) | null>(null);
   const [syncUrl, setSyncUrl] = useState('https://shiksha.iiserb.ac.in/secure/studentMyCourses');
   const [refreshing, setRefreshing] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
@@ -88,11 +92,31 @@ function AppContent() {
   // Re-authentication Credentials
   const [credentials, setCredentials] = useState<{ username: string; password: string } | null>(null);
 
+  const authWebViewRef = useRef<WebView>(null);
+
   const syncWebViewRef = useRef<WebView>(null);
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pageScrapeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const portalWebviewRef = useRef<PortalWebviewHandle>(null);
   const lastBackPressRef = useRef<number>(0);
+
+  // Register Auth & Session Lifecycle Adapter
+  useEffect(() => {
+    const unregisterAuth = SessionLifecycleManager.registerAdapter({
+      loadUrl: (url: string) => {
+        authWebViewRef.current?.injectJavaScript(`window.location.href = ${JSON.stringify(url)}; true;`);
+      },
+      injectScript: (script: string) => {
+        authWebViewRef.current?.injectJavaScript(script);
+      },
+      reload: () => {
+        authWebViewRef.current?.reload();
+      },
+    });
+    return () => {
+      unregisterAuth();
+    };
+  }, []);
 
   // Android Hardware Back Button Navigation Handler
   useEffect(() => {
@@ -315,11 +339,22 @@ function AppContent() {
     }
   };
 
-  const startSync = async (scope: SyncScope = 'ALL') => {
+  const finishSync = () => {
+    if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+    if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
+    setSyncActive(false);
+    setRefreshing(false);
+    if (syncResolverRef.current) {
+      syncResolverRef.current();
+      syncResolverRef.current = null;
+    }
+  };
+
+  const startSync = async (scope: SyncScope = 'ALL', priorityCourseCode?: string): Promise<void> => {
     const offline = await checkOfflineStatus();
     if (offline) {
       setIsOffline(true);
-      setRefreshing(false);
+      finishSync();
       Alert.alert('Offline Mode', 'Cannot sync portal data. Please check your internet connection.');
       return;
     }
@@ -328,38 +363,59 @@ function AppContent() {
     const creds = await SecureStorageService.getCredentials();
     if (!creds) {
       setAppState('NEEDS_LOGIN');
+      finishSync();
       return;
     }
     setCredentials(creds);
 
-    console.log(`Starting portal sync [scope: ${scope}]...`);
+    console.log(`Starting portal sync [scope: ${scope}${priorityCourseCode ? `, priority: ${priorityCourseCode}` : ''}]...`);
     syncScopeRef.current = scope;
+    priorityCourseCodeRef.current = priorityCourseCode || '';
     setSyncScope(scope);
     setSyncActive(true);
 
-    // Timeout safety guard - 35 seconds maximum
-    if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
-    syncTimeoutRef.current = setTimeout(() => {
-      console.log(`Sync timed out after 35s [scope: ${syncScopeRef.current}]`);
-      setSyncActive(false);
-      setRefreshing(false);
-    }, 35000);
+    return new Promise<void>((resolve) => {
+      syncResolverRef.current = resolve;
 
-    // Direct Session Navigation: Navigate directly to target secure page
-    let targetUrl = 'https://shiksha.iiserb.ac.in/secure/studenthome';
-    if (scope === 'ATTENDANCE') {
-      targetUrl = 'https://shiksha.iiserb.ac.in/secure/studentMyCourses';
-    } else if (scope === 'REPORTS') {
-      targetUrl = 'https://shiksha.iiserb.ac.in/secure/studentReports';
-    }
+      // Timeout safety guard - 35 seconds maximum
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+      syncTimeoutRef.current = setTimeout(() => {
+        console.log(`Sync timed out after 35s [scope: ${syncScopeRef.current}]`);
+        finishSync();
+      }, 35000);
 
-    setSyncUrl(targetUrl);
-    syncWebViewRef.current?.injectJavaScript(`window.location.href = "${targetUrl}"; true;`);
+      // Direct Session Navigation: Navigate directly to target secure page
+      let targetUrl = 'https://shiksha.iiserb.ac.in/secure/studenthome';
+      if (scope === 'ATTENDANCE' || scope === 'COURSES' || scope === 'MARKS') {
+        targetUrl = 'https://shiksha.iiserb.ac.in/secure/studentMyCourses';
+      } else if (scope === 'REPORTS') {
+        targetUrl = 'https://shiksha.iiserb.ac.in/secure/studentReports';
+      }
+
+      if (syncUrl === targetUrl) {
+        console.log(`WebView already on target URL [${targetUrl}], reloading...`);
+        syncWebViewRef.current?.reload();
+      } else {
+        setSyncUrl(targetUrl);
+      }
+    });
   };
 
   const handleManualRefresh = async (scope: SyncScope = 'ATTENDANCE') => {
+    setSyncScope(scope);
     setRefreshing(true);
-    await startSync(scope);
+    try {
+      await startSync(scope);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleRefreshMarks = (courseCode: string): Promise<any> => {
+    return new Promise((resolve) => {
+      marksResolveMapRef.current[courseCode] = resolve;
+      startSync('MARKS', courseCode);
+    });
   };
 
   // Top level state callbacks
@@ -531,9 +587,7 @@ function AppContent() {
         setAppState('NEEDS_LOGIN');
       }
     }
-  };
-
-  // Inject scrapers immediately upon page load (Angular readiness is polled dynamically)
+  };  // Inject scrapers immediately upon page load (Angular readiness is polled dynamically)
   const handleSyncLoadEnd = () => {
     const url = syncCurrentUrl.current;
     if (!url) return;
@@ -543,8 +597,8 @@ function AppContent() {
     }
 
     if (url.includes('/secure/studenthome')) {
-      if (syncScopeRef.current === 'ATTENDANCE') {
-        // Redirect directly if landed on home after auth but requested attendance
+      if (syncScopeRef.current === 'ATTENDANCE' || syncScopeRef.current === 'COURSES' || syncScopeRef.current === 'MARKS') {
+        // Redirect directly if landed on home after auth but requested courses/attendance/marks
         syncWebViewRef.current?.injectJavaScript(`window.location.href = "https://shiksha.iiserb.ac.in/secure/studentMyCourses"; true;`);
       } else if (syncScopeRef.current === 'REPORTS') {
         // Redirect directly if landed on home after auth but requested reports
@@ -554,8 +608,20 @@ function AppContent() {
         syncWebViewRef.current?.injectJavaScript(ScraperService.getProfileScraperScript());
       }
     } else if (url.includes('/secure/studentMyCourses')) {
-      console.log('Injected attendance & course details scraper (dynamic polling).');
-      syncWebViewRef.current?.injectJavaScript(ScraperService.getAttendanceScraperScript());
+      const knownRoll = profileData?.roll || credentials?.username || '';
+      if (syncScopeRef.current === 'COURSES') {
+        console.log('Injected courses metadata scraper (dynamic polling).');
+        syncWebViewRef.current?.injectJavaScript(ScraperService.getCoursesScraperScript());
+      } else if (syncScopeRef.current === 'MARKS') {
+        console.log('Injected priority marks scraper (dynamic polling).');
+        const allCodes = courses.map((c) => c.courseCode);
+        syncWebViewRef.current?.injectJavaScript(
+          ScraperService.getCourseMarksScraperScript(priorityCourseCodeRef.current, allCodes, knownRoll)
+        );
+      } else {
+        console.log('Injected attendance scraper (dynamic polling).');
+        syncWebViewRef.current?.injectJavaScript(ScraperService.getAttendanceScraperScript(knownRoll));
+      }
     } else if (url.includes('/secure/studentReports')) {
       console.log('Injected reports scraper (dynamic polling).');
       syncWebViewRef.current?.injectJavaScript(ScraperService.getReportsScraperScript());
@@ -614,22 +680,15 @@ function AppContent() {
 
           if (syncScopeRef.current === 'PROFILE') {
             console.log('Scoped PROFILE sync completed successfully.');
-            if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
-            if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
-            setSyncActive(false);
-            setRefreshing(false);
+            finishSync();
           } else {
             // Full sync cascade: transition WebView to courses page
             if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
             setSyncUrl('https://shiksha.iiserb.ac.in/secure/studentMyCourses');
-            syncWebViewRef.current?.injectJavaScript(`window.location.href = "https://shiksha.iiserb.ac.in/secure/studentMyCourses"; true;`);
           }
         } else {
           console.log('Profile scrape failed:', data.message);
-          if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
-          if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
-          setSyncActive(false);
-          setRefreshing(false);
+          finishSync();
         }
       } 
       
@@ -646,7 +705,7 @@ function AppContent() {
           
           const submittedSrs = await CacheService.getSubmittedSrsCourses();
           // Map courses
-          const mappedCourses = data.items.map((item: any) => ({
+          const mappedCourses = (data.items || []).map((item: any) => ({
             courseCode: item.courseCode,
             courseTitle: item.courseTitle,
             instructor: item.instructor,
@@ -659,48 +718,64 @@ function AppContent() {
           }));
           setCourses(mappedCourses);
 
-          // Map course details
-          if (data.courseDetails) {
-            setCourseDetails(data.courseDetails);
-            await CacheService.cacheCourseDetails(data.courseDetails);
-          }
-
-          // If attendance scrape found photo and profile didn't have base64, augment profileData
-          if (data.photoBase64 || data.photoUrl) {
-            setProfileData((prev) => {
-              if (prev && !prev.photoBase64 && (data.photoBase64 || data.photoUrl)) {
-                const updated = {
-                  ...prev,
-                  photoBase64: data.photoBase64 || prev.photoBase64,
-                  photoUrl: data.photoUrl || prev.photoUrl
-                };
-                CacheService.cacheProfileData(updated);
-                return updated;
-              }
-              return prev;
-            });
-          }
-
           if (syncScopeRef.current === 'ATTENDANCE') {
             console.log('Scoped ATTENDANCE sync completed successfully.');
-            if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
-            if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
-            setSyncActive(false);
-            setRefreshing(false);
+            finishSync();
           } else {
             // Full sync cascade: transition WebView to reports page
             if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
             setSyncUrl('https://shiksha.iiserb.ac.in/secure/studentReports');
-            syncWebViewRef.current?.injectJavaScript(`window.location.href = "https://shiksha.iiserb.ac.in/secure/studentReports"; true;`);
           }
         } else {
           console.log('Attendance scrape failed:', data.message);
-          if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
-          if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
-          setSyncActive(false);
-          setRefreshing(false);
+          finishSync();
         }
-      } 
+      }
+
+      else if (data.type === 'COURSES_SCRAPED') {
+        if (data.status === 'success') {
+          const submittedSrs = await CacheService.getSubmittedSrsCourses();
+          const mappedCourses = (data.items || []).map((item: any) => ({
+            courseCode: item.courseCode,
+            courseTitle: item.courseTitle,
+            instructor: item.instructor,
+            srsStatus: {
+              ...item.srsStatus,
+              midSemAvailable: !!item.srsStatus?.midSemAvailable,
+              endSemAvailable: !!item.srsStatus?.endSemAvailable,
+              isSubmitted: submittedSrs.includes(item.courseCode) || !!item.srsStatus?.isSubmitted
+            }
+          }));
+          setCourses(mappedCourses);
+
+          if (data.courseDetails) {
+            setCourseDetails((prev) => ({ ...prev, ...data.courseDetails }));
+            await CacheService.cacheCourseDetails({ ...courseDetails, ...data.courseDetails });
+          }
+
+          console.log('Scoped COURSES sync completed successfully.');
+        } else {
+          console.log('Courses scrape notice:', data.message);
+        }
+        finishSync();
+      }
+
+      else if (data.type === 'COURSE_MARKS_STREAMED') {
+        if (data.courseCode && data.marksData) {
+          await CacheService.cacheCourseMarks(data.courseCode, data.marksData);
+          if (marksResolveMapRef.current[data.courseCode]) {
+            marksResolveMapRef.current[data.courseCode](data.marksData);
+            delete marksResolveMapRef.current[data.courseCode];
+          }
+        }
+      }
+
+      else if (data.type === 'ALL_COURSE_MARKS_SCRAPED') {
+        console.log('All course marks scraped & cached.');
+        if (syncScopeRef.current === 'MARKS') {
+          finishSync();
+        }
+      }
       
       else if (data.type === 'REPORTS_SCRAPED') {
         if (data.status === 'success') {
@@ -709,10 +784,7 @@ function AppContent() {
         } else {
           console.log('Reports scrape notice:', data.message);
         }
-        if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
-        if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
-        setSyncActive(false);
-        setRefreshing(false);
+        finishSync();
       }
 
       else if (data.type === 'ERROR') {
@@ -721,17 +793,10 @@ function AppContent() {
         if (data.message && data.message.includes('Angular body scope not initialized') && syncCurrentUrl.current.includes('/secure/studentReports')) {
           return;
         }
-        if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
-        if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
-        setSyncActive(false);
-        setRefreshing(false);
+        finishSync();
       }
     } catch (e) {
       console.log('Error parsing sync WebView message:', e);
-      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
-      if (pageScrapeTimeoutRef.current) clearTimeout(pageScrapeTimeoutRef.current);
-      setSyncActive(false);
-      setRefreshing(false);
     }
   };
 
@@ -753,66 +818,34 @@ function AppContent() {
   };
 
   // Render entry layout based on State
-  if (appState === 'INITIALIZING') {
-    return (
-      <View style={styles.initializingContainer}>
-        <ActivityIndicator size="large" color={Theme.colors.primary} />
-        <Text style={styles.initializingText}>Loading Shiksha Wrapper...</Text>
-      </View>
-    );
-  }
-
-  if (appState === 'LOCKED') {
-    return (
-      <View style={{ flex: 1, backgroundColor: Theme.colors.background }}>
-        <LockScreen onUnlock={handleUnlockSuccess} />
-        {/* Hidden background WebView for pre-warming attendance session during biometric prompt */}
-        <View 
-          style={{ position: 'absolute', bottom: 0, right: 0, width: 1, height: 1, opacity: 0.01 }} 
-          pointerEvents="none"
-        >
-          <WebView
-            ref={syncWebViewRef}
-            source={{ uri: syncUrl }}
-            javaScriptEnabled={true}
-            domStorageEnabled={true}
-            sharedCookiesEnabled={true}
-            thirdPartyCookiesEnabled={true}
-            mixedContentMode="always"
-            setSupportMultipleWindows={false}
-            originWhitelist={['*']}
-            onMessage={handleSyncMessage}
-            onNavigationStateChange={handleSyncNavigationStateChange}
-            onLoadEnd={handleSyncLoadEnd}
-            injectedJavaScriptBeforeContentLoaded={ScraperService.getEarlyInterceptScript()}
-            userAgent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36"
-          />
-        </View>
-      </View>
-    );
-  }
-
-  if (appState === 'NEEDS_LOGIN') {
-    return <LoginScreen onSuccess={handleLoginSuccess} />;
-  }
-
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      <StatusBar barStyle="light-content" backgroundColor={Theme.colors.background} />
-      
-      {/* Top Header */}
-      {!subScreen && (
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>
-            {activeTab === 'Courses' ? 'My Courses' : activeTab === 'Portal' ? 'Shiksha Portal' : activeTab}
-          </Text>
-          {syncActive && (
-            <View style={styles.syncSpinner}>
-              <ActivityIndicator size="small" color={Theme.colors.primary} />
+    <View style={{ flex: 1, backgroundColor: Theme.colors.background }}>
+      {appState === 'INITIALIZING' ? (
+        <View style={styles.initializingContainer}>
+          <ActivityIndicator size="large" color={Theme.colors.primary} />
+          <Text style={styles.initializingText}>Loading Shiksha Wrapper...</Text>
+        </View>
+      ) : appState === 'LOCKED' ? (
+        <LockScreen onUnlock={handleUnlockSuccess} />
+      ) : appState === 'NEEDS_LOGIN' ? (
+        <LoginScreen onSuccess={handleLoginSuccess} />
+      ) : (
+        <View style={[styles.container, { paddingTop: insets.top }]}>
+          <StatusBar barStyle="light-content" backgroundColor={Theme.colors.background} />
+          
+          {/* Top Header */}
+          {!subScreen && (
+            <View style={styles.header}>
+              <Text style={styles.headerTitle}>
+                {activeTab === 'Courses' ? 'My Courses' : activeTab === 'Portal' ? 'Shiksha Portal' : activeTab}
+              </Text>
+              {syncActive && (
+                <View style={styles.syncSpinner}>
+                  <ActivityIndicator size="small" color={Theme.colors.primary} />
+                </View>
+              )}
             </View>
           )}
-        </View>
-      )}
 
       {/* Screen Content Area with Native Gesture PagerView */}
       <View style={styles.content}>
@@ -871,8 +904,9 @@ function AppContent() {
               onNavigateToTab={(tab) => handleTabPress(tab as TabName)}
               onOpenSrs={handleOpenSrs}
               onSubmitSrs={handleSubmitSrs}
-              onRefresh={() => handleManualRefresh('ATTENDANCE')}
-              refreshing={refreshing && syncScope === 'ATTENDANCE'}
+              onRefresh={() => handleManualRefresh('COURSES')}
+              refreshing={refreshing && syncScope === 'COURSES'}
+              onRefreshMarks={handleRefreshMarks}
             />
           </View>
 
@@ -1019,6 +1053,39 @@ function AppContent() {
         onClose={() => setUpdateModalVisible(false)}
         onSnooze={() => {}}
       />
+        </View>
+      )}
+
+      {/* Persistent Auth & Session WebView for SessionLifecycleManager */}
+      <View 
+        style={{ position: 'absolute', bottom: 0, right: 0, width: 1, height: 1, opacity: 0.01 }} 
+        pointerEvents="none"
+      >
+        <WebView
+          ref={authWebViewRef}
+          source={{ uri: 'https://shiksha.iiserb.ac.in/login/' }}
+          javaScriptEnabled={true}
+          domStorageEnabled={true}
+          sharedCookiesEnabled={true}
+          thirdPartyCookiesEnabled={true}
+          mixedContentMode="always"
+          setSupportMultipleWindows={false}
+          originWhitelist={['*']}
+          onMessage={(e) => {
+            try {
+              const data = JSON.parse(e.nativeEvent.data);
+              SessionLifecycleManager.handleWebViewMessage(data);
+            } catch (err) {}
+          }}
+          onNavigationStateChange={(navState) => {
+            SessionLifecycleManager.handleNavigationStateChange(navState.url);
+          }}
+          onLoadEnd={(e) => {
+            SessionLifecycleManager.handleLoadEnd(e.nativeEvent.url || 'https://shiksha.iiserb.ac.in/login/');
+          }}
+          userAgent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36"
+        />
+      </View>
 
       {/* Background WebView for syncing data */}
       {syncActive && (

@@ -23,3 +23,20 @@ _Avoid_: Auto-updater, OTA engine, patcher
 **Update Notification**:
 A local Android system tray notification alerting the user that a new release is available or downloaded and ready for 1-tap installation.
 _Avoid_: Push notification, alert banner, toast
+
+**Targeted Sync Scope**:
+An execution domain (`ATTENDANCE`, `COURSES`, `MARKS`, `PROFILE`, `REPORTS`) that directs the portal synchronization engine to fetch only the requested slice of student data, preventing monolithic sync overhead.
+_Avoid_: Partial fetch, selective pull, partial scrape
+
+**Priority Marks Streamer**:
+A dual-phase marks synchronization mechanism that immediately scrapes and resolves assessment marks for the user-selected course first, while asynchronously queueing and caching the remaining courses in the background.
+_Avoid_: Batch fetcher, sequential loader
+
+**PortalSyncEngine**:
+The headless synchronization coordinator that oversees authenticated WebView lifecycles, injects scoped micro-adapters with per-request abort timeouts, and dispatches structured domain events.
+_Avoid_: Background scraper, WebView driver
+
+**SessionLifecycleManager**:
+The authentication and session subsystem that coordinates credential verification, cookie jar sanitization, server-side session termination, and background session recovery.
+_Avoid_: Auth helper, login service, cookie manager
+

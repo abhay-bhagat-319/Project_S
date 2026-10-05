@@ -1,20 +1,24 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
   View,
   Modal,
   TouchableOpacity,
+  ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
+import { CacheService, CourseMarksData } from '../services/CacheService';
 
 interface CourseMarksModalProps {
   visible: boolean;
   courseCode: string;
   courseTitle: string;
   onClose: () => void;
+  onRefreshMarks?: (courseCode: string) => Promise<CourseMarksData | void>;
 }
 
 export default function CourseMarksModal({
@@ -24,6 +28,7 @@ export default function CourseMarksModal({
   onClose,
 }: CourseMarksModalProps) {
   const insets = useSafeAreaInsets();
+
   if (!courseCode) return null;
 
   return (
@@ -61,7 +66,7 @@ export default function CourseMarksModal({
               <View>
                 <Text style={styles.courseCodeText}>{courseCode}</Text>
                 <Text style={styles.modalTitle} numberOfLines={1}>
-                  Course Performance
+                  Course Evaluation & Marks
                 </Text>
               </View>
             </View>
@@ -73,21 +78,24 @@ export default function CourseMarksModal({
           {/* Course Title Preview */}
           <Text style={styles.courseTitleText}>{courseTitle}</Text>
 
-          {/* Placeholder Card */}
+          {/* Work in Progress Card */}
           <View style={styles.placeholderCard}>
-            <Ionicons name="construct-outline" size={36} color={Theme.colors.lavender} />
-            <Text style={styles.placeholderTitle}>Performance Data Coming Soon</Text>
-            <Text style={styles.placeholderSubtitle}>
-              We are finalizing the spreadsheet parser to bring you quiz, mid-sem, and lab grade breakdowns directly within the app.
-            </Text>
-            <View style={styles.statusBadge}>
-              <Text style={styles.statusBadgeText}>Under Development</Text>
+            <View style={styles.wipBadge}>
+              <Ionicons name="construct" size={14} color="#fef08a" style={{ marginRight: 5 }} />
+              <Text style={styles.wipBadgeText}>Work in Progress</Text>
             </View>
+            
+            <Ionicons name="pie-chart-outline" size={44} color={Theme.colors.primary} style={{ marginVertical: 12 }} />
+            
+            <Text style={styles.placeholderTitle}>Assessment Breakdown</Text>
+            <Text style={styles.placeholderSubtitle}>
+              Detailed test scores, mid-sem/end-sem evaluation components, and weightages for {courseCode} are actively being developed for a future release.
+            </Text>
           </View>
 
           {/* Dismiss Action Button */}
           <TouchableOpacity style={styles.actionBtn} onPress={onClose} activeOpacity={0.8}>
-            <Text style={styles.actionBtnText}>Got it</Text>
+            <Text style={styles.actionBtnText}>Got It</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -106,6 +114,7 @@ const styles = StyleSheet.create({
   },
   modalContainer: {
     width: '100%',
+    maxHeight: '85%',
     backgroundColor: Theme.colors.surface,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
@@ -130,7 +139,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 12,
+    marginBottom: 8,
   },
   headerLeft: {
     flexDirection: 'row',
@@ -164,44 +173,154 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   courseTitleText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: Theme.colors.textSecondary,
-    marginBottom: 16,
+    marginBottom: 14,
+  },
+  scrollList: {
+    maxHeight: 340,
+    marginBottom: 14,
+  },
+  scrollContent: {
+    paddingBottom: 8,
+  },
+  componentsCard: {
+    backgroundColor: Theme.colors.background,
+    borderRadius: Theme.radii.widget,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    marginBottom: 12,
+  },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: Theme.colors.border,
+  },
+  componentsCardTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: Theme.colors.textPrimary,
+  },
+  lastUpdatedText: {
+    fontSize: 11,
+    color: Theme.colors.textSecondary,
+  },
+  componentRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  componentRowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  componentLeft: {
+    flex: 1,
+    marginRight: 10,
+  },
+  componentName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Theme.colors.textPrimary,
+    marginBottom: 2,
+  },
+  componentWeightage: {
+    fontSize: 12,
+    color: Theme.colors.lavender,
+  },
+  componentRight: {
+    alignItems: 'flex-end',
+  },
+  componentScore: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Theme.colors.textPrimary,
+    marginBottom: 2,
+  },
+  scorePill: {
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  scorePillText: {
+    fontSize: 10,
+    color: Theme.colors.textSecondary,
+    fontWeight: '600',
   },
   placeholderCard: {
     backgroundColor: Theme.colors.background,
     borderRadius: Theme.radii.widget,
-    padding: 20,
+    padding: 22,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: Theme.colors.border,
-    marginBottom: 20,
+    marginBottom: 16,
   },
   placeholderTitle: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: 'bold',
     color: Theme.colors.textPrimary,
-    marginTop: 12,
-    marginBottom: 6,
+    marginTop: 10,
+    marginBottom: 4,
   },
   placeholderSubtitle: {
     fontSize: 12,
     lineHeight: 18,
     color: Theme.colors.textSecondary,
     textAlign: 'center',
-    marginBottom: 14,
+    marginBottom: 16,
   },
-  statusBadge: {
-    backgroundColor: 'rgba(226, 220, 255, 0.12)',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
+  fetchBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Theme.colors.primary,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
     borderRadius: Theme.radii.pill,
   },
-  statusBadgeText: {
-    fontSize: 11,
+  fetchBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
+  refreshBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(139, 120, 255, 0.25)',
+    borderWidth: 1,
+    borderColor: Theme.colors.primary,
+    borderRadius: Theme.radii.pill,
+    paddingVertical: 10,
+  },
+  refreshBtnText: {
+    color: Theme.colors.primary,
+    fontSize: 13,
     fontWeight: '600',
-    color: Theme.colors.lavender,
+  },
+  wipBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(234, 179, 8, 0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(234, 179, 8, 0.4)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    marginBottom: 4,
+  },
+  wipBadgeText: {
+    color: '#fef08a',
+    fontSize: 12,
+    fontWeight: '700',
   },
   actionBtn: {
     backgroundColor: Theme.colors.primary,
