@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, Platform, Animated } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, Linking, ScrollView, Alert } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -19,12 +19,17 @@ export interface PortalWebviewScreenProps {
 
 const DEFAULT_URL = 'https://shiksha.iiserb.ac.in/secure/studenthome';
 
-// Mobile User Agent to guarantee mobile responsiveness from server
-const MOBILE_USER_AGENT = Platform.select({
-  ios: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
-  android: 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36',
-  default: 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36',
-});
+// Desktop User Agent to guarantee standard desktop layout and data tables from Shiksha portal
+const DESKTOP_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+
+const QUICK_JUMP_LINKS = [
+  { label: 'Home', icon: 'home-outline' as const, url: 'https://shiksha.iiserb.ac.in/secure/studenthome' },
+  { label: 'My Courses', icon: 'book-outline' as const, url: 'https://shiksha.iiserb.ac.in/secure/studentMyCourses' },
+  { label: 'Dues & Fees', icon: 'card-outline' as const, url: 'https://shiksha.iiserb.ac.in/secure/studentdues' },
+  { label: 'Reports', icon: 'document-text-outline' as const, url: 'https://shiksha.iiserb.ac.in/secure/studentReports' },
+  { label: 'Thesis', icon: 'school-outline' as const, url: 'https://shiksha.iiserb.ac.in/secure/studentthesis' },
+];
 
 const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenProps>(function PortalWebviewScreen({
   credentials,
@@ -38,7 +43,6 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
   const [canGoForward, setCanGoForward] = useState(false);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [pageTitle, setPageTitle] = useState('Shiksha Portal');
 
   // Register WebView as the authenticated PDF downloader bridge
   useEffect(() => {
@@ -54,6 +58,7 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
   useEffect(() => {
     if (targetUrl && targetUrl !== currentUrl) {
       setCurrentUrl(targetUrl);
+      webViewRef.current?.injectJavaScript(`window.location.href = ${JSON.stringify(targetUrl)}; true;`);
       if (onClearTargetUrl) {
         onClearTargetUrl();
       }
@@ -64,9 +69,6 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
     setCanGoBack(navState.canGoBack);
     setCanGoForward(navState.canGoForward);
     setLoading(navState.loading);
-    if (navState.title) {
-      setPageTitle(navState.title);
-    }
     if (navState.url) {
       setCurrentUrl(navState.url);
       // Auto-login injection if redirected to /login
@@ -98,8 +100,8 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
         ScraperService.getLoginInjectionScript(credentials.username, credentials.password)
       );
     }
-    // Inject mobile-responsive CSS and viewport enforcement
-    webViewRef.current?.injectJavaScript(ScraperService.getCssInjectionScript());
+    // Inject desktop viewport and clean font smoothing
+    webViewRef.current?.injectJavaScript(ScraperService.getDesktopViewportScript());
   };
 
   const goBack = () => {
@@ -122,9 +124,26 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
     webViewRef.current?.injectJavaScript(`window.location.href = "${DEFAULT_URL}"; true;`);
   };
 
-  const optimizeView = () => {
-    // Re-trigger layout optimization and viewport reset
-    webViewRef.current?.injectJavaScript(ScraperService.getCssInjectionScript());
+  const navigateTo = (url: string) => {
+    setCurrentUrl(url);
+    webViewRef.current?.injectJavaScript(`window.location.href = ${JSON.stringify(url)}; true;`);
+  };
+
+  const handleOpenExternal = async () => {
+    try {
+      const canOpen = await Linking.canOpenURL(currentUrl);
+      if (canOpen) {
+        await Linking.openURL(currentUrl);
+      } else {
+        Alert.alert('Unable to Open', 'Could not open URL in external browser.');
+      }
+    } catch {
+      Alert.alert('Browser Notice', 'Could not launch default web browser.');
+    }
+  };
+
+  const handleResetZoom = () => {
+    webViewRef.current?.injectJavaScript(ScraperService.getDesktopViewportScript());
   };
 
   useImperativeHandle(ref, () => ({
@@ -139,7 +158,7 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
 
   return (
     <View style={styles.container}>
-      {/* Top Browser Navigation Bar */}
+      {/* Top Browser Toolbar */}
       <View style={styles.toolbar}>
         <View style={styles.controlsRow}>
           <TouchableOpacity
@@ -173,25 +192,67 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.navBtn} onPress={goHome} activeOpacity={0.7}>
-            <Ionicons name="home-outline" size={18} color={Theme.colors.primary} />
+            <Ionicons name="home" size={18} color={Theme.colors.primary} />
           </TouchableOpacity>
 
+          {/* URL Display Pill */}
           <View style={styles.urlIndicator}>
-            <Ionicons name="lock-closed" size={12} color={Theme.colors.success} style={{ marginRight: 4 }} />
+            <Ionicons name="desktop-outline" size={13} color={Theme.colors.primary} style={{ marginRight: 4 }} />
             <Text style={styles.urlText} numberOfLines={1} ellipsizeMode="tail">
               {currentUrl.replace('https://', '')}
             </Text>
           </View>
 
+          {/* Reset Zoom / Fit to Screen */}
+          <TouchableOpacity 
+            style={styles.navBtn} 
+            onPress={handleResetZoom} 
+            activeOpacity={0.7}
+            accessibilityLabel="Fit / Reset Zoom"
+          >
+            <Ionicons name="scan-outline" size={17} color={Theme.colors.textPrimary} />
+          </TouchableOpacity>
+
+          {/* Open in External Browser */}
           <TouchableOpacity 
             style={[styles.navBtn, { marginRight: 0 }]} 
-            onPress={optimizeView} 
+            onPress={handleOpenExternal} 
             activeOpacity={0.7}
-            accessibilityLabel="Optimize View"
+            accessibilityLabel="Open in External Browser"
           >
-            <Ionicons name="phone-portrait-outline" size={16} color={Theme.colors.primary} />
+            <Ionicons name="open-outline" size={17} color={Theme.colors.textPrimary} />
           </TouchableOpacity>
         </View>
+
+        {/* Quick Jump Shortcuts Bar */}
+        <ScrollView 
+          horizontal 
+          showsHorizontalScrollIndicator={false} 
+          contentContainerStyle={styles.quickJumpContent}
+          style={styles.quickJumpRow}
+        >
+          {QUICK_JUMP_LINKS.map((link) => {
+            const isActive = currentUrl.includes(link.url);
+            return (
+              <TouchableOpacity
+                key={link.label}
+                style={[styles.chip, isActive && styles.chipActive]}
+                onPress={() => navigateTo(link.url)}
+                activeOpacity={0.75}
+              >
+                <Ionicons 
+                  name={link.icon} 
+                  size={13} 
+                  color={isActive ? Theme.colors.textDark : Theme.colors.textSecondary} 
+                  style={{ marginRight: 5 }} 
+                />
+                <Text style={[styles.chipText, isActive && styles.chipTextActive]}>
+                  {link.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
 
         {/* Loading Progress Bar */}
         {loading && progress < 1 && (
@@ -201,7 +262,7 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
         )}
       </View>
 
-      {/* Embedded Mobile Responsive Web View */}
+      {/* Embedded Desktop Class Web View */}
       <View 
         style={[
           styles.webviewContainer, 
@@ -216,11 +277,11 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
           sharedCookiesEnabled={true}
           thirdPartyCookiesEnabled={true}
           originWhitelist={['*']}
-          scalesPageToFit={false}
+          scalesPageToFit={true}
           setBuiltInZoomControls={true}
           setDisplayZoomControls={false}
           textZoom={100}
-          showsHorizontalScrollIndicator={false}
+          showsHorizontalScrollIndicator={true}
           showsVerticalScrollIndicator={true}
           allowsInlineMediaPlayback={true}
           onMessage={handleMessage}
@@ -231,9 +292,8 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
           }}
           onLoadProgress={({ nativeEvent }) => setProgress(nativeEvent.progress)}
           onLoadEnd={handleLoadEnd}
-          injectedJavaScriptBeforeContentLoaded={ScraperService.getEarlyMobileResponsiveScript()}
-          injectedJavaScript={ScraperService.getCssInjectionScript()}
-          userAgent={MOBILE_USER_AGENT}
+          injectedJavaScript={ScraperService.getDesktopViewportScript()}
+          userAgent={DESKTOP_USER_AGENT}
           style={styles.webview}
         />
       </View>
@@ -249,13 +309,15 @@ const styles = StyleSheet.create({
   toolbar: {
     backgroundColor: Theme.colors.surface,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingTop: 8,
+    paddingBottom: 6,
     borderBottomWidth: 1,
     borderBottomColor: Theme.colors.border,
   },
   controlsRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginBottom: 8,
   },
   navBtn: {
     width: 34,
@@ -277,19 +339,52 @@ const styles = StyleSheet.create({
     borderRadius: Theme.radii.pill,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    marginLeft: 4,
+    marginLeft: 2,
     marginRight: 6,
   },
   urlText: {
     flex: 1,
     fontSize: 11,
     color: Theme.colors.textSecondary,
+    fontWeight: '500',
+  },
+  quickJumpRow: {
+    marginTop: 2,
+    marginBottom: 4,
+  },
+  quickJumpContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 2,
+  },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  chipActive: {
+    backgroundColor: Theme.colors.primary,
+    borderColor: Theme.colors.primary,
+  },
+  chipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Theme.colors.textSecondary,
+  },
+  chipTextActive: {
+    color: Theme.colors.textDark,
   },
   progressBarTrack: {
     height: 2.5,
     backgroundColor: 'rgba(255, 255, 255, 0.05)',
     width: '100%',
-    marginTop: 6,
+    marginTop: 4,
     borderRadius: 1.5,
     overflow: 'hidden',
   },
@@ -303,7 +398,7 @@ const styles = StyleSheet.create({
   },
   webview: {
     flex: 1,
-    backgroundColor: Theme.colors.background,
+    backgroundColor: '#ffffff',
   },
 });
 
