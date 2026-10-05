@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { StyleSheet, Text, View, FlatList, TouchableOpacity } from 'react-native';
+import { StyleSheet, Text, View, FlatList, TouchableOpacity, RefreshControl, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
@@ -8,7 +8,6 @@ import { getCourseDetailFor } from '../utils/courseCatalog';
 import CourseDetailModal from './CourseDetailModal';
 import CourseMarksModal from './CourseMarksModal';
 import CourseSrsModal, { SrsFormData } from './CourseSrsModal';
-import { Alert } from 'react-native';
 
 export interface Course {
   courseCode: string;
@@ -23,6 +22,8 @@ interface CoursesScreenProps {
   onNavigateToTab?: (tabName: string) => void;
   onOpenSrs?: (courseCode: string) => void;
   onSubmitSrs?: (course: Course, data: SrsFormData) => Promise<boolean>;
+  onRefresh?: () => Promise<void>;
+  refreshing?: boolean;
 }
 
 export default function CoursesScreen({
@@ -31,6 +32,8 @@ export default function CoursesScreen({
   onNavigateToTab,
   onOpenSrs,
   onSubmitSrs,
+  onRefresh,
+  refreshing = false,
 }: CoursesScreenProps) {
   const insets = useSafeAreaInsets();
   const [selectedDetail, setSelectedDetail] = useState<CourseDetail | null>(null);
@@ -202,6 +205,16 @@ export default function CoursesScreen({
           styles.listContent, 
           { paddingBottom: Theme.layout.baseScrollBottomPadding + insets.bottom }
         ]}
+        refreshControl={
+          onRefresh ? (
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={Theme.colors.primary}
+              colors={[Theme.colors.primary]}
+            />
+          ) : undefined
+        }
       />
 
       {/* Course Details Modal */}

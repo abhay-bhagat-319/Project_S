@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { StyleSheet, Text, View, Image, ScrollView, TouchableOpacity, Modal, FlatList, Dimensions, Alert } from 'react-native';
+import { StyleSheet, Text, View, Image, ScrollView, TouchableOpacity, Modal, FlatList, Dimensions, Alert, RefreshControl } from 'react-native';
 import Svg, { Line, Circle, Polyline, Text as SvgText, Rect, Path, Defs, LinearGradient, Stop, G } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,9 +11,18 @@ interface DashboardScreenProps {
   onNavigateToTab?: (tab: 'Profile' | 'Attendance' | 'Courses' | 'Portal' | 'Settings') => void;
   onOpenAcademicSchedules?: () => void;
   onOpenReports?: () => void;
+  onRefresh?: () => Promise<void>;
+  refreshing?: boolean;
 }
 
-export default function DashboardScreen({ profileData, onNavigateToTab, onOpenAcademicSchedules, onOpenReports }: DashboardScreenProps) {
+export default function DashboardScreen({
+  profileData,
+  onNavigateToTab,
+  onOpenAcademicSchedules,
+  onOpenReports,
+  onRefresh,
+  refreshing = false,
+}: DashboardScreenProps) {
   const insets = useSafeAreaInsets();
   const [modalVisible, setModalVisible] = useState(false);
   const [modalType, setModalType] = useState<'passed' | 'failed'>('passed');
@@ -83,6 +92,16 @@ export default function DashboardScreen({ profileData, onNavigateToTab, onOpenAc
         styles.scrollContent, 
         { paddingBottom: Theme.layout.baseScrollBottomPadding + insets.bottom }
       ]}
+      refreshControl={
+        onRefresh ? (
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={Theme.colors.primary}
+            colors={[Theme.colors.primary]}
+          />
+        ) : undefined
+      }
     >
       
       {/* Profile Header Card */}
