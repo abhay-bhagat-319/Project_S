@@ -153,7 +153,40 @@ export class SessionLifecycleManager {
   }
 
   /**
-   * Authenticates user against the Shiksha portal with fast pre-flight check and timeout safety guard
+   * Handles native WebView load errors during authentication
+   */
+  public static async handleAuthError(errorMsg?: string): Promise<void> {
+    if (this.pendingAuth) {
+      clearTimeout(this.pendingAuth.timer);
+      const { resolve } = this.pendingAuth;
+      this.pendingAuth = null;
+      this.isAuthenticating = false;
+
+      const netState = await NetworkReachabilityService.getNetworkState();
+      if (netState === 'EXTERNAL_ONLINE') {
+        resolve({
+          success: false,
+          code: 'CAMPUS_NETWORK_REQUIRED',
+          message: 'Campus network required. Please connect to IISERB Wi-Fi or turn on FortiClient VPN (gateway.iiserb.ac.in).',
+        });
+      } else if (netState === 'OFFLINE') {
+        resolve({
+          success: false,
+          code: 'NETWORK_ERROR',
+          message: 'No internet connection detected. Please check your network connection.',
+        });
+      } else {
+        resolve({
+          success: false,
+          code: 'NETWORK_ERROR',
+          message: errorMsg || 'Unable to connect to Shiksha portal. Please check your connection and try again.',
+        });
+      }
+    }
+  }
+
+  /**
+   * Authenticates user against the Shiksha portal with timeout safety guard
    */
   public static async authenticate(username: string, password: string, timeoutMs = 25000): Promise<AuthResult> {
     const trimmedUser = username.trim();
@@ -175,25 +208,6 @@ export class SessionLifecycleManager {
       };
     }
 
-    // Fast pre-flight campus network check before starting 25s WebView wait
-    const isShikshaUp = await NetworkReachabilityService.isShikshaReachable(2000);
-    if (!isShikshaUp) {
-      const isPublicUp = await NetworkReachabilityService.isPublicInternetReachable(1500);
-      if (isPublicUp) {
-        return {
-          success: false,
-          code: 'CAMPUS_NETWORK_REQUIRED',
-          message: 'Campus network required. Please connect to IISERB Wi-Fi or turn on FortiClient VPN (gateway.iiserb.ac.in).',
-        };
-      } else {
-        return {
-          success: false,
-          code: 'NETWORK_ERROR',
-          message: 'No internet connection detected. Please check your network connection.',
-        };
-      }
-    }
-
     if (this.pendingAuth) {
       clearTimeout(this.pendingAuth.timer);
       this.pendingAuth.resolve({
@@ -207,15 +221,31 @@ export class SessionLifecycleManager {
     this.isAuthenticating = true;
 
     return new Promise<AuthResult>((resolve) => {
-      const timer = setTimeout(() => {
+      const timer = setTimeout(async () => {
         if (this.pendingAuth) {
           this.pendingAuth = null;
           this.isAuthenticating = false;
-          resolve({
-            success: false,
-            code: 'TIMEOUT',
-            message: 'Portal verification took too long. Please verify your internet connection or LDAP credentials.',
-          });
+
+          const netState = await NetworkReachabilityService.getNetworkState();
+          if (netState === 'EXTERNAL_ONLINE') {
+            resolve({
+              success: false,
+              code: 'CAMPUS_NETWORK_REQUIRED',
+              message: 'Campus network required. Please connect to IISERB Wi-Fi or turn on FortiClient VPN (gateway.iiserb.ac.in).',
+            });
+          } else if (netState === 'OFFLINE') {
+            resolve({
+              success: false,
+              code: 'NETWORK_ERROR',
+              message: 'No internet connection detected. Please check your network connection.',
+            });
+          } else {
+            resolve({
+              success: false,
+              code: 'TIMEOUT',
+              message: 'Portal verification took too long. Please verify your internet connection or LDAP credentials.',
+            });
+          }
         }
       }, timeoutMs);
 
