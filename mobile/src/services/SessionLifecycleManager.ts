@@ -1,10 +1,11 @@
 import { SecureStorageService } from './SecureStorageService';
 import { ScraperService } from './ScraperService';
+import { NetworkReachabilityService } from './NetworkReachabilityService';
 
 export interface AuthResult {
   success: boolean;
   message?: string;
-  code?: 'AUTH_FAILED' | 'TIMEOUT' | 'NETWORK_ERROR' | 'UNKNOWN';
+  code?: 'AUTH_FAILED' | 'TIMEOUT' | 'NETWORK_ERROR' | 'CAMPUS_NETWORK_REQUIRED' | 'UNKNOWN';
 }
 
 export interface AuthAdapterBridge {
@@ -152,26 +153,45 @@ export class SessionLifecycleManager {
   }
 
   /**
-   * Authenticates user against the Shiksha portal with timeout safety guard
+   * Authenticates user against the Shiksha portal with fast pre-flight check and timeout safety guard
    */
-  public static authenticate(username: string, password: string, timeoutMs = 25000): Promise<AuthResult> {
+  public static async authenticate(username: string, password: string, timeoutMs = 25000): Promise<AuthResult> {
     const trimmedUser = username.trim();
     const trimmedPass = password.trim();
 
     if (!trimmedUser || !trimmedPass) {
-      return Promise.resolve({
+      return {
         success: false,
         code: 'AUTH_FAILED',
         message: 'Please enter both username and password.',
-      });
+      };
     }
 
     if (!this.adapter) {
-      return Promise.resolve({
+      return {
         success: false,
         code: 'NETWORK_ERROR',
         message: 'Authentication engine is initializing. Please try again.',
-      });
+      };
+    }
+
+    // Fast pre-flight campus network check before starting 25s WebView wait
+    const isShikshaUp = await NetworkReachabilityService.isShikshaReachable(2000);
+    if (!isShikshaUp) {
+      const isPublicUp = await NetworkReachabilityService.isPublicInternetReachable(1500);
+      if (isPublicUp) {
+        return {
+          success: false,
+          code: 'CAMPUS_NETWORK_REQUIRED',
+          message: 'Campus network required. Please connect to IISERB Wi-Fi or turn on FortiClient VPN (gateway.iiserb.ac.in).',
+        };
+      } else {
+        return {
+          success: false,
+          code: 'NETWORK_ERROR',
+          message: 'No internet connection detected. Please check your network connection.',
+        };
+      }
     }
 
     if (this.pendingAuth) {
