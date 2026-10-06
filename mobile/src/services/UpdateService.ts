@@ -1,4 +1,4 @@
-import { Platform, Linking } from 'react-native';
+import { Platform, Linking, AppState } from 'react-native';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as Application from 'expo-application';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -23,9 +23,18 @@ export interface UpdateInfo {
   isCached?: boolean;
 }
 
+export interface PendingDownloadMeta {
+  version: string;
+  url: string;
+  expectedSize?: number;
+  releaseName?: string;
+  startedAt: number;
+}
+
 const SNOOZE_KEY_PREFIX = 'shiksha_update_snooze_';
 const SNOOZE_DURATION_MS = 24 * 60 * 60 * 1000; // 24 Hours
 const RESUME_SNAP_KEY_PREFIX = 'shiksha_update_resume_snap_';
+const PENDING_DOWNLOAD_META_KEY = 'shiksha_update_pending_meta';
 
 type ProgressCallback = (fraction: number, totalBytes: number) => void;
 
@@ -35,12 +44,13 @@ export class UpdateService {
   private static RELEASES_API_URL = `https://api.github.com/repos/${UpdateService.GITHUB_OWNER}/${UpdateService.GITHUB_REPO}/releases/latest`;
   public static RELEASES_WEB_URL = `https://github.com/${UpdateService.GITHUB_OWNER}/${UpdateService.GITHUB_REPO}/releases/latest`;
 
-  // Persistent in-memory tracking of active background download
+  // In-memory tracking of active background download
   private static activeDownloadResumable: FileSystem.DownloadResumable | null = null;
   private static activeDownloadPromise: Promise<string> | null = null;
   private static activeDownloadVersion: string | null = null;
   private static progressListeners = new Set<ProgressCallback>();
   private static lastSnapSaveTime = 0;
+  private static isResuming = false;
 
   /**
    * Registers a listener for live background download progress
@@ -50,6 +60,19 @@ export class UpdateService {
     return () => {
       this.progressListeners.delete(listener);
     };
+  }
+
+  /**
+   * Broadcasts progress event to all active listeners
+   */
+  private static broadcastProgress(fraction: number, totalBytes: number): void {
+    this.progressListeners.forEach((fn) => {
+      try {
+        fn(fraction, totalBytes);
+      } catch (err) {
+        console.warn('[UpdateService] Listener error:', err);
+      }
+    });
   }
 
   /**
@@ -152,21 +175,23 @@ export class UpdateService {
     try {
       const fileUri = this.getApkPath(versionTag);
       const fileInfo = await FileSystem.getInfoAsync(fileUri);
-      
+
       if (!fileInfo.exists || fileInfo.isDirectory || !fileInfo.size) {
         return false;
       }
 
-      // If expectedSize is provided, ensure file is at least 90% of expected size (not incomplete)
+      // If file is less than 1MB, it cannot be a real APK
+      if (fileInfo.size < 1024 * 1024) {
+        await FileSystem.deleteAsync(fileUri, { idempotent: true });
+        return false;
+      }
+
+      // If expectedSize is provided and greater than 0, ensure it's not a severe truncation
       if (expectedSize && expectedSize > 0) {
-        if (fileInfo.size < expectedSize * 0.9) {
-          // File is incomplete / corrupt, remove it
+        if (fileInfo.size < expectedSize * 0.85) {
           await FileSystem.deleteAsync(fileUri, { idempotent: true });
           return false;
         }
-      } else if (fileInfo.size < 5 * 1024 * 1024) {
-        // Less than 5MB is definitely not a full release APK
-        return false;
       }
 
       return true;
@@ -206,8 +231,8 @@ export class UpdateService {
     if (!cleanLatest || !cleanCurrent) return false;
     if (cleanLatest === cleanCurrent) return false;
 
-    const latestParts = cleanLatest.split('.').map(p => parseInt(p, 10) || 0);
-    const currentParts = cleanCurrent.split('.').map(p => parseInt(p, 10) || 0);
+    const latestParts = cleanLatest.split('.').map((p) => parseInt(p, 10) || 0);
+    const currentParts = cleanCurrent.split('.').map((p) => parseInt(p, 10) || 0);
 
     const maxLength = Math.max(latestParts.length, currentParts.length);
 
@@ -230,7 +255,7 @@ export class UpdateService {
     try {
       const response = await fetch(this.RELEASES_API_URL, {
         headers: {
-          'Accept': 'application/vnd.github.v3+json',
+          Accept: 'application/vnd.github.v3+json',
           'User-Agent': 'Project_S-App',
         },
       });
@@ -275,9 +300,17 @@ export class UpdateService {
       }
 
       const hasUpdate = this.isNewerVersion(latestVersion, currentVersion);
+
       // Automatically prune older/orphaned APKs and temp files
-      this.autoPruneStorage(currentVersion).catch(() => {});
+      await this.autoPruneStorage(currentVersion).catch(() => {});
+
       const isCached = hasUpdate ? await this.isApkCached(latestVersion, apkSizeBytes) : false;
+
+      // If we don't have an update, clear any stale pending download metadata
+      if (!hasUpdate) {
+        await AsyncStorage.removeItem(PENDING_DOWNLOAD_META_KEY).catch(() => {});
+        await NotificationService.clearUpdateNotification().catch(() => {});
+      }
 
       return {
         hasUpdate,
@@ -310,52 +343,90 @@ export class UpdateService {
   }
 
   /**
-   * Silently pre-fetches the latest update in the background and sends a local notification
-   * when the file is verified and ready on disk for instant 1-tap installation.
+   * Persistently saves pending download metadata so download can be resumed across restarts
    */
-  public static async prefetchUpdateSilently(
-    info: UpdateInfo,
-    onProgress?: (fraction: number) => void
-  ): Promise<boolean> {
-    if (!info.hasUpdate || !info.apkDownloadUrl) return false;
+  public static async savePendingDownloadMeta(meta: PendingDownloadMeta): Promise<void> {
+    try {
+      await AsyncStorage.setItem(PENDING_DOWNLOAD_META_KEY, JSON.stringify(meta));
+    } catch (e) {
+      console.warn('[UpdateService] Failed to save pending download meta:', e);
+    }
+  }
+
+  /**
+   * Retrieves pending download metadata if an incomplete download exists
+   */
+  public static async getPendingDownloadMeta(): Promise<PendingDownloadMeta | null> {
+    try {
+      const data = await AsyncStorage.getItem(PENDING_DOWNLOAD_META_KEY);
+      if (!data) return null;
+      return JSON.parse(data) as PendingDownloadMeta;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Clears pending download metadata on completion or cancellation
+   */
+  public static async clearPendingDownloadMeta(): Promise<void> {
+    try {
+      await AsyncStorage.removeItem(PENDING_DOWNLOAD_META_KEY);
+    } catch {}
+  }
+
+  /**
+   * Automatic background download resumption hook.
+   * Invoked on app boot, AppState active transition, and network recovery.
+   * Automatically picks up any incomplete download and continues streaming seamlessly.
+   */
+  public static async resumePendingDownloadIfAny(): Promise<string | null> {
+    if (this.isResuming || this.isDownloading()) {
+      return null;
+    }
 
     try {
+      this.isResuming = true;
+      const pendingMeta = await this.getPendingDownloadMeta();
+      if (!pendingMeta || !pendingMeta.url || !pendingMeta.version) {
+        return null;
+      }
+
+      const currentVersion = this.getCurrentVersion();
+      if (!this.isNewerVersion(pendingMeta.version, currentVersion)) {
+        // App already upgraded or version is obsolete, clear meta
+        await this.clearPendingDownloadMeta();
+        return null;
+      }
+
       // Check if already cached
-      const isCached = await this.isApkCached(info.latestVersion, info.apkSizeBytes);
+      const isCached = await this.isApkCached(pendingMeta.version, pendingMeta.expectedSize);
       if (isCached) {
-        await NotificationService.notifyUpdateReady(info.latestVersion, info.releaseName);
-        return true;
+        await this.clearPendingDownloadMeta();
+        this.broadcastProgress(1, pendingMeta.expectedSize || 1);
+        return this.getApkPath(pendingMeta.version);
       }
 
-      // Download in background
-      await this.downloadApk(
-        info.apkDownloadUrl,
-        info.latestVersion,
-        info.apkSizeBytes,
-        (fraction) => {
-          if (onProgress) onProgress(fraction);
-        }
+      console.log(`[UpdateService] Resuming pending background download for v${pendingMeta.version}...`);
+
+      // Resume download in background
+      return await this.downloadApk(
+        pendingMeta.url,
+        pendingMeta.version,
+        pendingMeta.expectedSize
       );
-
-      // Verify and notify
-      const verified = await this.isApkCached(info.latestVersion, info.apkSizeBytes);
-      if (verified) {
-        await NotificationService.notifyUpdateReady(info.latestVersion, info.releaseName);
-        return true;
-      }
-      return false;
-    } catch (e) {
-      console.warn('[UpdateService] Silent prefetch failed:', e);
-      // If silent prefetch failed, still notify about update availability
-      await NotificationService.notifyUpdateAvailable(info.latestVersion, info.releaseName);
-      return false;
+    } catch (err) {
+      console.warn('[UpdateService] Pending download resume error (will retry on next event):', err);
+      return null;
+    } finally {
+      this.isResuming = false;
     }
   }
 
   /**
    * Downloads APK to an atomic .tmp file, validates it, and renames it to the versioned filename.
    * If a download is already in progress, joins the active promise and streams progress.
-   * Automatically saves resumable state to survive app minimization and background cycles.
+   * Automatically saves resumable state to survive app minimization, network cuts, and restarts.
    */
   public static async downloadApk(
     apkUrl: string,
@@ -370,7 +441,7 @@ export class UpdateService {
       this.progressListeners.add(onProgress);
     }
 
-    // If already actively downloading this version, attach and wait for existing execution
+    // If already actively downloading this version, attach to existing promise
     if (this.activeDownloadPromise && this.activeDownloadVersion === cleanVer) {
       try {
         return await this.activeDownloadPromise;
@@ -379,17 +450,23 @@ export class UpdateService {
       }
     }
 
-    // Check if already completely cached
+    // Check if already completely cached on disk
     const finalPath = this.getApkPath(versionTag);
     const alreadyCached = await this.isApkCached(versionTag, expectedSize);
     if (alreadyCached) {
-      if (onProgress) onProgress(1, expectedSize || 0);
+      this.broadcastProgress(1, expectedSize || 1);
       if (onProgress) this.progressListeners.delete(onProgress);
+      await this.clearPendingDownloadMeta();
       return finalPath;
     }
 
-    // Enforce single-APK retention before starting download
-    await this.purgeOtherApks(versionTag);
+    // Save pending download metadata for cold-boot auto-recovery
+    await this.savePendingDownloadMeta({
+      version: cleanVer,
+      url: apkUrl,
+      expectedSize,
+      startedAt: Date.now(),
+    });
 
     const updateDir = this.getUpdatesDirectory();
     const dirInfo = await FileSystem.getInfoAsync(updateDir);
@@ -398,28 +475,18 @@ export class UpdateService {
     }
 
     const tempPath = `${finalPath}.tmp`;
-
-    // Start single shared execution
     this.activeDownloadVersion = cleanVer;
 
     const downloadExecutor = async (): Promise<string> => {
       try {
-        const updateDir = this.getUpdatesDirectory();
-        const dirInfo = await FileSystem.getInfoAsync(updateDir);
-        if (!dirInfo.exists) {
-          await FileSystem.makeDirectoryAsync(updateDir, { intermediates: true });
-        }
-
         const progressCallback = (downloadProgress: FileSystem.DownloadProgressData) => {
           const total = downloadProgress.totalBytesExpectedToWrite || expectedSize || 1;
           const progress = Math.min(1, Math.max(0, downloadProgress.totalBytesWritten / total));
-          
-          // Broadcast to all registered listeners
-          this.progressListeners.forEach((fn) => {
-            try { fn(progress, total); } catch {}
-          });
 
-          // Throttle-persist resume snapshot every 1.5 seconds so app can resume if killed
+          // Broadcast to all registered UI listeners
+          this.broadcastProgress(progress, total);
+
+          // Throttle-persist resume snapshot every 1.5 seconds
           const now = Date.now();
           if (this.activeDownloadResumable && now - this.lastSnapSaveTime > 1500) {
             this.lastSnapSaveTime = now;
@@ -472,7 +539,7 @@ export class UpdateService {
         const downloadedInfo = await FileSystem.getInfoAsync(tempPath);
         if (!downloadedInfo.exists || !downloadedInfo.size || downloadedInfo.size < 1024 * 1024) {
           await FileSystem.deleteAsync(tempPath, { idempotent: true });
-          throw new Error('Downloaded APK package is corrupted or incomplete.');
+          throw new Error('Downloaded update package is corrupted or incomplete.');
         }
 
         // Atomically move .tmp to final .apk destination
@@ -482,18 +549,33 @@ export class UpdateService {
           to: finalPath,
         });
 
-        // Clear resume snapshot on success
+        // Clear resume snapshot & pending metadata on success
         await AsyncStorage.removeItem(snapKey);
+        await this.clearPendingDownloadMeta();
 
-        // Clean up any older cached APKs
+        // Enforce single-APK retention (clean older versions)
         this.purgeOtherApks(versionTag).catch(() => {});
 
         // Broadcast 100% completion
-        this.progressListeners.forEach((fn) => {
-          try { fn(1, expectedSize || downloadedInfo.size || 0); } catch {}
-        });
+        this.broadcastProgress(1, expectedSize || downloadedInfo.size || 0);
+
+        // Smart Notification:
+        // If app is currently in background/closed, dispatch high-priority notification.
+        // If app is actively in foreground, App.tsx handles re-opening the install modal directly.
+        if (AppState.currentState !== 'active') {
+          await NotificationService.notifyUpdateReady(versionTag);
+        }
 
         return finalPath;
+      } catch (err: any) {
+        // If an error occurred (e.g. network cutoff), persist snapshot state if possible
+        if (this.activeDownloadResumable) {
+          try {
+            const snap = this.activeDownloadResumable.savable();
+            await AsyncStorage.setItem(snapKey, JSON.stringify(snap));
+          } catch {}
+        }
+        throw err;
       } finally {
         this.activeDownloadResumable = null;
         this.activeDownloadPromise = null;
@@ -509,7 +591,9 @@ export class UpdateService {
   }
 
   /**
-   * Launches Android Package Installer using the cached APK
+   * Launches Android Package Installer using the cached APK.
+   * Does NOT delete the APK on launch so if the user cancels inside the installer,
+   * the cached APK is preserved for 1-tap re-installation.
    */
   public static async installCachedApk(versionTag: string): Promise<void> {
     if (Platform.OS !== 'android') {
@@ -517,10 +601,17 @@ export class UpdateService {
       return;
     }
 
+    const currentVersion = this.getCurrentVersion();
+    // If the app is already at or above this version, no need to install
+    if (!this.isNewerVersion(versionTag, currentVersion)) {
+      await this.autoPruneStorage(currentVersion).catch(() => {});
+      return;
+    }
+
     const finalPath = this.getApkPath(versionTag);
     const fileInfo = await FileSystem.getInfoAsync(finalPath);
     if (!fileInfo.exists) {
-      throw new Error('Cached APK file not found. Please download the update again.');
+      throw new Error('Cached update file not found. Please download the update again.');
     }
 
     const contentUri = await FileSystem.getContentUriAsync(finalPath);
@@ -530,19 +621,6 @@ export class UpdateService {
       flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
       type: 'application/vnd.android.package-archive',
     });
-  }
-
-  /**
-   * Downloads and installs in a single flow (used for foreground download)
-   */
-  public static async downloadAndInstall(
-    apkUrl: string,
-    versionTag: string,
-    expectedSize?: number,
-    onProgress?: (fraction: number, totalBytes: number) => void
-  ): Promise<void> {
-    await this.downloadApk(apkUrl, versionTag, expectedSize, onProgress);
-    await this.installCachedApk(versionTag);
   }
 
   /**
@@ -571,7 +649,8 @@ export class UpdateService {
 
   /**
    * Automatically prunes all APK files <= current running version,
-   * orphaned .tmp staging files, and ensures no obsolete release files remain.
+   * orphaned .tmp staging files (if not actively downloading),
+   * and ensures storage remains clean after updates.
    */
   public static async autoPruneStorage(currentVersionTag?: string): Promise<void> {
     try {
@@ -581,12 +660,17 @@ export class UpdateService {
       if (!dirInfo.exists) return;
 
       const files = await FileSystem.readDirectoryAsync(updateDir);
+      const isCurrentlyDownloading = this.isDownloading();
+      const activeVersion = this.activeDownloadVersion;
+
       for (const file of files) {
         const filePath = `${updateDir}${file}`;
-        
-        // Remove .tmp files immediately
+
+        // Clean .tmp files only if no active download is currently writing to them
         if (file.endsWith('.tmp')) {
-          await FileSystem.deleteAsync(filePath, { idempotent: true });
+          if (!isCurrentlyDownloading) {
+            await FileSystem.deleteAsync(filePath, { idempotent: true });
+          }
           continue;
         }
 
@@ -595,7 +679,7 @@ export class UpdateService {
           const match = file.match(/Project_S-v([0-9.]+)\.apk/i);
           if (match && match[1]) {
             const fileVersion = match[1];
-            // If the file version is older than or equal to current version, delete it
+            // If the file version is older than or equal to current version, delete it immediately
             if (!this.isNewerVersion(fileVersion, current)) {
               await FileSystem.deleteAsync(filePath, { idempotent: true });
             }
@@ -620,7 +704,7 @@ export class UpdateService {
       const keepFileName = `Project_S-v${this.cleanVersion(keepVersionTag)}.apk`;
 
       for (const file of files) {
-        if (file !== keepFileName) {
+        if (file !== keepFileName && file.endsWith('.apk')) {
           await FileSystem.deleteAsync(`${updateDir}${file}`, { idempotent: true });
         }
       }
@@ -639,6 +723,7 @@ export class UpdateService {
       if (dirInfo.exists) {
         await FileSystem.deleteAsync(updateDir, { idempotent: true });
       }
+      await this.clearPendingDownloadMeta();
     } catch (e) {
       console.warn('[UpdateService] Failed to clear update files:', e);
     }
@@ -667,4 +752,3 @@ export class UpdateService {
     }
   }
 }
-

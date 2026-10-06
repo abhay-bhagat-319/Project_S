@@ -15,6 +15,7 @@ interface BackgroundDownloadPillProps {
   isComplete: boolean;
   versionTag: string;
   onPressInstall: () => void;
+  onPressOpenModal?: () => void;
   onDismiss?: () => void;
 }
 
@@ -24,21 +25,30 @@ export default function BackgroundDownloadPill({
   isComplete,
   versionTag,
   onPressInstall,
+  onPressOpenModal,
   onDismiss,
 }: BackgroundDownloadPillProps) {
   if (!isDownloading && !isComplete) return null;
 
   const percent = Math.round(progress * 100);
 
+  const handlePress = () => {
+    if (isComplete) {
+      onPressInstall();
+    } else if (onPressOpenModal) {
+      onPressOpenModal();
+    }
+  };
+
   return (
     <View style={styles.pillWrapper} pointerEvents="box-none">
       <TouchableOpacity
         style={[
           styles.pillContainer,
-          isComplete ? styles.completeContainer : styles.downloadingContainer
+          isComplete ? styles.completeContainer : styles.downloadingContainer,
         ]}
-        onPress={isComplete ? onPressInstall : undefined}
-        activeOpacity={isComplete ? 0.8 : 1}
+        onPress={handlePress}
+        activeOpacity={0.8}
       >
         <View style={styles.iconWrapper}>
           {isComplete ? (
@@ -55,7 +65,7 @@ export default function BackgroundDownloadPill({
               : `Downloading v${versionTag}`}
           </Text>
           <Text style={styles.subtitleText}>
-            {isComplete ? 'Tap to Install now' : `${percent}% completed`}
+            {isComplete ? 'Tap to Install now' : `${percent}% completed • Tap for details`}
           </Text>
         </View>
 

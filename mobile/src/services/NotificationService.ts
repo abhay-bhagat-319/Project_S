@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { Platform, AppState } from 'react-native';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 
 const UPDATE_NOTIFICATION_CHANNEL_ID = 'app-updates';
@@ -145,10 +145,17 @@ export class NotificationService {
   }
 
   /**
-   * Sends a local notification when an update has been pre-downloaded and is ready to install
+   * Sends a local notification when an update has been downloaded and is ready to install.
+   * Only sends if the app is currently in background or closed (AppState !== 'active')
+   * to avoid bothering the student while actively using the app.
    */
   public static async notifyUpdateReady(version: string, releaseName?: string): Promise<void> {
     if (!this.isSupported()) return;
+
+    // Suppress system push notification if the user has the app open in foreground
+    if (AppState.currentState === 'active') {
+      return;
+    }
 
     const Notifications = getNotifications();
     if (!Notifications) return;
@@ -156,9 +163,10 @@ export class NotificationService {
     try {
       await this.init();
       const title = 'Update Ready to Install 🚀';
-      const body = releaseName && releaseName !== `v${version}` && releaseName !== version
-        ? `v${version} (${releaseName}) is downloaded. Tap to install now!`
-        : `Project_S v${version} has been downloaded. Tap to install now!`;
+      const body =
+        releaseName && releaseName !== `v${version}` && releaseName !== version
+          ? `v${version} (${releaseName}) is downloaded. Tap to install now!`
+          : `Project_S v${version} has been downloaded. Tap to install now!`;
 
       await Notifications.scheduleNotificationAsync({
         identifier: UPDATE_NOTIFICATION_ID,
@@ -181,10 +189,15 @@ export class NotificationService {
   }
 
   /**
-   * Sends a local notification when an update is available (before/without prefetch)
+   * Sends a local notification when an update is available.
+   * Only sends if the app is in background or closed.
    */
   public static async notifyUpdateAvailable(version: string, releaseName?: string): Promise<void> {
     if (!this.isSupported()) return;
+
+    if (AppState.currentState === 'active') {
+      return;
+    }
 
     const Notifications = getNotifications();
     if (!Notifications) return;

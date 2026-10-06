@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, Alert, StatusBar, Platform, BackHandler, ToastAndroid } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, Alert, StatusBar, Platform, BackHandler, ToastAndroid, AppState as RNAppState } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -202,12 +202,23 @@ function AppContent() {
 
     // Subscribe to unified background download progress
     const unsubscribeProgress = UpdateService.addProgressListener((fraction) => {
+      const isComplete = fraction >= 1;
+      const isDownloading = fraction > 0 && fraction < 1;
+
       setBgDownload((prev) => ({
-        isDownloading: fraction > 0 && fraction < 1,
+        isDownloading,
         progress: fraction,
-        isComplete: fraction >= 1,
+        isComplete,
         versionTag: prev.versionTag,
       }));
+
+      if (isComplete) {
+        setUpdateInfo((prev) => (prev ? { ...prev, isCached: true } : prev));
+        // If app is currently active in foreground, pop the UpdateModal in READY_TO_INSTALL state
+        if (RNAppState.currentState === 'active') {
+          setUpdateModalVisible(true);
+        }
+      }
     });
 
     // Subscribe to network reachability changes
@@ -215,8 +226,18 @@ function AppContent() {
       setNetworkState(state);
       if (state === 'CAMPUS_ACTIVE') {
         setIsOffline(false);
+        // Auto-resume any interrupted background download on network recovery
+        UpdateService.resumePendingDownloadIfAny().catch(() => {});
       } else if (state === 'OFFLINE') {
         setIsOffline(true);
+      }
+    });
+
+    // Listen to AppState active events for cold/background resumption
+    const appStateSubscription = RNAppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active') {
+        UpdateService.resumePendingDownloadIfAny().catch(() => {});
+        checkAppUpdates();
       }
     });
 
@@ -226,6 +247,7 @@ function AppContent() {
       unsubscribeNotification();
       unsubscribeProgress();
       unsubscribeNetwork();
+      appStateSubscription.remove();
     };
   }, []);
 
@@ -234,20 +256,27 @@ function AppContent() {
       const info = await UpdateService.checkForUpdate();
       if (info.hasUpdate) {
         setUpdateInfo(info);
-        setBgDownload((prev) => ({ ...prev, versionTag: info.latestVersion }));
-        // Prompt user on every launch if an update is available
-        setUpdateModalVisible(true);
+        setBgDownload((prev) => ({
+          ...prev,
+          versionTag: info.latestVersion,
+          isComplete: !!info.isCached,
+        }));
 
-        // If not already cached on disk, silently prefetch in the background
-        if (!info.isCached && info.apkDownloadUrl && !UpdateService.isDownloading(info.latestVersion)) {
-          UpdateService.prefetchUpdateSilently(info).then((downloaded) => {
-            if (downloaded) {
-              setUpdateInfo((prev) => (prev ? { ...prev, isCached: true } : prev));
-            }
-          });
+        // Resume any pending interrupted background download seamlessly
+        UpdateService.resumePendingDownloadIfAny().catch(() => {});
+
+        const isSnoozed = await UpdateService.isUpdateSnoozed(info.latestVersion);
+        if (!isSnoozed && !info.isCached) {
+          setUpdateModalVisible(true);
         }
       } else {
         setUpdateInfo(null);
+        setBgDownload({
+          isDownloading: false,
+          progress: 0,
+          isComplete: false,
+          versionTag: '',
+        });
         NotificationService.clearUpdateNotification().catch(() => {});
       }
     } catch (err) {
@@ -1112,6 +1141,7 @@ function AppContent() {
         isComplete={bgDownload.isComplete}
         versionTag={bgDownload.versionTag}
         onPressInstall={handleInstallCachedFromPill}
+        onPressOpenModal={() => setUpdateModalVisible(true)}
         onDismiss={() => setBgDownload((prev) => ({ ...prev, isComplete: false }))}
       />
 
