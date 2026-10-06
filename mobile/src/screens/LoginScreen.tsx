@@ -20,15 +20,10 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
   const [networkState, setNetworkState] = useState<NetworkState | 'CHECKING'>('CHECKING');
 
   useEffect(() => {
-    let isMounted = true;
-    NetworkReachabilityService.getNetworkState().then((state) => {
-      if (isMounted) {
-        setNetworkState(state);
-      }
+    const unsubscribe = NetworkReachabilityService.subscribe((state) => {
+      setNetworkState(state);
     });
-    return () => {
-      isMounted = false;
-    };
+    return unsubscribe;
   }, []);
 
   const refreshNetworkStatus = async () => {

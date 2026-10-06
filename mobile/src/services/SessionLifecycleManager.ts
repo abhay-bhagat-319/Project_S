@@ -81,6 +81,7 @@ export class SessionLifecycleManager {
     }
 
     if (data.type === 'AUTH_SUCCESS') {
+      NetworkReachabilityService.recordSuccess();
       if (this.pendingAuth) {
         clearTimeout(this.pendingAuth.timer);
         const { resolve, username, password } = this.pendingAuth;
@@ -104,6 +105,7 @@ export class SessionLifecycleManager {
 
     // If navigated to secure area, authentication was successful
     if (url.includes('/secure/') || url.includes('/secure')) {
+      NetworkReachabilityService.recordSuccess();
       if (this.pendingAuth) {
         clearTimeout(this.pendingAuth.timer);
         const { resolve, username, password } = this.pendingAuth;
@@ -121,12 +123,15 @@ export class SessionLifecycleManager {
     }
 
     // If on login page and an authentication attempt is active, inject the login script
-    if (url.includes('/login') && this.pendingAuth && this.adapter) {
-      const script = ScraperService.getLoginInjectionScript(
-        this.pendingAuth.username,
-        this.pendingAuth.password
-      );
-      this.adapter.injectScript(script);
+    if (url.includes('/login')) {
+      NetworkReachabilityService.recordSuccess();
+      if (this.pendingAuth && this.adapter) {
+        const script = ScraperService.getLoginInjectionScript(
+          this.pendingAuth.username,
+          this.pendingAuth.password
+        );
+        this.adapter.injectScript(script);
+      }
     }
   }
 
@@ -135,6 +140,10 @@ export class SessionLifecycleManager {
    */
   public static handleLoadEnd(currentUrl: string) {
     if (!currentUrl) return;
+
+    if (currentUrl.includes('/login') || currentUrl.includes('/secure')) {
+      NetworkReachabilityService.recordSuccess();
+    }
 
     if (this.pendingAuth && this.adapter) {
       if (currentUrl.includes('/secure')) {
@@ -162,7 +171,7 @@ export class SessionLifecycleManager {
       this.pendingAuth = null;
       this.isAuthenticating = false;
 
-      const netState = await NetworkReachabilityService.getNetworkState();
+      const netState = await NetworkReachabilityService.recordFailure(errorMsg);
       if (netState === 'EXTERNAL_ONLINE') {
         resolve({
           success: false,

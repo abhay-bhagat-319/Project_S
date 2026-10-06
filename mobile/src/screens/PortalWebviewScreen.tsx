@@ -94,6 +94,7 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
     setLoading(false);
     setProgress(1);
     setIsCampusError(false);
+    NetworkReachabilityService.recordSuccess();
     if (currentUrl && currentUrl.includes('/login') && credentials) {
       webViewRef.current?.injectJavaScript(
         ScraperService.getLoginInjectionScript(credentials.username, credentials.password)
@@ -106,19 +107,13 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
   const handleError = () => {
     setLoading(false);
     setIsCampusError(true);
+    NetworkReachabilityService.recordFailure('Portal WebView load error').catch(() => {});
   };
 
-  const handleRetry = async () => {
-    setIsRetrying(true);
-    const reachable = await NetworkReachabilityService.isShikshaReachable(2500);
-    setIsRetrying(false);
-
-    if (reachable) {
-      setIsCampusError(false);
-      webViewRef.current?.reload();
-    } else {
-      setIsCampusError(true);
-    }
+  const handleRetry = () => {
+    setIsCampusError(false);
+    setLoading(true);
+    webViewRef.current?.reload();
   };
 
   const goBack = () => {
