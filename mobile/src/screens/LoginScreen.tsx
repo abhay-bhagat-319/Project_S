@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ActivityIndicator, Alert, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { SessionLifecycleManager } from '../services/SessionLifecycleManager';
+import { NetworkReachabilityService, NetworkState, IISERB_VPN_CONFIG } from '../services/NetworkReachabilityService';
+import { CampusConnectionHelper } from '../utils/CampusConnectionHelper';
 
 interface LoginScreenProps {
   onSuccess: (username: string) => void;
@@ -15,6 +17,25 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
+  const [networkState, setNetworkState] = useState<NetworkState | 'CHECKING'>('CHECKING');
+
+  useEffect(() => {
+    let isMounted = true;
+    NetworkReachabilityService.getNetworkState().then((state) => {
+      if (isMounted) {
+        setNetworkState(state);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const refreshNetworkStatus = async () => {
+    setNetworkState('CHECKING');
+    const state = await NetworkReachabilityService.getNetworkState();
+    setNetworkState(state);
+  };
 
   const handleLogin = async () => {
     const trimmedUser = username.trim();
@@ -36,10 +57,23 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
         onSuccess(trimmedUser);
       } else {
         setLoading(false);
-        Alert.alert(
-          result.code === 'AUTH_FAILED' ? 'Authentication Failed' : 'Connection Notice',
-          result.message || 'Invalid username or password.'
-        );
+        if (result.code === 'CAMPUS_NETWORK_REQUIRED') {
+          setNetworkState('EXTERNAL_ONLINE');
+          Alert.alert(
+            'Campus Network Required',
+            'Shiksha portal is accessible only on IISERB Wi-Fi or via FortiClient VPN (gateway.iiserb.ac.in). Please connect and try again.',
+            [
+              { text: 'Launch FortiClient', onPress: () => CampusConnectionHelper.launchFortiClient() },
+              { text: 'Wi-Fi Settings', onPress: () => CampusConnectionHelper.openWifiSettings() },
+              { text: 'OK', style: 'cancel' },
+            ]
+          );
+        } else {
+          Alert.alert(
+            result.code === 'AUTH_FAILED' ? 'Authentication Failed' : 'Connection Notice',
+            result.message || 'Invalid username or password.'
+          );
+        }
       }
     } catch (e: any) {
       setLoading(false);
@@ -69,6 +103,46 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
           <Text style={styles.title}>Welcome to Shiksha</Text>
           <Text style={styles.subtitle}>Log in using your IISERB LDAP credentials</Text>
         </View>
+
+        {/* Campus Network Guidance Banner for External Networks */}
+        {networkState === 'EXTERNAL_ONLINE' && (
+          <View style={styles.campusNoticeCard}>
+            <View style={styles.campusNoticeHeader}>
+              <Ionicons name="shield-half" size={20} color="#f59e0b" style={{ marginRight: 8 }} />
+              <Text style={styles.campusNoticeTitle}>Campus Network Required</Text>
+            </View>
+            <Text style={styles.campusNoticeText}>
+              Shiksha portal requires an active connection to <Text style={styles.boldText}>IISERB Wi-Fi</Text> or the <Text style={styles.boldText}>FortiClient VPN</Text> ({IISERB_VPN_CONFIG.server}).
+            </Text>
+            <View style={styles.campusNoticeActions}>
+              <TouchableOpacity 
+                style={styles.vpnActionBtn} 
+                onPress={() => CampusConnectionHelper.launchFortiClient()}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="shield-checkmark" size={15} color="#ffffff" style={{ marginRight: 5 }} />
+                <Text style={styles.vpnActionBtnText}>Launch FortiClient</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={styles.wifiActionBtn} 
+                onPress={() => CampusConnectionHelper.openWifiSettings()}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="wifi" size={15} color={Theme.colors.textPrimary} style={{ marginRight: 5 }} />
+                <Text style={styles.wifiActionBtnText}>Wi-Fi</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={styles.recheckBtn} 
+                onPress={refreshNetworkStatus}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="refresh" size={15} color={Theme.colors.primary} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
 
         <View style={styles.form}>
           <Text style={styles.label}>LDAP Username</Text>
@@ -130,7 +204,7 @@ const styles = StyleSheet.create({
   },
   header: {
     alignItems: 'center',
-    marginBottom: 40,
+    marginBottom: 28,
   },
   iconContainer: {
     width: 72,
@@ -153,6 +227,80 @@ const styles = StyleSheet.create({
     color: Theme.colors.textSecondary,
     textAlign: 'center',
     marginTop: 6,
+  },
+  campusNoticeCard: {
+    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+    borderRadius: Theme.radii.card,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+    padding: 16,
+    marginBottom: 20,
+  },
+  campusNoticeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  campusNoticeTitle: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#f59e0b',
+  },
+  campusNoticeText: {
+    fontSize: 13,
+    color: Theme.colors.textSecondary,
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  boldText: {
+    color: Theme.colors.textPrimary,
+    fontWeight: '600',
+  },
+  campusNoticeActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  vpnActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0284c7',
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderRadius: Theme.radii.widget,
+  },
+  vpnActionBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  wifiActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Theme.colors.surface,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: Theme.radii.widget,
+  },
+  wifiActionBtnText: {
+    color: Theme.colors.textPrimary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  recheckBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: Theme.radii.widget,
+    backgroundColor: Theme.colors.surface,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   form: {
     backgroundColor: Theme.colors.surface,

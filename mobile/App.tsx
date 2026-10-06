@@ -14,6 +14,8 @@ import { CacheService, ProfileData, AttendanceData, CourseDetail } from './src/s
 import { ScraperService } from './src/services/ScraperService';
 import { ReportsService } from './src/services/ReportsService';
 import { SessionLifecycleManager } from './src/services/SessionLifecycleManager';
+import { NetworkReachabilityService } from './src/services/NetworkReachabilityService';
+import { CampusConnectionHelper } from './src/utils/CampusConnectionHelper';
 
 import LockScreen from './src/screens/LockScreen';
 import LoginScreen from './src/screens/LoginScreen';
@@ -311,7 +313,7 @@ function AppContent() {
   };
 
   const checkAndTriggerSync = async () => {
-    // Check internet connectivity
+    // Check campus connectivity
     const offline = await checkOfflineStatus();
     if (offline) {
       setIsOffline(true);
@@ -327,16 +329,9 @@ function AppContent() {
   };
 
   const checkOfflineStatus = async (): Promise<boolean> => {
-    try {
-      // Fast lightweight fetch to check internet connectivity
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
-      await fetch('https://www.google.com', { method: 'HEAD', signal: controller.signal });
-      clearTimeout(timeoutId);
-      return false;
-    } catch (e) {
-      return true;
-    }
+    // Fast probe against Shiksha portal (< 2000ms)
+    const reachable = await NetworkReachabilityService.isShikshaReachable(2000);
+    return !reachable;
   };
 
   const finishSync = () => {
@@ -350,12 +345,26 @@ function AppContent() {
     }
   };
 
-  const startSync = async (scope: SyncScope = 'ALL', priorityCourseCode?: string): Promise<void> => {
-    const offline = await checkOfflineStatus();
-    if (offline) {
+  const startSync = async (scope: SyncScope = 'ALL', priorityCourseCode?: string, isUserInitiated = false): Promise<void> => {
+    const netState = await NetworkReachabilityService.getNetworkState();
+    if (netState !== 'CAMPUS_ACTIVE') {
       setIsOffline(true);
       finishSync();
-      Alert.alert('Offline Mode', 'Cannot sync portal data. Please check your internet connection.');
+      if (isUserInitiated) {
+        if (netState === 'EXTERNAL_ONLINE') {
+          Alert.alert(
+            'Campus Network Required',
+            'Cannot sync live portal data. Please connect to IISERB Wi-Fi or turn on FortiClient VPN (gateway.iiserb.ac.in).',
+            [
+              { text: 'Launch FortiClient', onPress: () => CampusConnectionHelper.launchFortiClient() },
+              { text: 'Wi-Fi Settings', onPress: () => CampusConnectionHelper.openWifiSettings() },
+              { text: 'OK', style: 'cancel' },
+            ]
+          );
+        } else {
+          Alert.alert('Offline Mode', 'Cannot sync portal data. Please check your internet connection.');
+        }
+      }
       return;
     }
     setIsOffline(false);
@@ -405,7 +414,7 @@ function AppContent() {
     setSyncScope(scope);
     setRefreshing(true);
     try {
-      await startSync(scope);
+      await startSync(scope, undefined, true);
     } finally {
       setRefreshing(false);
     }
@@ -414,7 +423,7 @@ function AppContent() {
   const handleRefreshMarks = (courseCode: string): Promise<any> => {
     return new Promise((resolve) => {
       marksResolveMapRef.current[courseCode] = resolve;
-      startSync('MARKS', courseCode);
+      startSync('MARKS', courseCode, true);
     });
   };
 

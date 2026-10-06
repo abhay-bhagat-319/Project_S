@@ -1,11 +1,13 @@
 import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { ScraperService } from '../services/ScraperService';
 import { ReportsService } from '../services/ReportsService';
+import { NetworkReachabilityService, IISERB_VPN_CONFIG } from '../services/NetworkReachabilityService';
+import { CampusConnectionHelper } from '../utils/CampusConnectionHelper';
 
 export interface PortalWebviewHandle {
   handleBackPress: () => boolean;
@@ -36,6 +38,17 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
   const [canGoForward, setCanGoForward] = useState(false);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [isCampusError, setIsCampusError] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
+
+  // Check reachability on mount
+  useEffect(() => {
+    NetworkReachabilityService.isShikshaReachable(2000).then((reachable) => {
+      if (!reachable) {
+        setIsCampusError(true);
+      }
+    });
+  }, []);
 
   // Register WebView as the authenticated PDF downloader bridge
   useEffect(() => {
@@ -51,6 +64,7 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
   useEffect(() => {
     if (targetUrl && targetUrl !== currentUrl) {
       setCurrentUrl(targetUrl);
+      setIsCampusError(false);
       webViewRef.current?.injectJavaScript(`window.location.href = ${JSON.stringify(targetUrl)}; true;`);
       if (onClearTargetUrl) {
         onClearTargetUrl();
@@ -88,6 +102,7 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
   const handleLoadEnd = () => {
     setLoading(false);
     setProgress(1);
+    setIsCampusError(false);
     if (currentUrl && currentUrl.includes('/login') && credentials) {
       webViewRef.current?.injectJavaScript(
         ScraperService.getLoginInjectionScript(credentials.username, credentials.password)
@@ -95,6 +110,24 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
     }
     // Inject desktop viewport and clean font smoothing
     webViewRef.current?.injectJavaScript(ScraperService.getDesktopViewportScript());
+  };
+
+  const handleError = () => {
+    setLoading(false);
+    setIsCampusError(true);
+  };
+
+  const handleRetry = async () => {
+    setIsRetrying(true);
+    const reachable = await NetworkReachabilityService.isShikshaReachable(2500);
+    setIsRetrying(false);
+
+    if (reachable) {
+      setIsCampusError(false);
+      webViewRef.current?.reload();
+    } else {
+      setIsCampusError(true);
+    }
   };
 
   const goBack = () => {
@@ -121,22 +154,24 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
   };
 
   const reload = () => {
+    setIsCampusError(false);
     webViewRef.current?.reload();
   };
 
   const goHome = () => {
+    setIsCampusError(false);
     webViewRef.current?.injectJavaScript(`window.location.href = "${DEFAULT_URL}"; true;`);
   };
 
   useImperativeHandle(ref, () => ({
     handleBackPress: () => {
-      if (canGoBack) {
+      if (canGoBack && !isCampusError) {
         goBack();
         return true;
       }
       return false;
     },
-  }), [canGoBack]);
+  }), [canGoBack, isCampusError]);
 
   return (
     <View style={styles.container}>
@@ -144,28 +179,28 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
       <View style={styles.toolbar}>
         <View style={styles.controlsRow}>
           <TouchableOpacity
-            style={[styles.navBtn, !canGoBack && styles.disabledBtn]}
+            style={[styles.navBtn, (!canGoBack || isCampusError) && styles.disabledBtn]}
             onPress={goBack}
-            disabled={!canGoBack}
+            disabled={!canGoBack || isCampusError}
             activeOpacity={0.7}
           >
             <Ionicons
               name="chevron-back"
               size={20}
-              color={canGoBack ? Theme.colors.textPrimary : Theme.colors.textSecondary}
+              color={canGoBack && !isCampusError ? Theme.colors.textPrimary : Theme.colors.textSecondary}
             />
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.navBtn, !canGoForward && styles.disabledBtn]}
+            style={[styles.navBtn, (!canGoForward || isCampusError) && styles.disabledBtn]}
             onPress={goForward}
-            disabled={!canGoForward}
+            disabled={!canGoForward || isCampusError}
             activeOpacity={0.7}
           >
             <Ionicons
               name="chevron-forward"
               size={20}
-              color={canGoForward ? Theme.colors.textPrimary : Theme.colors.textSecondary}
+              color={canGoForward && !isCampusError ? Theme.colors.textPrimary : Theme.colors.textSecondary}
             />
           </TouchableOpacity>
 
@@ -194,40 +229,105 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
         )}
       </View>
 
-      {/* Embedded Desktop Class Web View */}
+      {/* Embedded Desktop Class Web View or Campus Shield Fallback */}
       <View 
         style={[
           styles.webviewContainer, 
           { marginBottom: Theme.layout.navBarHeight + Math.max(16, insets.bottom + Theme.layout.navBarBaseBottom) + 8 }
         ]}
       >
-        <WebView
-          ref={webViewRef}
-          source={initialSource}
-          javaScriptEnabled={true}
-          domStorageEnabled={true}
-          sharedCookiesEnabled={true}
-          thirdPartyCookiesEnabled={true}
-          originWhitelist={['*']}
-          scalesPageToFit={true}
-          setBuiltInZoomControls={true}
-          setDisplayZoomControls={false}
-          textZoom={100}
-          showsHorizontalScrollIndicator={true}
-          showsVerticalScrollIndicator={true}
-          allowsInlineMediaPlayback={true}
-          onMessage={handleMessage}
-          onNavigationStateChange={handleNavigationStateChange}
-          onLoadStart={() => {
-            setLoading(true);
-            setProgress(0.1);
-          }}
-          onLoadProgress={({ nativeEvent }) => setProgress(nativeEvent.progress)}
-          onLoadEnd={handleLoadEnd}
-          injectedJavaScript={ScraperService.getDesktopViewportScript()}
-          userAgent={DESKTOP_USER_AGENT}
-          style={styles.webview}
-        />
+        {isCampusError ? (
+          <View style={styles.fallbackContainer}>
+            <View style={styles.fallbackShieldIcon}>
+              <Ionicons name="shield-half" size={44} color="#f59e0b" />
+            </View>
+            <Text style={styles.fallbackTitle}>Campus Network Required</Text>
+            <Text style={styles.fallbackSubtitle}>
+              The Shiksha Portal is hosted on IISER Bhopal's internal intranet and cannot be accessed over public internet without an active tunnel.
+            </Text>
+
+            <View style={styles.vpnInfoBox}>
+              <View style={styles.vpnInfoRow}>
+                <Ionicons name="server-outline" size={16} color={Theme.colors.primary} style={{ marginRight: 8 }} />
+                <Text style={styles.vpnInfoLabel}>VPN Gateway:</Text>
+                <Text style={styles.vpnInfoVal}>{IISERB_VPN_CONFIG.server}</Text>
+              </View>
+              <View style={[styles.vpnInfoRow, { marginTop: 6 }]}>
+                <Ionicons name="hardware-chip-outline" size={16} color={Theme.colors.primary} style={{ marginRight: 8 }} />
+                <Text style={styles.vpnInfoLabel}>Port / Tunnel:</Text>
+                <Text style={styles.vpnInfoVal}>{IISERB_VPN_CONFIG.port} ({IISERB_VPN_CONFIG.tunnelName})</Text>
+              </View>
+            </View>
+
+            <View style={styles.fallbackActions}>
+              <TouchableOpacity 
+                style={styles.primaryActionBtn} 
+                onPress={() => CampusConnectionHelper.launchFortiClient()}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="shield-checkmark" size={18} color="#ffffff" style={{ marginRight: 8 }} />
+                <Text style={styles.primaryActionBtnText}>Launch FortiClient VPN</Text>
+              </TouchableOpacity>
+
+              <View style={styles.secondaryActionsRow}>
+                <TouchableOpacity 
+                  style={styles.secondaryActionBtn} 
+                  onPress={() => CampusConnectionHelper.openWifiSettings()}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="wifi" size={16} color={Theme.colors.textPrimary} style={{ marginRight: 6 }} />
+                  <Text style={styles.secondaryActionBtnText}>Wi-Fi Settings</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={styles.retryActionBtn} 
+                  onPress={handleRetry}
+                  disabled={isRetrying}
+                  activeOpacity={0.7}
+                >
+                  {isRetrying ? (
+                    <ActivityIndicator size="small" color={Theme.colors.primary} />
+                  ) : (
+                    <>
+                      <Ionicons name="refresh" size={16} color={Theme.colors.primary} style={{ marginRight: 6 }} />
+                      <Text style={styles.retryActionBtnText}>Retry</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        ) : (
+          <WebView
+            ref={webViewRef}
+            source={initialSource}
+            javaScriptEnabled={true}
+            domStorageEnabled={true}
+            sharedCookiesEnabled={true}
+            thirdPartyCookiesEnabled={true}
+            originWhitelist={['*']}
+            scalesPageToFit={true}
+            setBuiltInZoomControls={true}
+            setDisplayZoomControls={false}
+            textZoom={100}
+            showsHorizontalScrollIndicator={true}
+            showsVerticalScrollIndicator={true}
+            allowsInlineMediaPlayback={true}
+            onMessage={handleMessage}
+            onNavigationStateChange={handleNavigationStateChange}
+            onLoadStart={() => {
+              setLoading(true);
+              setProgress(0.1);
+            }}
+            onLoadProgress={({ nativeEvent }) => setProgress(nativeEvent.progress)}
+            onLoadEnd={handleLoadEnd}
+            onError={handleError}
+            onHttpError={handleError}
+            injectedJavaScript={ScraperService.getDesktopViewportScript()}
+            userAgent={DESKTOP_USER_AGENT}
+            style={styles.webview}
+          />
+        )}
       </View>
     </View>
   );
@@ -297,6 +397,117 @@ const styles = StyleSheet.create({
   webview: {
     flex: 1,
     backgroundColor: '#ffffff',
+  },
+  fallbackContainer: {
+    flex: 1,
+    backgroundColor: Theme.colors.background,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Theme.spacing.padding,
+  },
+  fallbackShieldIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  fallbackTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: Theme.colors.textPrimary,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  fallbackSubtitle: {
+    fontSize: 13,
+    color: Theme.colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 19,
+    paddingHorizontal: 16,
+    marginBottom: 24,
+  },
+  vpnInfoBox: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: Theme.colors.surface,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    borderRadius: Theme.radii.card,
+    padding: 14,
+    marginBottom: 24,
+  },
+  vpnInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  vpnInfoLabel: {
+    fontSize: 12,
+    color: Theme.colors.textSecondary,
+    width: 90,
+  },
+  vpnInfoVal: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Theme.colors.textPrimary,
+  },
+  fallbackActions: {
+    width: '100%',
+    maxWidth: 340,
+  },
+  primaryActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0284c7',
+    height: 48,
+    borderRadius: Theme.radii.pill,
+    marginBottom: 12,
+  },
+  primaryActionBtnText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: 'bold',
+  },
+  secondaryActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  secondaryActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Theme.colors.surface,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    height: 44,
+    borderRadius: Theme.radii.pill,
+  },
+  secondaryActionBtnText: {
+    color: Theme.colors.textPrimary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  retryActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Theme.colors.surface,
+    borderWidth: 1,
+    borderColor: Theme.colors.primary,
+    height: 44,
+    borderRadius: Theme.radii.pill,
+  },
+  retryActionBtnText: {
+    color: Theme.colors.primary,
+    fontSize: 13,
+    fontWeight: '600',
   },
 });
 
