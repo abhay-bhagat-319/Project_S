@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, Platform, Linking } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as IntentLauncher from 'expo-intent-launcher';
 import { Theme } from '../Theme';
 import { ScraperService } from '../services/ScraperService';
 import { ReportsService } from '../services/ReportsService';
@@ -17,6 +19,15 @@ export interface PortalWebviewScreenProps {
   credentials: { username: string; password: string } | null;
   targetUrl?: string | null;
   onClearTargetUrl?: () => void;
+}
+
+export interface PortalDownloadState {
+  filename: string;
+  mimeType: string;
+  status: 'DOWNLOADING' | 'SUCCESS' | 'ERROR';
+  localUri?: string;
+  errorMessage?: string;
+  sizeFormatted?: string;
 }
 
 const DEFAULT_URL = 'https://shiksha.iiserb.ac.in/secure/studenthome';
@@ -41,7 +52,11 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
   const [isCampusError, setIsCampusError] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
 
-  // Register WebView as the authenticated PDF downloader bridge
+  // In-session document download state
+  const [downloadItem, setDownloadItem] = useState<PortalDownloadState | null>(null);
+  const downloadDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Register WebView as the authenticated PDF downloader bridge for Reports tab
   useEffect(() => {
     const unregister = ReportsService.registerPdfDownloader((fileUrl, reportId) => {
       const pendingPromise = ReportsService.createPendingPdfDownload(reportId);
@@ -49,7 +64,10 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
       webViewRef.current?.injectJavaScript(script);
       return pendingPromise;
     });
-    return unregister;
+    return () => {
+      unregister();
+      if (downloadDismissTimerRef.current) clearTimeout(downloadDismissTimerRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -62,6 +80,28 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
       }
     }
   }, [targetUrl]);
+
+  const openDownloadedFile = async (filePath: string, mimeType: string) => {
+    if (Platform.OS === 'android') {
+      try {
+        const contentUri = await FileSystem.getContentUriAsync(filePath);
+        await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+          data: contentUri,
+          flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
+          type: mimeType || 'application/pdf',
+        });
+      } catch (err) {
+        console.warn('Error launching intent for downloaded file, falling back to Linking:', err);
+        try {
+          await Linking.openURL(filePath);
+        } catch {}
+      }
+    } else {
+      try {
+        await Linking.openURL(filePath);
+      } catch {}
+    }
+  };
 
   const handleNavigationStateChange = (navState: any) => {
     setCanGoBack(navState.canGoBack);
@@ -78,7 +118,7 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
     }
   };
 
-  const handleMessage = (event: any) => {
+  const handleMessage = async (event: any) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
       if (ReportsService.handlePdfMessage(data)) {
@@ -86,6 +126,69 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
       }
       if (data.type === 'LOGIN_SUBMITTED') {
         console.log('PortalWebview: Auto-login submitted successfully.');
+        return;
+      }
+
+      // Handle Portal In-Session Downloads
+      if (data.type === 'PORTAL_DOWNLOAD_START') {
+        if (downloadDismissTimerRef.current) clearTimeout(downloadDismissTimerRef.current);
+        setDownloadItem({
+          filename: data.filename || 'document.pdf',
+          mimeType: data.mimeType || 'application/pdf',
+          status: 'DOWNLOADING',
+        });
+      } else if (data.type === 'PORTAL_DOWNLOAD_COMPLETE') {
+        try {
+          const downloadsDir = `${FileSystem.documentDirectory || FileSystem.cacheDirectory}portal_downloads/`;
+          const dirInfo = await FileSystem.getInfoAsync(downloadsDir);
+          if (!dirInfo.exists) {
+            await FileSystem.makeDirectoryAsync(downloadsDir, { intermediates: true });
+          }
+
+          const safeFilename = (data.filename || `document_${Date.now()}.pdf`).replace(/[^a-zA-Z0-9._-]/g, '_');
+          const finalPath = `${downloadsDir}${safeFilename}`;
+
+          await FileSystem.writeAsStringAsync(finalPath, data.base64, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+
+          const sizeFormatted = ReportsService.formatBytes(data.sizeBytes);
+          const updatedItem: PortalDownloadState = {
+            filename: safeFilename,
+            mimeType: data.mimeType || 'application/pdf',
+            status: 'SUCCESS',
+            localUri: finalPath,
+            sizeFormatted,
+          };
+          setDownloadItem(updatedItem);
+
+          // Automatically launch external system viewer
+          openDownloadedFile(finalPath, data.mimeType || 'application/pdf');
+
+          // Auto dismiss banner after 6 seconds
+          if (downloadDismissTimerRef.current) clearTimeout(downloadDismissTimerRef.current);
+          downloadDismissTimerRef.current = setTimeout(() => {
+            setDownloadItem(null);
+          }, 6000);
+        } catch (err: any) {
+          setDownloadItem({
+            filename: data.filename || 'document',
+            mimeType: 'application/octet-stream',
+            status: 'ERROR',
+            errorMessage: err.message || 'Failed to save downloaded file',
+          });
+        }
+      } else if (data.type === 'PORTAL_DOWNLOAD_ERROR') {
+        setDownloadItem({
+          filename: data.filename || 'document',
+          mimeType: 'application/octet-stream',
+          status: 'ERROR',
+          errorMessage: data.message || 'Download failed in portal session',
+        });
+        if (downloadDismissTimerRef.current) clearTimeout(downloadDismissTimerRef.current);
+        downloadDismissTimerRef.current = setTimeout(() => {
+          setDownloadItem(null);
+        }, 5000);
       }
     } catch (e) {}
   };
@@ -100,8 +203,9 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
         ScraperService.getLoginInjectionScript(credentials.username, credentials.password)
       );
     }
-    // Inject desktop viewport and clean font smoothing
+    // Inject desktop viewport, font smoothing, and download interceptor
     webViewRef.current?.injectJavaScript(ScraperService.getDesktopViewportScript());
+    webViewRef.current?.injectJavaScript(ScraperService.getPortalDownloadInterceptorScript());
   };
 
   const handleError = () => {
@@ -213,6 +317,57 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
             <View style={[styles.progressBarFill, { width: `${Math.max(15, progress * 100)}%` }]} />
           </View>
         )}
+
+        {/* Floating In-Session Download Status Bar */}
+        {downloadItem && (
+          <TouchableOpacity
+            style={[
+              styles.downloadPill,
+              downloadItem.status === 'SUCCESS' && styles.downloadPillSuccess,
+              downloadItem.status === 'ERROR' && styles.downloadPillError,
+            ]}
+            onPress={() => {
+              if (downloadItem.status === 'SUCCESS' && downloadItem.localUri) {
+                openDownloadedFile(downloadItem.localUri, downloadItem.mimeType);
+              }
+            }}
+            activeOpacity={downloadItem.status === 'SUCCESS' ? 0.8 : 1}
+          >
+            <View style={styles.downloadPillLeft}>
+              {downloadItem.status === 'DOWNLOADING' ? (
+                <ActivityIndicator size="small" color={Theme.colors.primary} style={{ marginRight: 8 }} />
+              ) : downloadItem.status === 'SUCCESS' ? (
+                <Ionicons name="checkmark-circle" size={18} color={Theme.colors.success} style={{ marginRight: 8 }} />
+              ) : (
+                <Ionicons name="alert-circle" size={18} color={Theme.colors.error} style={{ marginRight: 8 }} />
+              )}
+              <View style={styles.downloadPillTextContainer}>
+                <Text style={styles.downloadPillTitle} numberOfLines={1}>
+                  {downloadItem.status === 'DOWNLOADING'
+                    ? `Downloading ${downloadItem.filename}...`
+                    : downloadItem.status === 'SUCCESS'
+                    ? `${downloadItem.filename} ${downloadItem.sizeFormatted ? `(${downloadItem.sizeFormatted})` : ''}`
+                    : `Download failed`}
+                </Text>
+                {downloadItem.status === 'SUCCESS' ? (
+                  <Text style={styles.downloadPillSubtext}>Downloaded • Tap to open with viewer</Text>
+                ) : downloadItem.status === 'ERROR' ? (
+                  <Text style={[styles.downloadPillSubtext, { color: Theme.colors.error }]}>
+                    {downloadItem.errorMessage || 'Error downloading file'}
+                  </Text>
+                ) : null}
+              </View>
+            </View>
+
+            <TouchableOpacity
+              style={styles.downloadPillDismiss}
+              onPress={() => setDownloadItem(null)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="close" size={16} color={Theme.colors.textSecondary} />
+            </TouchableOpacity>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Embedded Desktop Class Web View or Campus Shield Fallback */}
@@ -309,6 +464,7 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
             onLoadEnd={handleLoadEnd}
             onError={handleError}
             onHttpError={handleError}
+            injectedJavaScriptBeforeContentLoaded={ScraperService.getPortalDownloadInterceptorScript()}
             injectedJavaScript={ScraperService.getDesktopViewportScript()}
             userAgent={DESKTOP_USER_AGENT}
             style={styles.webview}
@@ -494,6 +650,48 @@ const styles = StyleSheet.create({
     color: Theme.colors.primary,
     fontSize: 13,
     fontWeight: '600',
+  },
+  downloadPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(99, 102, 241, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.3)',
+    borderRadius: Theme.radii.card,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 8,
+  },
+  downloadPillSuccess: {
+    backgroundColor: 'rgba(34, 197, 94, 0.12)',
+    borderColor: 'rgba(34, 197, 94, 0.3)',
+  },
+  downloadPillError: {
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    borderColor: 'rgba(239, 68, 68, 0.3)',
+  },
+  downloadPillLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  downloadPillTextContainer: {
+    flex: 1,
+    marginRight: 8,
+  },
+  downloadPillTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Theme.colors.textPrimary,
+  },
+  downloadPillSubtext: {
+    fontSize: 11,
+    color: Theme.colors.textSecondary,
+    marginTop: 1,
+  },
+  downloadPillDismiss: {
+    padding: 4,
   },
 });
 
