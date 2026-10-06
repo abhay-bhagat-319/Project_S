@@ -1460,5 +1460,181 @@ export const ScraperService = {
       })();
       true;
     `;
+  },
+
+  /**
+   * Universal in-session download interceptor for PortalWebviewScreen.
+   * Catches clicks on downloadable file links (.pdf, .docx, .xlsx, .zip, .csv, blob:, <a download>)
+   * and fetches them inside the authenticated WebView session as Base64.
+   */
+  getPortalDownloadInterceptorScript(): string {
+    return `
+      (function() {
+        if (window.__portalDownloadInterceptorInstalled) return true;
+        window.__portalDownloadInterceptorInstalled = true;
+
+        function safePost(obj) {
+          try {
+            if (window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === 'function') {
+              window.ReactNativeWebView.postMessage(JSON.stringify(obj));
+            }
+          } catch (e) {}
+        }
+
+        var FILE_EXTENSIONS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'zip', 'rar', 'txt', 'png', 'jpg', 'jpeg'];
+        
+        function getMimeType(filename) {
+          var ext = (filename.split('.').pop() || '').toLowerCase();
+          switch(ext) {
+            case 'pdf': return 'application/pdf';
+            case 'doc': return 'application/msword';
+            case 'docx': return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+            case 'xls': return 'application/vnd.ms-excel';
+            case 'xlsx': return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+            case 'csv': return 'text/csv';
+            case 'zip': return 'application/zip';
+            case 'rar': return 'application/x-rar-compressed';
+            case 'txt': return 'text/plain';
+            case 'png': return 'image/png';
+            case 'jpg':
+            case 'jpeg': return 'image/jpeg';
+            default: return 'application/octet-stream';
+          }
+        }
+
+        function extractFilename(url, suggestedName) {
+          if (suggestedName && suggestedName.trim()) {
+            var clean = suggestedName.trim();
+            if (clean.indexOf('.') === -1) {
+              clean = clean.replace(/[^a-zA-Z0-9_-]/g, '_') + '.pdf';
+            }
+            return clean;
+          }
+          try {
+            var pathname = new URL(url, window.location.href).pathname;
+            var parts = pathname.split('/');
+            var last = parts[parts.length - 1];
+            if (last && last.indexOf('.') !== -1) {
+              return decodeURIComponent(last);
+            }
+          } catch (e) {}
+          return 'document_' + Date.now() + '.pdf';
+        }
+
+        function isDownloadableUrl(url, elem) {
+          if (!url) return false;
+          if (url.indexOf('blob:') === 0) return true;
+          if (elem && elem.hasAttribute && elem.hasAttribute('download')) return true;
+          
+          var cleanUrl = url.split('?')[0].split('#')[0].toLowerCase();
+          for (var j = 0; j < FILE_EXTENSIONS.length; j++) {
+            if (cleanUrl.endsWith('.' + FILE_EXTENSIONS[j])) return true;
+          }
+          if (cleanUrl.indexOf('/download/') !== -1 || cleanUrl.indexOf('/export/') !== -1) {
+            return true;
+          }
+          return false;
+        }
+
+        async function processDownload(url, filename) {
+          var resolvedName = extractFilename(url, filename);
+          var mimeType = getMimeType(resolvedName);
+
+          safePost({
+            type: 'PORTAL_DOWNLOAD_START',
+            url: url,
+            filename: resolvedName,
+            mimeType: mimeType
+          });
+
+          try {
+            var resp = await fetch(url, {
+              method: 'GET',
+              credentials: 'include',
+              headers: {
+                'Accept': '*/*'
+              }
+            });
+
+            if (!resp.ok) {
+              throw new Error('HTTP ' + resp.status + ': ' + resp.statusText);
+            }
+
+            var contentType = (resp.headers.get('content-type') || '').toLowerCase();
+            if (contentType.indexOf('text/html') !== -1 && (resp.url || '').indexOf('/login') !== -1) {
+              throw new Error('Session expired. Please log in again.');
+            }
+
+            var blob = await resp.blob();
+            if (!blob || blob.size === 0) {
+              throw new Error('Downloaded file is empty.');
+            }
+
+            var reader = new FileReader();
+            reader.onloadend = function() {
+              try {
+                var fullDataUrl = reader.result || '';
+                var base64 = fullDataUrl.indexOf(',') !== -1 ? fullDataUrl.split(',')[1] : fullDataUrl;
+
+                safePost({
+                  type: 'PORTAL_DOWNLOAD_COMPLETE',
+                  url: url,
+                  filename: resolvedName,
+                  mimeType: mimeType,
+                  sizeBytes: blob.size,
+                  base64: base64
+                });
+              } catch (readErr) {
+                safePost({
+                  type: 'PORTAL_DOWNLOAD_ERROR',
+                  filename: resolvedName,
+                  message: 'Failed to process file data: ' + (readErr.message || 'Unknown error')
+                });
+              }
+            };
+            reader.onerror = function() {
+              safePost({
+                type: 'PORTAL_DOWNLOAD_ERROR',
+                filename: resolvedName,
+                message: 'Failed to read downloaded file'
+              });
+            };
+            reader.readAsDataURL(blob);
+          } catch (err) {
+            safePost({
+              type: 'PORTAL_DOWNLOAD_ERROR',
+              filename: resolvedName,
+              message: err.message || 'Download failed in portal session'
+            });
+          }
+        }
+
+        // Global link click capture
+        document.addEventListener('click', function(e) {
+          var target = e.target;
+          var anchor = target ? target.closest('a') : null;
+          if (!anchor || !anchor.href) return;
+
+          var href = anchor.href;
+          if (isDownloadableUrl(href, anchor)) {
+            e.preventDefault();
+            e.stopPropagation();
+            var suggested = anchor.getAttribute('download') || anchor.getAttribute('title') || anchor.innerText.trim();
+            processDownload(href, suggested);
+          }
+        }, true);
+
+        // Override window.open for direct downloadable files
+        var originalWindowOpen = window.open;
+        window.open = function(url, target, features) {
+          if (url && isDownloadableUrl(url)) {
+            processDownload(url);
+            return null;
+          }
+          return originalWindowOpen.apply(window, arguments);
+        };
+      })();
+      true;
+    `;
   }
 };
