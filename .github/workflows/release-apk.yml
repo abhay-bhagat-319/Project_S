@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag Name (e.g. v1.0.10)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -26,6 +32,9 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: 🐘 Setup Gradle & Build Cache
+        uses: gradle/actions/setup-gradle@v4
+
       - name: 🟢 Setup Node.js 20
         uses: actions/setup-node@v4
         with:
@@ -36,11 +45,23 @@ jobs:
       - name: 📦 Install NPM Dependencies
         run: npm ci
 
-      - name: 🏷️ Sync Version from Git Tag
+      - name: 🏷️ Determine & Sync Version
+        id: get_version
         run: |
-          TAG_NAME="${{ github.ref_name }}"
+          if [ -n "${{ inputs.tag_name }}" ]; then
+            TAG_NAME="${{ inputs.tag_name }}"
+          elif [[ "${{ github.ref_name }}" == v* ]]; then
+            TAG_NAME="${{ github.ref_name }}"
+          else
+            RAW_VER=$(node -p "require('./app.json').expo.version")
+            TAG_NAME="v${RAW_VER}"
+          fi
+          
           CLEAN_VER="${TAG_NAME#v}"
-          echo "Syncing app version to $CLEAN_VER"
+          echo "Building version $CLEAN_VER (Tag: $TAG_NAME)"
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "clean_ver=$CLEAN_VER" >> $GITHUB_OUTPUT
+
           npm version "$CLEAN_VER" --no-git-tag-version --allow-same-version
           node -e "
             const fs = require('fs');
@@ -49,37 +70,33 @@ jobs:
             fs.writeFileSync('app.json', JSON.stringify(appJson, null, 2) + '\n');
           "
 
-      - name: ⚙️ Prebuild Android Project
-        run: npx expo prebuild --platform android --clean
-
-      - name: 🔨 Build Release APKs via Gradle (ABI Split + Universal)
+      - name: 🔨 Build Release APKs (ARM64-v8a + Universal)
         working-directory: ./mobile/android
         run: |
-          TAG_NAME="${{ github.ref_name }}"
-          CLEAN_VER="${TAG_NAME#v}"
+          CLEAN_VER="${{ steps.get_version.outputs.clean_ver }}"
+          mkdir -p ../dist_apks
           
           # 1. Build optimized ARM64-v8a APK (~20MB for 99.8% of modern Android devices)
           echo "🔨 Building arm64-v8a APK..."
-          ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
-          cp app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/Project_S-v${CLEAN_VER}-arm64-v8a.apk
-          
-          # Clean build artifacts before second target build
-          ./gradlew clean --no-daemon
+          ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a
+          cp app/build/outputs/apk/release/app-release.apk ../dist_apks/Project_S-v${CLEAN_VER}-arm64-v8a.apk
           
           # 2. Build Universal fallback APK (~70MB for all CPU architectures)
+          # Note: No 'gradlew clean' so Gradle reuses intermediate compiler & hermes cache!
           echo "🔨 Building universal APK..."
-          ./gradlew assembleRelease -PreactNativeArchitectures=armeabi-v7a,arm64-v8a,x86,x86_64 --no-daemon
-          cp app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/Project_S-v${CLEAN_VER}-universal.apk
-          
-          # Remove untagged generic app-release.apk so only versioned files are published
-          rm -f app/build/outputs/apk/release/app-release.apk
+          ./gradlew assembleRelease -PreactNativeArchitectures=armeabi-v7a,arm64-v8a,x86,x86_64
+          cp app/build/outputs/apk/release/app-release.apk ../dist_apks/Project_S-v${CLEAN_VER}-universal.apk
+
+          echo "✅ Generated Release Artifacts:"
+          ls -lh ../dist_apks
 
       - name: 🏷️ Publish GitHub Release with APKs
         uses: softprops/action-gh-release@v2
         with:
-          name: Release ${{ github.ref_name }}
+          tag_name: ${{ steps.get_version.outputs.tag_name }}
+          name: Release ${{ steps.get_version.outputs.tag_name }}
           files: |
-            mobile/android/app/build/outputs/apk/release/Project_S-*.apk
+            mobile/dist_apks/Project_S-*.apk
           generate_release_notes: true
           draft: false
           prerelease: false

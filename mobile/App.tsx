@@ -210,11 +210,22 @@ function AppContent() {
       }));
     });
 
+    // Subscribe to network reachability changes
+    const unsubscribeNetwork = NetworkReachabilityService.subscribe((state) => {
+      setNetworkState(state);
+      if (state === 'CAMPUS_ACTIVE') {
+        setIsOffline(false);
+      } else if (state === 'OFFLINE') {
+        setIsOffline(true);
+      }
+    });
+
     checkAppUpdates();
 
     return () => {
       unsubscribeNotification();
       unsubscribeProgress();
+      unsubscribeNetwork();
     };
   }, []);
 
@@ -316,15 +327,6 @@ function AppContent() {
   };
 
   const checkAndTriggerSync = async () => {
-    // Check campus connectivity
-    const state = await NetworkReachabilityService.getNetworkState();
-    setNetworkState(state);
-    if (state !== 'CAMPUS_ACTIVE') {
-      setIsOffline(true);
-      return;
-    }
-    setIsOffline(false);
-
     // Check sync cooldown
     const needsSync = await CacheService.isSyncCooledDown();
     if (needsSync) {
@@ -350,30 +352,6 @@ function AppContent() {
   };
 
   const startSync = async (scope: SyncScope = 'ALL', priorityCourseCode?: string, isUserInitiated = false): Promise<void> => {
-    const netState = await NetworkReachabilityService.getNetworkState();
-    setNetworkState(netState);
-    if (netState !== 'CAMPUS_ACTIVE') {
-      setIsOffline(true);
-      finishSync();
-      if (isUserInitiated) {
-        if (netState === 'EXTERNAL_ONLINE') {
-          Alert.alert(
-            'Campus Network Required',
-            'Cannot sync live portal data. Please connect to IISERB Wi-Fi or turn on FortiClient VPN (gateway.iiserb.ac.in).',
-            [
-              { text: 'Launch FortiClient', onPress: () => CampusConnectionHelper.launchFortiClient() },
-              { text: 'Wi-Fi Settings', onPress: () => CampusConnectionHelper.openWifiSettings() },
-              { text: 'OK', style: 'cancel' },
-            ]
-          );
-        } else {
-          Alert.alert('Offline Mode', 'Cannot sync portal data. Please check your internet connection.');
-        }
-      }
-      return;
-    }
-    setIsOffline(false);
-
     const creds = await SecureStorageService.getCredentials();
     if (!creds) {
       setAppState('NEEDS_LOGIN');
@@ -391,12 +369,28 @@ function AppContent() {
     return new Promise<void>((resolve) => {
       syncResolverRef.current = resolve;
 
-      // Timeout safety guard - 35 seconds maximum
+      // Timeout safety guard - 30 seconds maximum
       if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
-      syncTimeoutRef.current = setTimeout(() => {
-        console.log(`Sync timed out after 35s [scope: ${syncScopeRef.current}]`);
+      syncTimeoutRef.current = setTimeout(async () => {
+        console.log(`Sync timed out after 30s [scope: ${syncScopeRef.current}]`);
+        const failedState = await NetworkReachabilityService.recordFailure('Sync timed out');
         finishSync();
-      }, 35000);
+        if (isUserInitiated) {
+          if (failedState === 'EXTERNAL_ONLINE') {
+            Alert.alert(
+              'Campus Network Required',
+              'Sync timed out. Please check your connection to IISERB Wi-Fi or FortiClient VPN (gateway.iiserb.ac.in).',
+              [
+                { text: 'Launch FortiClient', onPress: () => CampusConnectionHelper.launchFortiClient() },
+                { text: 'Wi-Fi Settings', onPress: () => CampusConnectionHelper.openWifiSettings() },
+                { text: 'OK', style: 'cancel' },
+              ]
+            );
+          } else {
+            Alert.alert('Offline Mode', 'Cannot sync portal data. Please check your internet connection.');
+          }
+        }
+      }, 30000);
 
       // Direct Session Navigation: Navigate directly to target secure page
       let targetUrl = 'https://shiksha.iiserb.ac.in/secure/studenthome';
@@ -644,6 +638,12 @@ function AppContent() {
       return;
     }
 
+    if (url.includes('/secure')) {
+      NetworkReachabilityService.recordSuccess();
+      setNetworkState('CAMPUS_ACTIVE');
+      setIsOffline(false);
+    }
+
     if (url.includes('/secure/studenthome')) {
       if (syncScopeRef.current === 'ATTENDANCE' || syncScopeRef.current === 'COURSES' || syncScopeRef.current === 'MARKS') {
         // Redirect directly if landed on home after auth but requested courses/attendance/marks
@@ -687,6 +687,9 @@ function AppContent() {
 
       if (data.type === 'PROFILE_SCRAPED') {
         if (data.status === 'success') {
+          NetworkReachabilityService.recordSuccess();
+          setNetworkState('CAMPUS_ACTIVE');
+          setIsOffline(false);
           const profile: ProfileData = {
             name: data.name,
             roll: data.roll,
@@ -742,6 +745,9 @@ function AppContent() {
       
       else if (data.type === 'ATTENDANCE_SCRAPED') {
         if (data.status === 'success') {
+          NetworkReachabilityService.recordSuccess();
+          setNetworkState('CAMPUS_ACTIVE');
+          setIsOffline(false);
           const attendance: AttendanceData = {
             items: data.items,
             timestamp: new Date().toISOString()
@@ -782,6 +788,9 @@ function AppContent() {
 
       else if (data.type === 'COURSES_SCRAPED') {
         if (data.status === 'success') {
+          NetworkReachabilityService.recordSuccess();
+          setNetworkState('CAMPUS_ACTIVE');
+          setIsOffline(false);
           const submittedSrs = await CacheService.getSubmittedSrsCourses();
           const mappedCourses = (data.items || []).map((item: any) => ({
             courseCode: item.courseCode,
@@ -809,6 +818,9 @@ function AppContent() {
       }
 
       else if (data.type === 'COURSE_MARKS_STREAMED') {
+        NetworkReachabilityService.recordSuccess();
+        setNetworkState('CAMPUS_ACTIVE');
+        setIsOffline(false);
         if (data.courseCode && data.marksData) {
           await CacheService.cacheCourseMarks(data.courseCode, data.marksData);
           if (marksResolveMapRef.current[data.courseCode]) {
@@ -819,6 +831,7 @@ function AppContent() {
       }
 
       else if (data.type === 'ALL_COURSE_MARKS_SCRAPED') {
+        NetworkReachabilityService.recordSuccess();
         console.log('All course marks scraped & cached.');
         if (syncScopeRef.current === 'MARKS') {
           finishSync();
@@ -827,6 +840,9 @@ function AppContent() {
       
       else if (data.type === 'REPORTS_SCRAPED') {
         if (data.status === 'success') {
+          NetworkReachabilityService.recordSuccess();
+          setNetworkState('CAMPUS_ACTIVE');
+          setIsOffline(false);
           await CacheService.cacheReportsData(data.items || []);
           console.log('Reports sync completed successfully! Total items:', data.items?.length);
         } else {
@@ -1167,6 +1183,29 @@ function AppContent() {
             onMessage={handleSyncMessage}
             onNavigationStateChange={handleSyncNavigationStateChange}
             onLoadEnd={handleSyncLoadEnd}
+            onError={async (e) => {
+              console.warn('Sync WebView error:', e.nativeEvent.description);
+              const failedState = await NetworkReachabilityService.recordFailure(e.nativeEvent.description);
+              finishSync();
+              if (failedState === 'EXTERNAL_ONLINE' && syncActive) {
+                Alert.alert(
+                  'Campus Network Required',
+                  'Cannot reach Shiksha portal. Please ensure you are connected to IISERB Wi-Fi or FortiClient VPN (gateway.iiserb.ac.in).',
+                  [
+                    { text: 'Launch FortiClient', onPress: () => CampusConnectionHelper.launchFortiClient() },
+                    { text: 'Wi-Fi Settings', onPress: () => CampusConnectionHelper.openWifiSettings() },
+                    { text: 'OK', style: 'cancel' },
+                  ]
+                );
+              }
+            }}
+            onHttpError={async (e) => {
+              if (e.nativeEvent.statusCode >= 500) {
+                console.warn('Sync WebView HTTP error:', e.nativeEvent.statusCode);
+                await NetworkReachabilityService.recordFailure(`Server error ${e.nativeEvent.statusCode}`);
+                finishSync();
+              }
+            }}
             injectedJavaScriptBeforeContentLoaded={ScraperService.getEarlyInterceptScript()}
             userAgent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36"
           />
