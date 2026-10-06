@@ -70,6 +70,9 @@ jobs:
             fs.writeFileSync('app.json', JSON.stringify(appJson, null, 2) + '\n');
           "
 
+      - name: ⚙️ Generate Android Native Project
+        run: npx expo prebuild --platform android --no-install
+
       - name: 🔨 Build Release APKs (ARM64-v8a + Universal)
         working-directory: ./mobile/android
         run: |
