@@ -14,7 +14,7 @@ import { CacheService, ProfileData, AttendanceData, CourseDetail } from './src/s
 import { ScraperService } from './src/services/ScraperService';
 import { ReportsService } from './src/services/ReportsService';
 import { SessionLifecycleManager } from './src/services/SessionLifecycleManager';
-import { NetworkReachabilityService } from './src/services/NetworkReachabilityService';
+import { NetworkReachabilityService, NetworkState } from './src/services/NetworkReachabilityService';
 import { CampusConnectionHelper } from './src/utils/CampusConnectionHelper';
 
 import LockScreen from './src/screens/LockScreen';
@@ -72,6 +72,7 @@ function AppContent() {
   const [syncUrl, setSyncUrl] = useState('https://shiksha.iiserb.ac.in/secure/studentMyCourses');
   const [refreshing, setRefreshing] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
+  const [networkState, setNetworkState] = useState<NetworkState>('CAMPUS_ACTIVE');
   
   // Portal Navigation Target
   const [portalTargetUrl, setPortalTargetUrl] = useState<string | null>(null);
@@ -314,8 +315,9 @@ function AppContent() {
 
   const checkAndTriggerSync = async () => {
     // Check campus connectivity
-    const offline = await checkOfflineStatus();
-    if (offline) {
+    const state = await NetworkReachabilityService.getNetworkState();
+    setNetworkState(state);
+    if (state !== 'CAMPUS_ACTIVE') {
       setIsOffline(true);
       return;
     }
@@ -347,6 +349,7 @@ function AppContent() {
 
   const startSync = async (scope: SyncScope = 'ALL', priorityCourseCode?: string, isUserInitiated = false): Promise<void> => {
     const netState = await NetworkReachabilityService.getNetworkState();
+    setNetworkState(netState);
     if (netState !== 'CAMPUS_ACTIVE') {
       setIsOffline(true);
       finishSync();
@@ -940,6 +943,7 @@ function AppContent() {
               onRefresh={() => handleManualRefresh('ATTENDANCE')} 
               refreshing={refreshing && syncScope === 'ATTENDANCE'}
               isOffline={isOffline}
+              networkState={networkState}
             />
           </View>
 
