@@ -1,58 +1,50 @@
 import * as IntentLauncher from 'expo-intent-launcher';
 import { Linking, Platform } from 'react-native';
-import { IISERB_VPN_CONFIG } from '../services/NetworkReachabilityService';
 
 /**
- * System and intent helper for opening VPN / Wi-Fi settings and launching FortiClient VPN.
+ * System and intent helper for opening Wi-Fi settings and launching FortiClient VPN directly.
  */
 export class CampusConnectionHelper {
+  private static FORTICLIENT_PACKAGES = [
+    'com.fortinet.forticlient_vpn',
+    'com.fortinet.forticlient',
+  ];
+
   /**
-   * Attempts to launch FortiClient VPN app directly, or opens Play Store if not installed
+   * Attempts to launch FortiClient VPN app directly via Android intent URI,
+   * with fallback to Google Play Store.
    */
   public static async launchFortiClient(): Promise<void> {
-    const { packageName } = IISERB_VPN_CONFIG;
-
     if (Platform.OS === 'android') {
-      try {
-        await IntentLauncher.startActivityAsync('android.intent.action.MAIN', {
-          packageName,
-          category: 'android.intent.category.LAUNCHER',
-        });
-      } catch (e) {
-        // Fallback: Open Google Play Store to install/launch FortiClient
-        const playStoreUri = `market://details?id=${packageName}`;
-        const webPlayStore = `https://play.google.com/store/apps/details?id=${packageName}`;
+      for (const pkg of this.FORTICLIENT_PACKAGES) {
         try {
-          const supported = await Linking.canOpenURL(playStoreUri);
-          if (supported) {
-            await Linking.openURL(playStoreUri);
-          } else {
-            await Linking.openURL(webPlayStore);
+          const intentUri = `intent:#Intent;package=${pkg};category=android.intent.category.LAUNCHER;action=android.intent.action.MAIN;end`;
+          const canOpen = await Linking.canOpenURL(intentUri);
+          if (canOpen) {
+            await Linking.openURL(intentUri);
+            return;
           }
         } catch {
+          // Try next package
+        }
+      }
+
+      // If intent URI didn't open, try direct Play Store link for FortiClient VPN
+      const playStoreUri = `market://details?id=com.fortinet.forticlient_vpn`;
+      const webPlayStore = `https://play.google.com/store/apps/details?id=com.fortinet.forticlient_vpn`;
+      try {
+        const canOpenStore = await Linking.canOpenURL(playStoreUri);
+        if (canOpenStore) {
+          await Linking.openURL(playStoreUri);
+        } else {
           await Linking.openURL(webPlayStore);
         }
+      } catch {
+        await Linking.openURL(webPlayStore);
       }
     } else {
-      // iOS fallback or generic web link
+      // iOS / Web fallback
       await Linking.openURL('https://play.google.com/store/apps/details?id=com.fortinet.forticlient_vpn');
-    }
-  }
-
-  /**
-   * Opens Android System VPN Settings
-   */
-  public static async openVpnSettings(): Promise<void> {
-    if (Platform.OS === 'android') {
-      try {
-        await IntentLauncher.startActivityAsync(IntentLauncher.ActivityAction.VPN_SETTINGS);
-      } catch {
-        try {
-          await IntentLauncher.startActivityAsync(IntentLauncher.ActivityAction.WIRELESS_SETTINGS);
-        } catch {
-          await IntentLauncher.startActivityAsync(IntentLauncher.ActivityAction.SETTINGS);
-        }
-      }
     }
   }
 

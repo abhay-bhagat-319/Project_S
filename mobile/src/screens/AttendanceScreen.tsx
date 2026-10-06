@@ -8,17 +8,25 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { AttendanceItem, AttendanceRecord, AttendanceData } from '../services/CacheService';
 import { calculateAttendance } from '../utils/AttendanceCalc';
+import { NetworkState } from '../services/NetworkReachabilityService';
 
 interface AttendanceScreenProps {
   attendanceData: AttendanceData | null;
   onRefresh: () => Promise<void>;
   refreshing: boolean;
-  isOffline: boolean;
+  isOffline?: boolean;
+  networkState?: NetworkState;
 }
 
 type Filter = 'ALL' | 'PRESENT' | 'ABSENT';
 
-export default function AttendanceScreen({ attendanceData, onRefresh, refreshing, isOffline }: AttendanceScreenProps) {
+export default function AttendanceScreen({
+  attendanceData,
+  onRefresh,
+  refreshing,
+  isOffline,
+  networkState,
+}: AttendanceScreenProps) {
   const insets = useSafeAreaInsets();
   const [selectedCourse, setSelectedCourse] = useState<AttendanceItem | null>(null);
   const [filter, setFilter] = useState<Filter>('ALL');
@@ -203,20 +211,27 @@ export default function AttendanceScreen({ attendanceData, onRefresh, refreshing
 
   const recordsList = selectedCourse ? getFilteredRecords(selectedCourse.records) : [];
 
+  const isCompleteOffline = networkState === 'OFFLINE' || (isOffline && networkState !== 'EXTERNAL_ONLINE' && networkState !== 'CAMPUS_ACTIVE');
+  const isExternalOnline = networkState === 'EXTERNAL_ONLINE';
+
   return (
     <View style={styles.container}>
-      {isOffline && (
+      {isCompleteOffline ? (
         <View style={styles.offlineBanner}>
-          <Ionicons name="cloud-offline-outline" size={16} color={Theme.colors.background} />
+          <Ionicons name="cloud-offline-outline" size={15} color="#ffffff" />
           <Text style={styles.bannerText}>No internet connection. Viewing offline cache.</Text>
         </View>
-      )}
-      {!isOffline && attendanceData && (
+      ) : isExternalOnline ? (
+        <View style={styles.campusBanner}>
+          <Ionicons name="shield-half" size={14} color="#f59e0b" />
+          <Text style={styles.campusBannerText}>Campus Network Required • Connect to IISERB Wi-Fi or VPN to refresh</Text>
+        </View>
+      ) : attendanceData ? (
         <View style={styles.syncBanner}>
           <Ionicons name="sync-outline" size={14} color={Theme.colors.textSecondary} />
           <Text style={styles.syncBannerText}>Cached from {formattedSyncTime()}</Text>
         </View>
-      )}
+      ) : null}
 
       <FlatList
         data={attendanceData?.items || []}
@@ -398,7 +413,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
     paddingVertical: 8, paddingHorizontal: Theme.spacing.padding,
   },
-  bannerText: { color: Theme.colors.background, fontSize: 12, fontWeight: 'bold', marginLeft: 8 },
+  bannerText: { color: '#ffffff', fontSize: 12, fontWeight: 'bold', marginLeft: 8 },
+  campusBanner: {
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(245, 158, 11, 0.3)',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 7,
+    paddingHorizontal: Theme.spacing.padding,
+  },
+  campusBannerText: {
+    color: '#f59e0b',
+    fontSize: 11,
+    fontWeight: '600',
+    marginLeft: 6,
+  },
   syncBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 8 },
   syncBannerText: { color: Theme.colors.textSecondary, fontSize: 11, marginLeft: 6 },
 

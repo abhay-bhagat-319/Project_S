@@ -149,9 +149,18 @@ export class ReportsService {
         await FileSystem.makeDirectoryAsync(reportsDir, { intermediates: true });
       }
 
+      // Sanitize cached list: only include student-visible reports with valid PDF URLs
+      const validReports = cachedList.filter(
+        (item) => item.show === true && item.file && (item.file.toLowerCase().includes('.pdf') || /\.pdf($|\?)/i.test(item.file))
+      );
+
+      if (validReports.length !== cachedList.length) {
+        CacheService.cacheReportsData(validReports).catch(() => {});
+      }
+
       const results: ReportItem[] = [];
 
-      for (const item of cachedList) {
+      for (const item of validReports) {
         const localPath = this.getReportLocalPath(item.id);
         const fileInfo = await FileSystem.getInfoAsync(localPath);
 
