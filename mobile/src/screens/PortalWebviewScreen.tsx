@@ -41,15 +41,6 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
   const [isCampusError, setIsCampusError] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
 
-  // Check reachability on mount
-  useEffect(() => {
-    NetworkReachabilityService.isShikshaReachable(2000).then((reachable) => {
-      if (!reachable) {
-        setIsCampusError(true);
-      }
-    });
-  }, []);
-
   // Register WebView as the authenticated PDF downloader bridge
   useEffect(() => {
     const unregister = ReportsService.registerPdfDownloader((fileUrl, reportId) => {

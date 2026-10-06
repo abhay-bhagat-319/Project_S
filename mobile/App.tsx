@@ -94,6 +94,7 @@ function AppContent() {
 
   // Re-authentication Credentials
   const [credentials, setCredentials] = useState<{ username: string; password: string } | null>(null);
+  const [authUrl, setAuthUrl] = useState('https://shiksha.iiserb.ac.in/login/');
 
   const authWebViewRef = useRef<WebView>(null);
 
@@ -107,6 +108,7 @@ function AppContent() {
   useEffect(() => {
     const unregisterAuth = SessionLifecycleManager.registerAdapter({
       loadUrl: (url: string) => {
+        setAuthUrl(url);
         authWebViewRef.current?.injectJavaScript(`window.location.href = ${JSON.stringify(url)}; true;`);
       },
       injectScript: (script: string) => {
@@ -1114,7 +1116,7 @@ function AppContent() {
       >
         <WebView
           ref={authWebViewRef}
-          source={{ uri: 'https://shiksha.iiserb.ac.in/login/' }}
+          source={{ uri: authUrl }}
           javaScriptEnabled={true}
           domStorageEnabled={true}
           sharedCookiesEnabled={true}
@@ -1132,7 +1134,15 @@ function AppContent() {
             SessionLifecycleManager.handleNavigationStateChange(navState.url);
           }}
           onLoadEnd={(e) => {
-            SessionLifecycleManager.handleLoadEnd(e.nativeEvent.url || 'https://shiksha.iiserb.ac.in/login/');
+            SessionLifecycleManager.handleLoadEnd(e.nativeEvent.url || authUrl);
+          }}
+          onError={(e) => {
+            SessionLifecycleManager.handleAuthError(e.nativeEvent.description);
+          }}
+          onHttpError={(e) => {
+            if (e.nativeEvent.statusCode >= 500) {
+              SessionLifecycleManager.handleAuthError(`Server Error: ${e.nativeEvent.statusCode}`);
+            }
           }}
           userAgent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36"
         />
