@@ -1263,7 +1263,7 @@ export const ScraperService = {
       (function() {
         var done = false;
         var attempts = 0;
-        var maxAttempts = 300; // 15 seconds (every 50ms)
+        var maxAttempts = 100; // 5 seconds maximum
 
         var poll = setInterval(function() {
           if (done) { clearInterval(poll); return; }
@@ -1274,28 +1274,49 @@ export const ScraperService = {
 
             // Strategy 1: Check Angular Scope
             try {
-              var el = document.querySelector('[ng-controller="studentReportController"]') || 
-                       document.querySelector('[ng-controller]') || 
-                       document.body;
-              var scope = (typeof angular !== 'undefined' && angular.element) ? angular.element(el).scope() : null;
-              if (scope && Array.isArray(scope.studentReports) && scope.studentReports.length > 0) {
-                reports = scope.studentReports;
-              } else if (scope && Array.isArray(scope.reports) && scope.reports.length > 0) {
-                reports = scope.reports;
+              if (window.angular && window.angular.element) {
+                var el = document.querySelector('[ng-controller="studentReportController"]') || 
+                         document.querySelector('[ng-controller]') || 
+                         document.body;
+                if (el) {
+                  var scope = window.angular.element(el).scope();
+                  if (scope) {
+                    if (Array.isArray(scope.studentReports) && scope.studentReports.length > 0) {
+                      reports = scope.studentReports;
+                    } else if (Array.isArray(scope.reports) && scope.reports.length > 0) {
+                      reports = scope.reports;
+                    }
+                  }
+                }
               }
             } catch (e1) {}
 
-            // Strategy 2: Extract JSON from ng-init attribute
+            // Strategy 2: Extract JSON from ng-init attribute (robust substring parsing)
             if (!reports || reports.length === 0) {
               try {
-                var initEls = Array.from(document.querySelectorAll('[ng-init]'));
+                var initEls = document.querySelectorAll('[ng-init]');
                 for (var i = 0; i < initEls.length; i++) {
                   var initAttr = initEls[i].getAttribute('ng-init') || '';
-                  var match = initAttr.match(/initReports\\s*\\(\\s*(\\[.*?\\])\\s*\\)/s);
-                  if (match && match[1]) {
-                    var raw = match[1].replace(/&quot;|&#34;/g, '"').replace(/&amp;/g, '&');
-                    reports = JSON.parse(raw);
-                    break;
+                  var startMarker = initAttr.indexOf('initReports(');
+                  if (startMarker !== -1) {
+                    var arrStart = initAttr.indexOf('[', startMarker);
+                    var arrEnd = initAttr.indexOf('])', arrStart);
+                    if (arrEnd === -1) {
+                      arrEnd = initAttr.lastIndexOf(']');
+                    }
+                    if (arrStart !== -1 && arrEnd > arrStart) {
+                      var rawJson = initAttr.substring(arrStart, arrEnd + 1)
+                        .replace(/&quot;|&#34;/g, '"')
+                        .replace(/&amp;/g, '&')
+                        .replace(/&#39;/g, "'");
+                      try {
+                        var parsed = JSON.parse(rawJson);
+                        if (Array.isArray(parsed) && parsed.length > 0) {
+                          reports = parsed;
+                          break;
+                        }
+                      } catch (parseErr) {}
+                    }
                   }
                 }
               } catch (e2) {}
@@ -1304,13 +1325,14 @@ export const ScraperService = {
             // Strategy 3: Parse DOM Table Rows if Angular / ng-init didn't yield
             if (!reports || reports.length === 0) {
               try {
-                var rows = Array.from(document.querySelectorAll('table#dataTable tbody tr, table tbody tr'));
-                rows.forEach(function(row) {
+                var rows = document.querySelectorAll('table#dataTable tbody tr, table tbody tr');
+                for (var rIdx = 0; rIdx < rows.length; rIdx++) {
+                  var row = rows[rIdx];
                   var cells = row.querySelectorAll('td');
                   if (cells.length >= 4) {
-                    var sem = cells[1].innerText.trim();
-                    var type = cells[2].innerText.trim();
-                    var annotation = cells[3].innerText.trim();
+                    var sem = cells[1].innerText ? cells[1].innerText.trim() : '';
+                    var type = cells[2].innerText ? cells[2].innerText.trim() : '';
+                    var annotation = cells[3].innerText ? cells[3].innerText.trim() : '';
                     var link = row.querySelector('a[href*=".pdf"]');
                     var file = link ? link.getAttribute('href') : '';
                     if (sem && type) {
@@ -1323,11 +1345,13 @@ export const ScraperService = {
                       });
                     }
                   }
-                });
+                }
               } catch (e3) {}
             }
 
-            if ((reports && reports.length > 0) || attempts >= maxAttempts) {
+            var isDomReady = !!(document.querySelector('table#dataTable') || document.querySelector('[ng-controller]') || document.querySelector('[ng-init]'));
+
+            if ((reports && reports.length > 0) || (attempts >= 20 && isDomReady) || attempts >= maxAttempts) {
               clearInterval(poll);
               done = true;
 
@@ -1368,6 +1392,7 @@ export const ScraperService = {
           } catch (err) {
             clearInterval(poll);
             if (!done) {
+              done = true;
               window.ReactNativeWebView.postMessage(JSON.stringify({
                 type: 'REPORTS_SCRAPED',
                 status: 'error',
