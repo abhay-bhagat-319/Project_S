@@ -4,6 +4,9 @@ import Constants, { ExecutionEnvironment } from 'expo-constants';
 const UPDATE_NOTIFICATION_CHANNEL_ID = 'app-updates';
 const UPDATE_NOTIFICATION_ID = 'project-s-app-update';
 
+const UPDATE_PROGRESS_CHANNEL_ID = 'download-progress';
+const UPDATE_PROGRESS_NOTIFICATION_ID = 'project-s-download-progress';
+
 let _notificationsModule: typeof import('expo-notifications') | null = null;
 function getNotifications(): typeof import('expo-notifications') | null {
   if (!_notificationsModule) {
@@ -47,16 +50,21 @@ export class NotificationService {
     try {
       // Lazy configure foreground handler only on supported native runtimes
       Notifications.setNotificationHandler({
-        handleNotification: async () => ({
-          shouldShowAlert: true,
-          shouldPlaySound: true,
-          shouldSetBadge: false,
-          shouldShowBanner: true,
-          shouldShowList: true,
-        }),
+        handleNotification: async (notification) => {
+          // If this is an ongoing progress notification, don't play sound or alert
+          const isProgress = notification.request.identifier === UPDATE_PROGRESS_NOTIFICATION_ID;
+          return {
+            shouldShowAlert: !isProgress,
+            shouldPlaySound: !isProgress,
+            shouldSetBadge: false,
+            shouldShowBanner: !isProgress,
+            shouldShowList: true,
+          };
+        },
       });
 
       if (Platform.OS === 'android') {
+        // High importance channel for completed updates & announcements
         await Notifications.setNotificationChannelAsync(UPDATE_NOTIFICATION_CHANNEL_ID, {
           name: 'App Updates',
           description: 'Notifications for new version updates and installations',
@@ -65,6 +73,17 @@ export class NotificationService {
           lightColor: '#6366F1',
           showBadge: true,
           sound: 'default',
+        });
+
+        // Low importance channel for quiet background download progress
+        await Notifications.setNotificationChannelAsync(UPDATE_PROGRESS_CHANNEL_ID, {
+          name: 'Download Progress',
+          description: 'Ongoing progress indicator for background update downloads',
+          importance: Notifications.AndroidImportance.LOW,
+          vibrationPattern: null,
+          enableVibrate: false,
+          showBadge: false,
+          sound: null,
         });
       }
 
@@ -145,12 +164,70 @@ export class NotificationService {
   }
 
   /**
+   * Updates or creates the ongoing background download progress notification in the notification tray.
+   * Keeps the network socket from being killed while the app is minimized.
+   */
+  public static async updateDownloadProgressNotification(
+    version: string,
+    progressFraction: number
+  ): Promise<void> {
+    if (!this.isSupported()) return;
+
+    const Notifications = getNotifications();
+    if (!Notifications) return;
+
+    try {
+      await this.init();
+      const percent = Math.min(100, Math.max(0, Math.round(progressFraction * 100)));
+
+      await Notifications.scheduleNotificationAsync({
+        identifier: UPDATE_PROGRESS_NOTIFICATION_ID,
+        content: {
+          title: 'Downloading Project_S Update',
+          body: `v${version} • ${percent}% completed`,
+          data: {
+            action: 'OPEN_UPDATE_MODAL',
+            version,
+          },
+          sound: false,
+          sticky: true,
+          autoDismiss: false,
+          priority: Notifications.AndroidNotificationPriority.LOW,
+          color: '#6366F1',
+        },
+        trigger: null,
+      });
+    } catch (err) {
+      // Non-critical notification update failure
+    }
+  }
+
+  /**
+   * Dismisses the ongoing download progress notification when finished or cancelled
+   */
+  public static async clearDownloadProgressNotification(): Promise<void> {
+    if (!this.isSupported()) return;
+
+    const Notifications = getNotifications();
+    if (!Notifications) return;
+
+    try {
+      await Notifications.dismissNotificationAsync(UPDATE_PROGRESS_NOTIFICATION_ID);
+    } catch {
+      // Ignore
+    }
+  }
+
+  /**
    * Sends a local notification when an update has been downloaded and is ready to install.
    * Only sends if the app is currently in background or closed (AppState !== 'active')
    * to avoid bothering the student while actively using the app.
    */
   public static async notifyUpdateReady(version: string, releaseName?: string): Promise<void> {
     if (!this.isSupported()) return;
+
+    // First clear any ongoing download progress notification
+    await this.clearDownloadProgressNotification();
 
     // Suppress system push notification if the user has the app open in foreground
     if (AppState.currentState === 'active') {
@@ -228,7 +305,7 @@ export class NotificationService {
   }
 
   /**
-   * Clears the update notification from the system tray
+   * Clears all update notifications from the system tray
    */
   public static async clearUpdateNotification(): Promise<void> {
     if (!this.isSupported()) return;
@@ -238,6 +315,7 @@ export class NotificationService {
 
     try {
       await Notifications.dismissNotificationAsync(UPDATE_NOTIFICATION_ID);
+      await Notifications.dismissNotificationAsync(UPDATE_PROGRESS_NOTIFICATION_ID);
     } catch (err) {
       // Ignore
     }
