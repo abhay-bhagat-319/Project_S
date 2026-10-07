@@ -486,7 +486,7 @@ export class UpdateService {
           // Broadcast to all registered UI listeners
           this.broadcastProgress(progress, total);
 
-          // Throttle-persist resume snapshot every 1.5 seconds
+          // Throttle-persist resume snapshot and update ongoing notification when minimized
           const now = Date.now();
           if (this.activeDownloadResumable && now - this.lastSnapSaveTime > 1500) {
             this.lastSnapSaveTime = now;
@@ -494,6 +494,11 @@ export class UpdateService {
               const snap = this.activeDownloadResumable.savable();
               AsyncStorage.setItem(snapKey, JSON.stringify(snap)).catch(() => {});
             } catch {}
+
+            // If app is currently in background, update ongoing notification to keep process/socket active
+            if (AppState.currentState !== 'active') {
+              NotificationService.updateDownloadProgressNotification(cleanVer, progress).catch(() => {});
+            }
           }
         };
 
@@ -583,6 +588,7 @@ export class UpdateService {
         if (onProgress) {
           this.progressListeners.delete(onProgress);
         }
+        await NotificationService.clearDownloadProgressNotification().catch(() => {});
       }
     };
 
