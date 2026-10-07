@@ -1,5 +1,8 @@
 import { registerRootComponent } from 'expo';
 
+// Ensure TaskManager task definitions and background managers are initialized at root module load
+import './src/services/UpdateService';
+
 import App from './App';
 
 // registerRootComponent calls AppRegistry.registerComponent('main', () => App);

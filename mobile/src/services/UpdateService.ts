@@ -3,6 +3,8 @@ import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as Application from 'expo-application';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
+import * as TaskManager from 'expo-task-manager';
+import * as BackgroundFetch from 'expo-background-fetch';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { NotificationService } from './NotificationService';
@@ -37,6 +39,29 @@ const RESUME_SNAP_KEY_PREFIX = 'shiksha_update_resume_snap_';
 const PENDING_DOWNLOAD_META_KEY = 'shiksha_update_pending_meta';
 
 type ProgressCallback = (fraction: number, totalBytes: number) => void;
+
+export const BACKGROUND_UPDATE_TASK = 'PROJECT_S_BACKGROUND_UPDATE_TASK';
+
+// Define the headless background update task at module load time for Android WorkManager
+try {
+  TaskManager.defineTask(BACKGROUND_UPDATE_TASK, async () => {
+    try {
+      console.log('[BackgroundTask] Executing periodic background update check...');
+      const info = await UpdateService.checkForUpdate();
+      if (info.hasUpdate && info.apkDownloadUrl && !info.isCached) {
+        console.log(`[BackgroundTask] New release detected: v${info.latestVersion}. Starting silent background prefetch...`);
+        await UpdateService.downloadApk(info.apkDownloadUrl, info.latestVersion, info.apkSizeBytes);
+        return BackgroundFetch.BackgroundFetchResult.NewData;
+      }
+      return BackgroundFetch.BackgroundFetchResult.NoData;
+    } catch (error) {
+      console.warn('[BackgroundTask] Background update check failed:', error);
+      return BackgroundFetch.BackgroundFetchResult.Failed;
+    }
+  });
+} catch (e) {
+  // Safe fallback for environments where TaskManager isn't available
+}
 
 export class UpdateService {
   private static GITHUB_OWNER = 'abhay-bhagat-319';
@@ -755,6 +780,31 @@ export class UpdateService {
       return total;
     } catch {
       return 0;
+    }
+  }
+
+  /**
+   * Registers the periodic background fetch task with Android WorkManager.
+   * Runs every 6 hours silently even when the app is closed.
+   */
+  public static async registerBackgroundUpdateTask(): Promise<void> {
+    const isExpoGo =
+      Constants.appOwnership === 'expo' ||
+      Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+    if (isExpoGo) return;
+
+    try {
+      const isRegistered = await TaskManager.isTaskRegisteredAsync(BACKGROUND_UPDATE_TASK);
+      if (!isRegistered) {
+        await BackgroundFetch.registerTaskAsync(BACKGROUND_UPDATE_TASK, {
+          minimumInterval: 6 * 60 * 60, // 6 hours
+          stopOnTerminate: false,
+          startOnBoot: true,
+        });
+        console.log('[UpdateService] Background update task registered with WorkManager.');
+      }
+    } catch (err) {
+      console.warn('[UpdateService] Failed to register background update task:', err);
     }
   }
 }

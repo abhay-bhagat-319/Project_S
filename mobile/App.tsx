@@ -181,6 +181,7 @@ function AppContent() {
   useEffect(() => {
     bootstrapApp();
     NotificationService.init().catch(() => {});
+    UpdateService.registerBackgroundUpdateTask().catch(() => {});
 
     // Listen for notification tap responses
     const unsubscribeNotification = NotificationService.registerResponseListener((action, version) => {
@@ -262,8 +263,13 @@ function AppContent() {
           isComplete: !!info.isCached,
         }));
 
-        // Resume any pending interrupted background download seamlessly
-        UpdateService.resumePendingDownloadIfAny().catch(() => {});
+        // Proactively prefetch update in background if not yet cached so install is instantaneous
+        if (!info.isCached && info.apkDownloadUrl && !UpdateService.isDownloading(info.latestVersion)) {
+          UpdateService.downloadApk(info.apkDownloadUrl, info.latestVersion, info.apkSizeBytes).catch(() => {});
+        } else {
+          // Resume any pending interrupted background download seamlessly
+          UpdateService.resumePendingDownloadIfAny().catch(() => {});
+        }
 
         const isSnoozed = await UpdateService.isUpdateSnoozed(info.latestVersion);
         if (!isSnoozed && !info.isCached) {
