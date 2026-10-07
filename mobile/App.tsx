@@ -408,6 +408,15 @@ function AppContent() {
       if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
       syncTimeoutRef.current = setTimeout(async () => {
         console.log(`Sync timed out after 30s [scope: ${syncScopeRef.current}]`);
+        const isReachable = await NetworkReachabilityService.isShikshaReachable(2500);
+        if (isReachable) {
+          // Shiksha IS reachable on campus Wi-Fi, but the session was slow or needed re-auth
+          console.log('[PortalSyncEngine] Shiksha is reachable. Attempting silent session recovery on timeout...');
+          finishSync();
+          handleSessionRecoveryAndRetry().catch(() => {});
+          return;
+        }
+
         const failedState = await NetworkReachabilityService.recordFailure('Sync timed out');
         finishSync();
         if (isUserInitiated) {
@@ -427,7 +436,7 @@ function AppContent() {
         }
       }, 30000);
 
-      // Direct Session Navigation: Navigate directly to target secure page
+      // Direct Session Navigation: Navigate directly to target secure page on warm sync WebView
       let targetUrl = 'https://shiksha.iiserb.ac.in/secure/studenthome';
       if (scope === 'ATTENDANCE' || scope === 'COURSES' || scope === 'MARKS') {
         targetUrl = 'https://shiksha.iiserb.ac.in/secure/studentMyCourses';
@@ -435,12 +444,8 @@ function AppContent() {
         targetUrl = 'https://shiksha.iiserb.ac.in/secure/studentReports';
       }
 
-      if (syncUrl === targetUrl) {
-        console.log(`WebView already on target URL [${targetUrl}], reloading...`);
-        syncWebViewRef.current?.reload();
-      } else {
-        setSyncUrl(targetUrl);
-      }
+      setSyncUrl(targetUrl);
+      syncWebViewRef.current?.injectJavaScript(`window.location.href = ${JSON.stringify(targetUrl)}; true;`);
     });
   };
 
@@ -1200,27 +1205,28 @@ function AppContent() {
         />
       </View>
 
-      {/* Background WebView for syncing data */}
-      {syncActive && (
-        <View 
-          style={{ position: 'absolute', bottom: 0, right: 0, width: 1, height: 1, opacity: 0.01 }} 
-          pointerEvents="none"
-        >
-          <WebView
-            ref={syncWebViewRef}
-            source={{ uri: syncUrl }}
-            javaScriptEnabled={true}
-            domStorageEnabled={true}
-            sharedCookiesEnabled={true}
-            thirdPartyCookiesEnabled={true}
-            mixedContentMode="always"
-            setSupportMultipleWindows={false}
-            originWhitelist={['*']}
-            onMessage={handleSyncMessage}
-            onNavigationStateChange={handleSyncNavigationStateChange}
-            onLoadEnd={handleSyncLoadEnd}
-            onError={async (e) => {
-              console.warn('Sync WebView error:', e.nativeEvent.description);
+      {/* Background WebView for syncing data (Permanently warm in background) */}
+      <View 
+        style={{ position: 'absolute', bottom: 0, right: 0, width: 1, height: 1, opacity: 0.01 }} 
+        pointerEvents="none"
+      >
+        <WebView
+          ref={syncWebViewRef}
+          source={{ uri: syncUrl }}
+          javaScriptEnabled={true}
+          domStorageEnabled={true}
+          sharedCookiesEnabled={true}
+          thirdPartyCookiesEnabled={true}
+          mixedContentMode="always"
+          setSupportMultipleWindows={false}
+          originWhitelist={['*']}
+          onMessage={handleSyncMessage}
+          onNavigationStateChange={handleSyncNavigationStateChange}
+          onLoadEnd={handleSyncLoadEnd}
+          onError={async (e) => {
+            console.warn('Sync WebView error:', e.nativeEvent.description);
+            const isReachable = await NetworkReachabilityService.isShikshaReachable(2000);
+            if (!isReachable) {
               const failedState = await NetworkReachabilityService.recordFailure(e.nativeEvent.description);
               finishSync();
               if (failedState === 'EXTERNAL_ONLINE' && syncActive) {
@@ -1234,19 +1240,21 @@ function AppContent() {
                   ]
                 );
               }
-            }}
-            onHttpError={async (e) => {
-              if (e.nativeEvent.statusCode >= 500) {
-                console.warn('Sync WebView HTTP error:', e.nativeEvent.statusCode);
-                await NetworkReachabilityService.recordFailure(`Server error ${e.nativeEvent.statusCode}`);
-                finishSync();
-              }
-            }}
-            injectedJavaScriptBeforeContentLoaded={ScraperService.getEarlyInterceptScript()}
-            userAgent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36"
-          />
-        </View>
-      )}
+            } else {
+              finishSync();
+            }
+          }}
+          onHttpError={async (e) => {
+            if (e.nativeEvent.statusCode >= 500) {
+              console.warn('Sync WebView HTTP error:', e.nativeEvent.statusCode);
+              await NetworkReachabilityService.recordFailure(`Server error ${e.nativeEvent.statusCode}`);
+              finishSync();
+            }
+          }}
+          injectedJavaScriptBeforeContentLoaded={ScraperService.getEarlyInterceptScript()}
+          userAgent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36"
+        />
+      </View>
 
     </View>
   );
