@@ -100,12 +100,11 @@ export default function UpdateModal({
     }
 
     // If "Download Update" is clicked, initiate background download and close modal immediately
-    // so user can freely interact with the app while the floating progress pill shows progress.
     const downloadUrl = updateInfo.apkDownloadUrl;
     const version = updateInfo.latestVersion;
     const size = updateInfo.apkSizeBytes;
 
-    // Immediately dismiss modal
+    // Immediately dismiss modal so user can continue using the app
     onClose();
 
     // Start background download stream
@@ -173,7 +172,7 @@ export default function UpdateModal({
                     <Text style={styles.latestVersionText}>v{updateInfo.latestVersion}</Text>
                   </View>
                   {updateInfo.apkArchitecture === 'arm64-v8a' && (
-                    <View style={[styles.sizeBadge, { backgroundColor: 'rgba(99, 102, 241, 0.15)' }]}>
+                    <View style={[styles.sizeBadge, { backgroundColor: 'rgba(139, 120, 255, 0.15)' }]}>
                       <Ionicons
                         name="hardware-chip-outline"
                         size={11}
@@ -333,12 +332,12 @@ const styles = StyleSheet.create({
     borderColor: Theme.colors.border,
   },
   sheetHandle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    width: 44,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: Theme.colors.border,
     alignSelf: 'center',
-    marginBottom: 16,
+    marginBottom: 14,
   },
   header: {
     flexDirection: 'row',
@@ -350,24 +349,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
+    marginRight: 10,
   },
   iconBadge: {
     width: 44,
     height: 44,
     borderRadius: 14,
-    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+    backgroundColor: 'rgba(139, 120, 255, 0.15)',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
     borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.25)',
+    borderColor: 'rgba(139, 120, 255, 0.3)',
   },
   titleWrapper: {
     flex: 1,
   },
   modalTitle: {
     fontSize: 18,
-    fontWeight: '800',
+    fontWeight: '700',
     color: Theme.colors.textPrimary,
     letterSpacing: -0.3,
   },
@@ -381,16 +381,16 @@ const styles = StyleSheet.create({
   versionBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Theme.colors.surfaceLight,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: Theme.colors.border,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
   },
   currentVersionText: {
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '500',
     color: Theme.colors.textSecondary,
   },
   latestVersionText: {
@@ -401,7 +401,7 @@ const styles = StyleSheet.create({
   sizeBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(168, 85, 247, 0.15)',
+    backgroundColor: 'rgba(165, 180, 252, 0.1)',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 8,
@@ -415,21 +415,21 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: Theme.colors.surfaceLight,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 8,
     borderWidth: 1,
-    borderColor: Theme.colors.border,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
   },
   releaseNameText: {
     fontSize: 14,
-    fontWeight: '700',
-    color: Theme.colors.lavender,
+    fontWeight: '600',
+    color: Theme.colors.textPrimary,
     marginBottom: 10,
   },
   changelogCard: {
-    backgroundColor: Theme.colors.surfaceLight,
+    backgroundColor: Theme.colors.background,
     borderRadius: 14,
     padding: 12,
     marginBottom: 14,
@@ -455,16 +455,16 @@ const styles = StyleSheet.create({
   },
   changelogText: {
     fontSize: 13,
-    lineHeight: 18,
-    color: Theme.colors.textPrimary,
+    lineHeight: 19,
+    color: '#E2DCFF', // Clean pastel lavender on dark background
   },
   progressSection: {
-    backgroundColor: Theme.colors.surfaceLight,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
     borderRadius: 14,
     padding: 12,
     marginBottom: 14,
     borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.3)',
+    borderColor: 'rgba(139, 120, 255, 0.3)',
   },
   progressInfoRow: {
     flexDirection: 'row',
@@ -526,12 +526,22 @@ const styles = StyleSheet.create({
   },
   primaryBtn: {
     backgroundColor: Theme.colors.primary,
+    shadowColor: Theme.colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
   },
   installBtn: {
-    backgroundColor: '#16a34a', // Fresh green
+    backgroundColor: '#16a34a',
+    shadowColor: '#16a34a',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
   },
   downloadingBtn: {
-    backgroundColor: '#4338ca',
+    backgroundColor: 'rgba(139, 120, 255, 0.85)',
   },
   btnRow: {
     flexDirection: 'row',
@@ -546,7 +556,7 @@ const styles = StyleSheet.create({
   tertiaryActionBtn: {
     backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: Theme.colors.border,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
     paddingVertical: 12,
   },
   tertiaryActionBtnText: {
