@@ -533,19 +533,26 @@ export class UpdateService {
           savedSnapJson = await AsyncStorage.getItem(snapKey);
         } catch {}
 
+        let didResume = false;
         if (savedSnapJson) {
           try {
             const savedData = JSON.parse(savedSnapJson);
-            resumable = new FileSystem.DownloadResumable(
-              savedData.url || apkUrl,
-              savedData.fileUri || tempPath,
-              savedData.options || {},
-              progressCallback,
-              savedData.resumeData
-            );
+            const tmpInfo = await FileSystem.getInfoAsync(tempPath);
+            if (tmpInfo.exists && tmpInfo.size && tmpInfo.size > 0 && savedData.resumeData) {
+              resumable = new FileSystem.DownloadResumable(
+                savedData.url || apkUrl,
+                savedData.fileUri || tempPath,
+                savedData.options || {},
+                progressCallback,
+                savedData.resumeData
+              );
+              didResume = true;
+              console.log(`[UpdateService] Resuming download for v${cleanVer} from existing byte offset (${tmpInfo.size} bytes)...`);
+            } else {
+              resumable = FileSystem.createDownloadResumable(apkUrl, tempPath, {}, progressCallback);
+            }
           } catch {
-            await AsyncStorage.removeItem(snapKey);
-            await FileSystem.deleteAsync(tempPath, { idempotent: true });
+            await AsyncStorage.removeItem(snapKey).catch(() => {});
             resumable = FileSystem.createDownloadResumable(apkUrl, tempPath, {}, progressCallback);
           }
         } else {
@@ -554,9 +561,25 @@ export class UpdateService {
 
         this.activeDownloadResumable = resumable;
 
+        // Broadcast initial partial progress if resuming
+        const initialTmpInfo = await FileSystem.getInfoAsync(tempPath).catch(() => null);
+        if (initialTmpInfo && initialTmpInfo.exists && initialTmpInfo.size && expectedSize && expectedSize > 0) {
+          const initialFraction = Math.min(0.99, Math.max(0, initialTmpInfo.size / expectedSize));
+          this.broadcastProgress(initialFraction, expectedSize);
+        }
+
         let downloadResult: FileSystem.FileSystemDownloadResult | undefined;
-        if (savedSnapJson) {
-          downloadResult = await resumable.resumeAsync();
+        if (didResume) {
+          try {
+            downloadResult = await resumable.resumeAsync();
+          } catch (resumeErr) {
+            console.warn('[UpdateService] resumeAsync failed, restarting fresh download stream:', resumeErr);
+            await AsyncStorage.removeItem(snapKey).catch(() => {});
+            await FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
+            resumable = FileSystem.createDownloadResumable(apkUrl, tempPath, {}, progressCallback);
+            this.activeDownloadResumable = resumable;
+            downloadResult = await resumable.downloadAsync();
+          }
         } else {
           downloadResult = await resumable.downloadAsync();
         }
@@ -580,8 +603,8 @@ export class UpdateService {
         });
 
         // Clear resume snapshot & pending metadata on success
-        await AsyncStorage.removeItem(snapKey);
-        await this.clearPendingDownloadMeta();
+        await AsyncStorage.removeItem(snapKey).catch(() => {});
+        await this.clearPendingDownloadMeta().catch(() => {});
 
         // Enforce single-APK retention (clean older versions)
         this.purgeOtherApks(versionTag).catch(() => {});
@@ -602,7 +625,9 @@ export class UpdateService {
         if (this.activeDownloadResumable) {
           try {
             const snap = this.activeDownloadResumable.savable();
-            await AsyncStorage.setItem(snapKey, JSON.stringify(snap));
+            if (snap && snap.resumeData) {
+              await AsyncStorage.setItem(snapKey, JSON.stringify(snap));
+            }
           } catch {}
         }
         throw err;
@@ -680,7 +705,7 @@ export class UpdateService {
 
   /**
    * Automatically prunes all APK files <= current running version,
-   * orphaned .tmp staging files (if not actively downloading),
+   * orphaned .tmp staging files (if obsolete),
    * and ensures storage remains clean after updates.
    */
   public static async autoPruneStorage(currentVersionTag?: string): Promise<void> {
@@ -692,14 +717,21 @@ export class UpdateService {
 
       const files = await FileSystem.readDirectoryAsync(updateDir);
       const isCurrentlyDownloading = this.isDownloading();
-      const activeVersion = this.activeDownloadVersion;
 
       for (const file of files) {
         const filePath = `${updateDir}${file}`;
 
-        // Clean .tmp files only if no active download is currently writing to them
+        // Clean .tmp files only if they belong to an older/current version
         if (file.endsWith('.tmp')) {
-          if (!isCurrentlyDownloading) {
+          const match = file.match(/Project_S-v([0-9.]+)\.apk\.tmp/i);
+          if (match && match[1]) {
+            const fileVersion = match[1];
+            // Only delete if obsolete (already at or above this version)
+            if (!this.isNewerVersion(fileVersion, current)) {
+              await FileSystem.deleteAsync(filePath, { idempotent: true });
+            }
+          } else if (!isCurrentlyDownloading) {
+            // Unrecognized temp file
             await FileSystem.deleteAsync(filePath, { idempotent: true });
           }
           continue;
