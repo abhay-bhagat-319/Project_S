@@ -30,6 +30,7 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      "./plugins/withIiserbSsl",
       "expo-secure-store",
       [
         "expo-notifications",
