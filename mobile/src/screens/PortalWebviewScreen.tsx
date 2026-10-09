@@ -11,6 +11,7 @@ import { CampusConnectionHelper } from '../utils/CampusConnectionHelper';
 
 export interface PortalWebviewHandle {
   handleBackPress: () => boolean;
+  injectJavaScript?: (script: string) => void;
 }
 
 export interface PortalWebviewScreenProps {
@@ -40,6 +41,16 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
   const [progress, setProgress] = useState(0);
   const [isCampusError, setIsCampusError] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
+
+  // Subscribe to reachability: auto-heal when campus Wi-Fi / VPN reconnects
+  useEffect(() => {
+    const unsubscribe = NetworkReachabilityService.subscribe((state) => {
+      if (state === 'CAMPUS_ACTIVE') {
+        setIsCampusError(false);
+      }
+    });
+    return unsubscribe;
+  }, []);
 
   // Register WebView as the authenticated PDF downloader bridge
   useEffect(() => {
@@ -157,6 +168,9 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
       }
       return false;
     },
+    injectJavaScript: (script: string) => {
+      webViewRef.current?.injectJavaScript(script);
+    },
   }), [canGoBack, isCampusError]);
 
   return (
@@ -222,8 +236,38 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
           { marginBottom: Theme.layout.navBarHeight + Math.max(16, insets.bottom + Theme.layout.navBarBaseBottom) + 8 }
         ]}
       >
-        {isCampusError ? (
-          <View style={styles.fallbackContainer}>
+        <WebView
+          ref={webViewRef}
+          source={initialSource}
+          javaScriptEnabled={true}
+          domStorageEnabled={true}
+          sharedCookiesEnabled={true}
+          thirdPartyCookiesEnabled={true}
+          originWhitelist={['*']}
+          scalesPageToFit={true}
+          setBuiltInZoomControls={true}
+          setDisplayZoomControls={false}
+          textZoom={100}
+          showsHorizontalScrollIndicator={true}
+          showsVerticalScrollIndicator={true}
+          allowsInlineMediaPlayback={true}
+          onMessage={handleMessage}
+          onNavigationStateChange={handleNavigationStateChange}
+          onLoadStart={() => {
+            setLoading(true);
+            setProgress(0.1);
+          }}
+          onLoadProgress={({ nativeEvent }) => setProgress(nativeEvent.progress)}
+          onLoadEnd={handleLoadEnd}
+          onError={handleError}
+          onHttpError={handleError}
+          injectedJavaScript={ScraperService.getDesktopViewportScript()}
+          userAgent={DESKTOP_USER_AGENT}
+          style={[styles.webview, isCampusError && { opacity: 0 }]}
+        />
+
+        {isCampusError && (
+          <View style={[styles.fallbackContainer, StyleSheet.absoluteFill, { backgroundColor: Theme.colors.background }]}>
             <View style={styles.fallbackShieldIcon}>
               <Ionicons name="shield-half" size={44} color="#f59e0b" />
             </View>
@@ -283,36 +327,6 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
               </View>
             </View>
           </View>
-        ) : (
-          <WebView
-            ref={webViewRef}
-            source={initialSource}
-            javaScriptEnabled={true}
-            domStorageEnabled={true}
-            sharedCookiesEnabled={true}
-            thirdPartyCookiesEnabled={true}
-            originWhitelist={['*']}
-            scalesPageToFit={true}
-            setBuiltInZoomControls={true}
-            setDisplayZoomControls={false}
-            textZoom={100}
-            showsHorizontalScrollIndicator={true}
-            showsVerticalScrollIndicator={true}
-            allowsInlineMediaPlayback={true}
-            onMessage={handleMessage}
-            onNavigationStateChange={handleNavigationStateChange}
-            onLoadStart={() => {
-              setLoading(true);
-              setProgress(0.1);
-            }}
-            onLoadProgress={({ nativeEvent }) => setProgress(nativeEvent.progress)}
-            onLoadEnd={handleLoadEnd}
-            onError={handleError}
-            onHttpError={handleError}
-            injectedJavaScript={ScraperService.getDesktopViewportScript()}
-            userAgent={DESKTOP_USER_AGENT}
-            style={styles.webview}
-          />
         )}
       </View>
     </View>

@@ -95,6 +95,7 @@ function AppContent() {
   // Re-authentication Credentials
   const [credentials, setCredentials] = useState<{ username: string; password: string } | null>(null);
   const [authUrl, setAuthUrl] = useState('https://shiksha.iiserb.ac.in/login/');
+  const [authKey, setAuthKey] = useState<number>(0);
 
   const authWebViewRef = useRef<WebView>(null);
 
@@ -104,22 +105,37 @@ function AppContent() {
   const portalWebviewRef = useRef<PortalWebviewHandle>(null);
   const lastBackPressRef = useRef<number>(0);
 
-  // Register Auth & Session Lifecycle Adapter
+  // Register Auth & Session Lifecycle Adapter + Root PDF Downloader
   useEffect(() => {
     const unregisterAuth = SessionLifecycleManager.registerAdapter({
       loadUrl: (url: string) => {
         setAuthUrl(url);
+        setAuthKey((k) => k + 1);
         authWebViewRef.current?.injectJavaScript(`window.location.href = ${JSON.stringify(url)}; true;`);
       },
       injectScript: (script: string) => {
         authWebViewRef.current?.injectJavaScript(script);
       },
       reload: () => {
+        setAuthKey((k) => k + 1);
         authWebViewRef.current?.reload();
       },
     });
+
+    const unregisterPdf = ReportsService.registerPdfDownloader((fileUrl, reportId) => {
+      const pendingPromise = ReportsService.createPendingPdfDownload(reportId);
+      const script = ScraperService.getPdfDownloadScript(fileUrl, reportId);
+      if (portalWebviewRef.current?.injectJavaScript) {
+        portalWebviewRef.current.injectJavaScript(script);
+      } else if (authWebViewRef.current) {
+        authWebViewRef.current.injectJavaScript(script);
+      }
+      return pendingPromise;
+    });
+
     return () => {
       unregisterAuth();
+      unregisterPdf();
     };
   }, []);
 
@@ -376,7 +392,17 @@ function AppContent() {
         const failedState = await NetworkReachabilityService.recordFailure('Sync timed out');
         finishSync();
         if (isUserInitiated) {
-          if (failedState === 'EXTERNAL_ONLINE') {
+          if (failedState === 'CAMPUS_CAPTIVE') {
+            Alert.alert(
+              'Wi-Fi Sign-in Required',
+              'Connected to campus Wi-Fi, but captive portal login is required to access Shiksha.',
+              [
+                { text: 'Sign In to Wi-Fi', onPress: () => CampusConnectionHelper.openCaptivePortal() },
+                { text: 'Wi-Fi Settings', onPress: () => CampusConnectionHelper.openWifiSettings() },
+                { text: 'OK', style: 'cancel' },
+              ]
+            );
+          } else if (failedState === 'EXTERNAL_ONLINE') {
             Alert.alert(
               'Campus Network Required',
               'Sync timed out. Please check your connection to IISERB Wi-Fi or FortiClient VPN (gateway.iiserb.ac.in).',
@@ -596,10 +622,14 @@ function AppContent() {
         setSyncUrl(targetUrl);
         syncWebViewRef.current?.injectJavaScript(`window.location.href = ${JSON.stringify(targetUrl)}; true;`);
       } else {
-        console.warn('[PortalSyncEngine] Silent session recovery failed. Portal credentials may have changed.');
+        console.warn('[PortalSyncEngine] Silent session recovery failed. Checking network reachability before state change...');
         isRecoveringSession.current = false;
         finishSync();
-        setAppState('NEEDS_LOGIN');
+        const net = await NetworkReachabilityService.getNetworkState();
+        if (net === 'CAMPUS_ACTIVE') {
+          // Only de-auth if campus network is active and server explicitly rejected credentials
+          setAppState('NEEDS_LOGIN');
+        }
       }
     } catch (e) {
       console.warn('[PortalSyncEngine] Error during silent recovery:', e);
@@ -939,8 +969,10 @@ function AppContent() {
             ) : subScreen === 'reports' ? (
               <ReportsScreen 
                 onBack={() => setSubScreen(null)} 
-                onRefreshPortal={() => startSync('REPORTS')}
+                onRefreshPortal={() => startSync('REPORTS', undefined, true)}
                 isSyncing={syncActive && syncScope === 'REPORTS'}
+                networkState={networkState}
+                isOffline={isOffline}
               />
             ) : (
               <DashboardScreen 
@@ -1131,6 +1163,7 @@ function AppContent() {
         pointerEvents="none"
       >
         <WebView
+          key={`auth_wv_${authKey}`}
           ref={authWebViewRef}
           source={{ uri: authUrl }}
           javaScriptEnabled={true}
@@ -1143,6 +1176,9 @@ function AppContent() {
           onMessage={(e) => {
             try {
               const data = JSON.parse(e.nativeEvent.data);
+              if (ReportsService.handlePdfMessage(data)) {
+                return;
+              }
               SessionLifecycleManager.handleWebViewMessage(data);
             } catch (err) {}
           }}
@@ -1187,16 +1223,28 @@ function AppContent() {
               console.warn('Sync WebView error:', e.nativeEvent.description);
               const failedState = await NetworkReachabilityService.recordFailure(e.nativeEvent.description);
               finishSync();
-              if (failedState === 'EXTERNAL_ONLINE' && syncActive) {
-                Alert.alert(
-                  'Campus Network Required',
-                  'Cannot reach Shiksha portal. Please ensure you are connected to IISERB Wi-Fi or FortiClient VPN (gateway.iiserb.ac.in).',
-                  [
-                    { text: 'Launch FortiClient', onPress: () => CampusConnectionHelper.launchFortiClient() },
-                    { text: 'Wi-Fi Settings', onPress: () => CampusConnectionHelper.openWifiSettings() },
-                    { text: 'OK', style: 'cancel' },
-                  ]
-                );
+              if (syncActive) {
+                if (failedState === 'CAMPUS_CAPTIVE') {
+                  Alert.alert(
+                    'Wi-Fi Sign-in Required',
+                    'Connected to campus Wi-Fi, but captive portal login is required to reach Shiksha.',
+                    [
+                      { text: 'Sign In to Wi-Fi', onPress: () => CampusConnectionHelper.openCaptivePortal() },
+                      { text: 'Wi-Fi Settings', onPress: () => CampusConnectionHelper.openWifiSettings() },
+                      { text: 'OK', style: 'cancel' },
+                    ]
+                  );
+                } else if (failedState === 'EXTERNAL_ONLINE') {
+                  Alert.alert(
+                    'Campus Network Required',
+                    'Cannot reach Shiksha portal. Please ensure you are connected to IISERB Wi-Fi or FortiClient VPN (gateway.iiserb.ac.in).',
+                    [
+                      { text: 'Launch FortiClient', onPress: () => CampusConnectionHelper.launchFortiClient() },
+                      { text: 'Wi-Fi Settings', onPress: () => CampusConnectionHelper.openWifiSettings() },
+                      { text: 'OK', style: 'cancel' },
+                    ]
+                  );
+                }
               }
             }}
             onHttpError={async (e) => {
