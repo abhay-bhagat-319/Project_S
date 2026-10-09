@@ -237,12 +237,14 @@ function AppContent() {
     // Listen to AppState active events for cold/background resumption
     const appStateSubscription = RNAppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'active') {
-        UpdateService.resumePendingDownloadIfAny().catch(() => {});
-        checkAppUpdates();
+        if (!UpdateService.isDownloading()) {
+          UpdateService.resumePendingDownloadIfAny().catch(() => {});
+        }
+        checkAppUpdates(false);
       }
     });
 
-    checkAppUpdates();
+    checkAppUpdates(true);
 
     return () => {
       unsubscribeNotification();
@@ -252,7 +254,18 @@ function AppContent() {
     };
   }, []);
 
-  const checkAppUpdates = async () => {
+  const lastUpdateCheckRef = useRef<number>(0);
+
+  const checkAppUpdates = async (force = false) => {
+    const now = Date.now();
+    if (!force && now - lastUpdateCheckRef.current < 15 * 60 * 1000) {
+      if (!UpdateService.isDownloading()) {
+        UpdateService.resumePendingDownloadIfAny().catch(() => {});
+      }
+      return;
+    }
+    lastUpdateCheckRef.current = now;
+
     try {
       const info = await UpdateService.checkForUpdate();
       if (info.hasUpdate) {
@@ -386,6 +399,37 @@ function AppContent() {
     }
   };
 
+  const dispatchScraperForCurrentScope = (targetUrl: string) => {
+    const knownRoll = profileData?.roll || credentials?.username || '';
+    if (targetUrl.includes('/secure/studentMyCourses')) {
+      if (syncScopeRef.current === 'COURSES') {
+        console.log('[PortalSyncEngine] Injected courses metadata scraper (dynamic polling).');
+        syncWebViewRef.current?.injectJavaScript(ScraperService.getCoursesScraperScript());
+      } else if (syncScopeRef.current === 'MARKS') {
+        console.log('[PortalSyncEngine] Injected priority marks scraper (dynamic polling).');
+        const allCodes = courses.map((c) => c.courseCode);
+        syncWebViewRef.current?.injectJavaScript(
+          ScraperService.getCourseMarksScraperScript(priorityCourseCodeRef.current, allCodes, knownRoll)
+        );
+      } else {
+        console.log('[PortalSyncEngine] Injected attendance scraper (dynamic polling).');
+        syncWebViewRef.current?.injectJavaScript(ScraperService.getAttendanceScraperScript(knownRoll));
+      }
+    } else if (targetUrl.includes('/secure/studentReports')) {
+      console.log('[PortalSyncEngine] Injected reports scraper (dynamic polling).');
+      syncWebViewRef.current?.injectJavaScript(ScraperService.getReportsScraperScript());
+    } else if (targetUrl.includes('/secure/studenthome')) {
+      if (syncScopeRef.current === 'ATTENDANCE' || syncScopeRef.current === 'COURSES' || syncScopeRef.current === 'MARKS') {
+        syncWebViewRef.current?.injectJavaScript(`window.location.href = "https://shiksha.iiserb.ac.in/secure/studentMyCourses"; true;`);
+      } else if (syncScopeRef.current === 'REPORTS') {
+        syncWebViewRef.current?.injectJavaScript(`window.location.href = "https://shiksha.iiserb.ac.in/secure/studentReports"; true;`);
+      } else {
+        console.log('[PortalSyncEngine] Injected profile scraper (dynamic polling).');
+        syncWebViewRef.current?.injectJavaScript(ScraperService.getProfileScraperScript());
+      }
+    }
+  };
+
   const startSync = async (scope: SyncScope = 'ALL', priorityCourseCode?: string, isUserInitiated = false): Promise<void> => {
     const creds = await SecureStorageService.getCredentials();
     if (!creds) {
@@ -408,17 +452,22 @@ function AppContent() {
       if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
       syncTimeoutRef.current = setTimeout(async () => {
         console.log(`Sync timed out after 30s [scope: ${syncScopeRef.current}]`);
-        const isReachable = await NetworkReachabilityService.isShikshaReachable(2500);
+        const isReachable = await NetworkReachabilityService.isShikshaReachable(3000);
+        finishSync();
+
         if (isReachable) {
-          // Shiksha IS reachable on campus Wi-Fi, but the session was slow or needed re-auth
-          console.log('[PortalSyncEngine] Shiksha is reachable. Attempting silent session recovery on timeout...');
-          finishSync();
-          handleSessionRecoveryAndRetry().catch(() => {});
+          // Shiksha IS reachable on campus Wi-Fi, but the portal session was slow or needed a retry
+          console.log('[PortalSyncEngine] Shiksha host is reachable on intranet. Preserving CAMPUS_ACTIVE state.');
+          if (isUserInitiated) {
+            Alert.alert(
+              'Portal Busy',
+              'The Shiksha portal took too long to respond. Your cached attendance and grades are preserved. Please try refreshing again in a few moments.'
+            );
+          }
           return;
         }
 
-        const failedState = await NetworkReachabilityService.recordFailure('Sync timed out');
-        finishSync();
+        const failedState = await NetworkReachabilityService.recordFailure('Sync timed out and host unreachable');
         if (isUserInitiated) {
           if (failedState === 'EXTERNAL_ONLINE') {
             Alert.alert(
@@ -445,7 +494,15 @@ function AppContent() {
       }
 
       setSyncUrl(targetUrl);
-      syncWebViewRef.current?.injectJavaScript(`window.location.href = ${JSON.stringify(targetUrl)}; true;`);
+
+      // If the WebView is already on the target URL, trigger scraper injection directly and force reload
+      if (syncCurrentUrl.current === targetUrl || (syncCurrentUrl.current && syncCurrentUrl.current.includes(targetUrl.replace('https://shiksha.iiserb.ac.in', '')))) {
+        console.log(`[PortalSyncEngine] WebView already on target URL [${targetUrl}], dispatching scraper directly and reloading...`);
+        dispatchScraperForCurrentScope(targetUrl);
+        syncWebViewRef.current?.reload();
+      } else {
+        syncWebViewRef.current?.injectJavaScript(`window.location.href = ${JSON.stringify(targetUrl)}; true;`);
+      }
     });
   };
 
@@ -682,37 +739,7 @@ function AppContent() {
       NetworkReachabilityService.recordSuccess();
       setNetworkState('CAMPUS_ACTIVE');
       setIsOffline(false);
-    }
-
-    if (url.includes('/secure/studenthome')) {
-      if (syncScopeRef.current === 'ATTENDANCE' || syncScopeRef.current === 'COURSES' || syncScopeRef.current === 'MARKS') {
-        // Redirect directly if landed on home after auth but requested courses/attendance/marks
-        syncWebViewRef.current?.injectJavaScript(`window.location.href = "https://shiksha.iiserb.ac.in/secure/studentMyCourses"; true;`);
-      } else if (syncScopeRef.current === 'REPORTS') {
-        // Redirect directly if landed on home after auth but requested reports
-        syncWebViewRef.current?.injectJavaScript(`window.location.href = "https://shiksha.iiserb.ac.in/secure/studentReports"; true;`);
-      } else {
-        console.log('Injected profile scraper (dynamic polling).');
-        syncWebViewRef.current?.injectJavaScript(ScraperService.getProfileScraperScript());
-      }
-    } else if (url.includes('/secure/studentMyCourses')) {
-      const knownRoll = profileData?.roll || credentials?.username || '';
-      if (syncScopeRef.current === 'COURSES') {
-        console.log('Injected courses metadata scraper (dynamic polling).');
-        syncWebViewRef.current?.injectJavaScript(ScraperService.getCoursesScraperScript());
-      } else if (syncScopeRef.current === 'MARKS') {
-        console.log('Injected priority marks scraper (dynamic polling).');
-        const allCodes = courses.map((c) => c.courseCode);
-        syncWebViewRef.current?.injectJavaScript(
-          ScraperService.getCourseMarksScraperScript(priorityCourseCodeRef.current, allCodes, knownRoll)
-        );
-      } else {
-        console.log('Injected attendance scraper (dynamic polling).');
-        syncWebViewRef.current?.injectJavaScript(ScraperService.getAttendanceScraperScript(knownRoll));
-      }
-    } else if (url.includes('/secure/studentReports')) {
-      console.log('Injected reports scraper (dynamic polling).');
-      syncWebViewRef.current?.injectJavaScript(ScraperService.getReportsScraperScript());
+      dispatchScraperForCurrentScope(url);
     }
   };
 
