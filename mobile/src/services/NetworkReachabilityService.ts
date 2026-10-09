@@ -91,9 +91,9 @@ export class NetworkReachabilityService {
   /**
    * Fast probe to verify if the Shiksha intranet is directly reachable (Active Wi-Fi or VPN)
    */
-  public static async isShikshaReachable(timeoutMs = 3500): Promise<boolean> {
-    // If verified within the last 45 seconds, assume still reachable
-    if (Date.now() - this.lastSuccessfulPingTime < 45000 && this.currentState === 'CAMPUS_ACTIVE') {
+  public static async isShikshaReachable(timeoutMs = 3500, force = false): Promise<boolean> {
+    // If verified within the last 45 seconds, assume still reachable (unless force probe requested)
+    if (!force && Date.now() - this.lastSuccessfulPingTime < 45000 && this.currentState === 'CAMPUS_ACTIVE') {
       return true;
     }
 
@@ -163,23 +163,25 @@ export class NetworkReachabilityService {
   }
 
   /**
-   * Resolves the 3-tier network classification:
+   * Resolves the 3-tier network classification and broadcasts the result to all subscribers:
    * - 'CAMPUS_ACTIVE': Connected to IISERB Wi-Fi or active VPN (Shiksha responds)
    * - 'EXTERNAL_ONLINE': Connected to public internet, but Shiksha is unreachable (Needs Wi-Fi / VPN)
    * - 'OFFLINE': No internet connection whatsoever
    */
-  public static async getNetworkState(): Promise<NetworkState> {
-    const isShikshaUp = await this.isShikshaReachable(3000);
+  public static async getNetworkState(force = false): Promise<NetworkState> {
+    const isShikshaUp = await this.isShikshaReachable(3000, force);
+    let resolvedState: NetworkState = 'OFFLINE';
+
     if (isShikshaUp) {
-      return 'CAMPUS_ACTIVE';
+      resolvedState = 'CAMPUS_ACTIVE';
+      this.recordSuccess();
+    } else {
+      const isPublicUp = await this.isPublicInternetReachable(2000);
+      resolvedState = isPublicUp ? 'EXTERNAL_ONLINE' : 'OFFLINE';
+      this.notifyListeners(resolvedState);
     }
 
-    const isPublicUp = await this.isPublicInternetReachable(2000);
-    if (isPublicUp) {
-      return 'EXTERNAL_ONLINE';
-    }
-
-    return 'OFFLINE';
+    return resolvedState;
   }
 
   public static getCurrentState(): NetworkState {

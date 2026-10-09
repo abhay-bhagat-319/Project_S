@@ -231,12 +231,18 @@ function AppContent() {
         UpdateService.resumePendingDownloadIfAny().catch(() => {});
       } else if (state === 'OFFLINE') {
         setIsOffline(true);
+      } else if (state === 'EXTERNAL_ONLINE') {
+        setIsOffline(false);
       }
     });
 
-    // Listen to AppState active events for cold/background resumption
+    // Proactively probe network state on app launch
+    NetworkReachabilityService.getNetworkState(true).catch(() => {});
+
+    // Listen to AppState active events for cold/background resumption & reachability sync
     const appStateSubscription = RNAppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'active') {
+        NetworkReachabilityService.getNetworkState(false).catch(() => {});
         if (!UpdateService.isDownloading()) {
           UpdateService.resumePendingDownloadIfAny().catch(() => {});
         }
@@ -509,6 +515,7 @@ function AppContent() {
   const handleManualRefresh = async (scope: SyncScope = 'ATTENDANCE') => {
     setSyncScope(scope);
     setRefreshing(true);
+    NetworkReachabilityService.getNetworkState(true).catch(() => {});
     try {
       await startSync(scope, undefined, true);
     } finally {
@@ -693,10 +700,9 @@ function AppContent() {
         setSyncUrl(targetUrl);
         syncWebViewRef.current?.injectJavaScript(`window.location.href = ${JSON.stringify(targetUrl)}; true;`);
       } else {
-        console.warn('[PortalSyncEngine] Silent session recovery failed. Portal credentials may have changed.');
+        console.warn('[PortalSyncEngine] Silent session recovery could not connect. Preserving offline cached data.');
         isRecoveringSession.current = false;
         finishSync();
-        setAppState('NEEDS_LOGIN');
       }
     } catch (e) {
       console.warn('[PortalSyncEngine] Error during silent recovery:', e);
