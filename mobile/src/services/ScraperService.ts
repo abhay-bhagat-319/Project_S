@@ -1353,10 +1353,10 @@ export const ScraperService = {
                   sem: sem,
                   annotation: annotation,
                   file: fileUrl,
-                  show: r.show == true
+                  show: r.show !== false && r.show !== 'false' && r.show !== 0
                 };
               }).filter(function(r) {
-                return r.show == true && r.file && r.file.indexOf('.pdf') !== -1;
+                return r.show !== false && r.file && (r.file.indexOf('.pdf') !== -1 || r.file.indexOf('report') !== -1);
               });
 
               window.ReactNativeWebView.postMessage(JSON.stringify({

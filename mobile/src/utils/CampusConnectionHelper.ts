@@ -60,4 +60,29 @@ export class CampusConnectionHelper {
       }
     }
   }
+
+  /**
+   * Opens system browser to initiate campus Wi-Fi captive portal authentication
+   */
+  public static async openCaptivePortal(): Promise<void> {
+    const urls = [
+      'https://gateway.iiserb.ac.in:8090',
+      'http://neverssl.com',
+      'http://connectivitycheck.gstatic.com/generate_204',
+    ];
+    for (const url of urls) {
+      try {
+        const can = await Linking.canOpenURL(url);
+        if (can) {
+          await Linking.openURL(url);
+          return;
+        }
+      } catch {
+        // Try next
+      }
+    }
+    try {
+      await Linking.openURL('http://neverssl.com');
+    } catch {}
+  }
 }

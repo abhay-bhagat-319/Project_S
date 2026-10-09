@@ -211,7 +211,8 @@ export default function AttendanceScreen({
 
   const recordsList = selectedCourse ? getFilteredRecords(selectedCourse.records) : [];
 
-  const isCompleteOffline = networkState === 'OFFLINE' || (isOffline && networkState !== 'EXTERNAL_ONLINE' && networkState !== 'CAMPUS_ACTIVE');
+  const isCompleteOffline = networkState === 'OFFLINE' || (isOffline && networkState !== 'EXTERNAL_ONLINE' && networkState !== 'CAMPUS_ACTIVE' && networkState !== 'CAMPUS_CAPTIVE');
+  const isCaptive = networkState === 'CAMPUS_CAPTIVE';
   const isExternalOnline = networkState === 'EXTERNAL_ONLINE';
 
   return (
@@ -220,6 +221,11 @@ export default function AttendanceScreen({
         <View style={styles.offlineBanner}>
           <Ionicons name="cloud-offline-outline" size={15} color="#ffffff" />
           <Text style={styles.bannerText}>No internet connection. Viewing offline cache.</Text>
+        </View>
+      ) : isCaptive ? (
+        <View style={styles.campusBanner}>
+          <Ionicons name="warning-outline" size={14} color="#f59e0b" />
+          <Text style={styles.campusBannerText}>Wi-Fi Sign-in Required • Log in to captive portal to refresh</Text>
         </View>
       ) : isExternalOnline ? (
         <View style={styles.campusBanner}>

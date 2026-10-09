@@ -1,4 +1,6 @@
-export type NetworkState = 'CAMPUS_ACTIVE' | 'EXTERNAL_ONLINE' | 'OFFLINE';
+import { AppState, AppStateStatus } from 'react-native';
+
+export type NetworkState = 'CAMPUS_ACTIVE' | 'CAMPUS_CAPTIVE' | 'EXTERNAL_ONLINE' | 'OFFLINE';
 
 export interface CampusGatewayConfig {
   server: string;
@@ -22,14 +24,13 @@ const BROWSER_HEADERS = {
 
 /**
  * Service governing network reachability, campus intranet detection,
- * and gateway accessibility for the IISER Bhopal Shiksha portal.
+ * captive portal authentication state, and gateway accessibility for the IISER Bhopal Shiksha portal.
  */
 export class NetworkReachabilityService {
   private static SHIKSHA_PING_URLS = [
     'https://shiksha.iiserb.ac.in/login/',
     'https://shiksha.iiserb.ac.in/favicon.ico',
     'https://shiksha.iiserb.ac.in/',
-    'http://shiksha.iiserb.ac.in/login/',
   ];
   private static PUBLIC_PING_URLS = [
     'https://connectivitycheck.gstatic.com/generate_204',
@@ -40,6 +41,22 @@ export class NetworkReachabilityService {
   private static currentState: NetworkState = 'CAMPUS_ACTIVE';
   private static lastSuccessfulPingTime = 0;
   private static listeners: Set<(state: NetworkState) => void> = new Set();
+  private static isAppStateListenerAttached = false;
+
+  static {
+    // Automatically attach AppState listener when service class loads
+    if (!NetworkReachabilityService.isAppStateListenerAttached) {
+      NetworkReachabilityService.isAppStateListenerAttached = true;
+      try {
+        AppState.addEventListener('change', (nextState: AppStateStatus) => {
+          if (nextState === 'active') {
+            // Re-probe immediately when user switches back to the app (e.g. from FortiClient or Wi-Fi settings)
+            NetworkReachabilityService.getNetworkState().catch(() => {});
+          }
+        });
+      } catch {}
+    }
+  }
 
   /**
    * Subscribe to network state changes across the application
@@ -67,6 +84,21 @@ export class NetworkReachabilityService {
   }
 
   /**
+   * Checks whether a response URL or location indicates an unauthenticated Wi-Fi captive portal
+   */
+  private static isCaptivePortalRedirect(url?: string): boolean {
+    if (!url) return false;
+    const lower = url.toLowerCase();
+    return (
+      lower.includes('172.16.') ||
+      lower.includes(':8090') ||
+      lower.includes('fgtauth') ||
+      (lower.includes('portal') && !lower.includes('shiksha')) ||
+      (lower.includes('login') && lower.includes('gateway.iiserb.ac.in'))
+    );
+  }
+
+  /**
    * Records a confirmed successful campus intranet connection from any WebView or HTTP response
    */
   public static recordSuccess(): void {
@@ -82,71 +114,122 @@ export class NetworkReachabilityService {
    */
   public static async recordFailure(reason?: string): Promise<NetworkState> {
     console.log(`[NetworkReachabilityService] Intranet unreachable: ${reason || 'Unknown error'}`);
-    const isPublicUp = await this.isPublicInternetReachable(2500);
-    const newState: NetworkState = isPublicUp ? 'EXTERNAL_ONLINE' : 'OFFLINE';
-    this.notifyListeners(newState);
-    return newState;
+    return await this.getNetworkState();
   }
 
   /**
-   * Fast probe to verify if the Shiksha intranet is directly reachable (Active Wi-Fi or VPN)
+   * Fast parallel probe to determine whether the Shiksha intranet is directly reachable,
+   * intercepted by a captive portal, or unreachable.
    */
-  public static async isShikshaReachable(timeoutMs = 3500): Promise<boolean> {
+  public static async probeIntranet(timeoutMs = 2000): Promise<'CAMPUS_ACTIVE' | 'CAMPUS_CAPTIVE' | 'UNREACHABLE'> {
     // If verified within the last 45 seconds, assume still reachable
     if (Date.now() - this.lastSuccessfulPingTime < 45000 && this.currentState === 'CAMPUS_ACTIVE') {
-      return true;
+      return 'CAMPUS_ACTIVE';
     }
 
-    for (const url of this.SHIKSHA_PING_URLS) {
+    const probeSingle = async (url: string): Promise<'CAMPUS_ACTIVE' | 'CAMPUS_CAPTIVE'> => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
         const res = await fetch(url, {
           method: 'GET',
           headers: BROWSER_HEADERS,
           signal: controller.signal,
         });
         clearTimeout(timer);
-        // Any HTTP response (including 200, 301, 302, 401, 403, 404, 500) confirms Shiksha host is reached
-        if (res && res.status > 0) {
-          this.recordSuccess();
-          return true;
+
+        if (this.isCaptivePortalRedirect(res.url)) {
+          return 'CAMPUS_CAPTIVE';
         }
-      } catch {
-        // Try next fallback URL
+
+        if (res.status > 0) {
+          return 'CAMPUS_ACTIVE';
+        }
+        throw new Error('No status');
+      } catch (err) {
+        clearTimeout(timer);
+        throw err;
       }
+    };
+
+    try {
+      // Concurrently race endpoints for lowest latency (< 250ms on campus Wi-Fi)
+      const result = await Promise.any(
+        this.SHIKSHA_PING_URLS.map((url) => probeSingle(url))
+      );
+      if (result === 'CAMPUS_ACTIVE') {
+        this.recordSuccess();
+        return 'CAMPUS_ACTIVE';
+      }
+      if (result === 'CAMPUS_CAPTIVE') {
+        this.notifyListeners('CAMPUS_CAPTIVE');
+        return 'CAMPUS_CAPTIVE';
+      }
+    } catch {
+      // All intranet probes timed out or rejected
     }
-    return false;
+
+    return 'UNREACHABLE';
   }
 
   /**
-   * Fast probe to verify if general public internet is reachable
+   * Fast probe to verify if the Shiksha intranet is directly reachable
    */
-  public static async isPublicInternetReachable(timeoutMs = 2500): Promise<boolean> {
-    for (const url of this.PUBLIC_PING_URLS) {
+  public static async isShikshaReachable(timeoutMs = 2000): Promise<boolean> {
+    const status = await this.probeIntranet(timeoutMs);
+    return status === 'CAMPUS_ACTIVE';
+  }
+
+  /**
+   * Fast probe to verify if general public internet is reachable and not captive-hijacked
+   */
+  public static async isPublicInternetReachable(timeoutMs = 2000): Promise<'ONLINE' | 'CAMPUS_CAPTIVE' | 'OFFLINE'> {
+    const probePublic = async (url: string): Promise<'ONLINE' | 'CAMPUS_CAPTIVE'> => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
         const res = await fetch(url, {
           method: 'GET',
           headers: BROWSER_HEADERS,
           signal: controller.signal,
         });
         clearTimeout(timer);
-        if (res && res.status > 0) {
-          return true;
+
+        if (this.isCaptivePortalRedirect(res.url)) {
+          return 'CAMPUS_CAPTIVE';
         }
-      } catch {
-        // Try next
+
+        if (url.includes('generate_204')) {
+          if (res.status === 204) {
+            return 'ONLINE';
+          }
+          return 'CAMPUS_CAPTIVE';
+        }
+
+        if (res.status > 0) {
+          return 'ONLINE';
+        }
+        throw new Error('No response');
+      } catch (err) {
+        clearTimeout(timer);
+        throw err;
       }
+    };
+
+    try {
+      const result = await Promise.any(
+        this.PUBLIC_PING_URLS.map((url) => probePublic(url))
+      );
+      return result;
+    } catch {
+      return 'OFFLINE';
     }
-    return false;
   }
 
   /**
    * Probes whether the FortiGate VPN gateway endpoint is reachable
    */
-  public static async isGatewayReachable(timeoutMs = 3000): Promise<boolean> {
+  public static async isGatewayReachable(timeoutMs = 2500): Promise<boolean> {
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -163,22 +246,33 @@ export class NetworkReachabilityService {
   }
 
   /**
-   * Resolves the 3-tier network classification:
+   * Resolves the 4-tier network classification:
    * - 'CAMPUS_ACTIVE': Connected to IISERB Wi-Fi or active VPN (Shiksha responds)
+   * - 'CAMPUS_CAPTIVE': Connected to campus Wi-Fi, but blocked by captive portal login
    * - 'EXTERNAL_ONLINE': Connected to public internet, but Shiksha is unreachable (Needs Wi-Fi / VPN)
    * - 'OFFLINE': No internet connection whatsoever
    */
   public static async getNetworkState(): Promise<NetworkState> {
-    const isShikshaUp = await this.isShikshaReachable(3000);
-    if (isShikshaUp) {
+    const intranetStatus = await this.probeIntranet(2000);
+    if (intranetStatus === 'CAMPUS_ACTIVE') {
       return 'CAMPUS_ACTIVE';
     }
+    if (intranetStatus === 'CAMPUS_CAPTIVE') {
+      this.notifyListeners('CAMPUS_CAPTIVE');
+      return 'CAMPUS_CAPTIVE';
+    }
 
-    const isPublicUp = await this.isPublicInternetReachable(2000);
-    if (isPublicUp) {
+    const publicStatus = await this.isPublicInternetReachable(2000);
+    if (publicStatus === 'CAMPUS_CAPTIVE') {
+      this.notifyListeners('CAMPUS_CAPTIVE');
+      return 'CAMPUS_CAPTIVE';
+    }
+    if (publicStatus === 'ONLINE') {
+      this.notifyListeners('EXTERNAL_ONLINE');
       return 'EXTERNAL_ONLINE';
     }
 
+    this.notifyListeners('OFFLINE');
     return 'OFFLINE';
   }
 
@@ -186,4 +280,5 @@ export class NetworkReachabilityService {
     return this.currentState;
   }
 }
+
 

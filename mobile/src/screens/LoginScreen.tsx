@@ -139,6 +139,46 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
           </View>
         )}
 
+        {/* Captive Portal Authentication Banner */}
+        {networkState === 'CAMPUS_CAPTIVE' && (
+          <View style={[styles.campusNoticeCard, { borderColor: 'rgba(239, 68, 68, 0.3)', backgroundColor: 'rgba(239, 68, 68, 0.08)' }]}>
+            <View style={styles.campusNoticeHeader}>
+              <Ionicons name="warning" size={20} color="#ef4444" style={{ marginRight: 8 }} />
+              <Text style={[styles.campusNoticeTitle, { color: '#ef4444' }]}>Wi-Fi Sign-in Required</Text>
+            </View>
+            <Text style={styles.campusNoticeText}>
+              You are connected to IISERB Wi-Fi, but captive portal login is required to access the Shiksha intranet.
+            </Text>
+            <View style={styles.campusNoticeActions}>
+              <TouchableOpacity 
+                style={[styles.vpnActionBtn, { backgroundColor: '#ef4444' }]} 
+                onPress={() => CampusConnectionHelper.openCaptivePortal()}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="open-outline" size={15} color="#ffffff" style={{ marginRight: 5 }} />
+                <Text style={styles.vpnActionBtnText}>Sign In to Wi-Fi</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={styles.wifiActionBtn} 
+                onPress={() => CampusConnectionHelper.openWifiSettings()}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="wifi" size={15} color={Theme.colors.textPrimary} style={{ marginRight: 5 }} />
+                <Text style={styles.wifiActionBtnText}>Wi-Fi</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={styles.recheckBtn} 
+                onPress={refreshNetworkStatus}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="refresh" size={15} color={Theme.colors.primary} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         <View style={styles.form}>
           <Text style={styles.label}>LDAP Username</Text>
           <View style={styles.inputContainer}>

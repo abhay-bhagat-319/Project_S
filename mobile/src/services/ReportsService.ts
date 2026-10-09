@@ -2,6 +2,8 @@ import { Platform, Linking } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { CacheService, ReportItem } from './CacheService';
+import { NetworkReachabilityService } from './NetworkReachabilityService';
+import { SessionLifecycleManager } from './SessionLifecycleManager';
 
 export type PdfDownloaderFn = (fileUrl: string, reportId: string) => Promise<string>;
 
@@ -151,7 +153,7 @@ export class ReportsService {
 
       // Sanitize cached list: only include student-visible reports with valid PDF URLs
       const validReports = cachedList.filter(
-        (item) => item.show === true && item.file && (item.file.toLowerCase().includes('.pdf') || /\.pdf($|\?)/i.test(item.file))
+        (item) => item.show !== false && item.file && (item.file.toLowerCase().includes('.pdf') || /\.pdf($|\?)/i.test(item.file) || item.file.toLowerCase().includes('report'))
       );
 
       if (validReports.length !== cachedList.length) {
@@ -211,15 +213,36 @@ export class ReportsService {
       }
     }
 
+    // Pre-flight reachability check
+    const isShikshaUp = await NetworkReachabilityService.isShikshaReachable(2000);
+    if (!isShikshaUp) {
+      const netState = NetworkReachabilityService.getCurrentState();
+      if (netState === 'CAMPUS_CAPTIVE') {
+        throw new Error('Campus Wi-Fi sign-in required. Please complete captive portal login before downloading reports.');
+      }
+      throw new Error('Campus network required. Please connect to IISERB Wi-Fi or FortiClient VPN (gateway.iiserb.ac.in).');
+    }
+
     if (onProgress) onProgress(0.2);
 
     let base64Data: string | null = null;
     if (this.pdfDownloader) {
-      base64Data = await this.pdfDownloader(report.file, report.id);
+      try {
+        base64Data = await this.pdfDownloader(report.file, report.id);
+      } catch (firstErr: any) {
+        console.log('[ReportsService] PDF download attempt failed, attempting silent session re-authentication:', firstErr?.message);
+        const reauthed = await SessionLifecycleManager.silentReauthenticate();
+        if (reauthed && this.pdfDownloader) {
+          console.log('[ReportsService] Session refreshed successfully! Retrying PDF download...');
+          base64Data = await this.pdfDownloader(report.file, report.id);
+        } else {
+          throw firstErr;
+        }
+      }
     }
 
     if (!base64Data) {
-      throw new Error('WebView session not available to download report PDF.');
+      throw new Error('WebView session not available to download report PDF. Please refresh reports from campus Wi-Fi.');
     }
 
     if (!base64Data.trim().startsWith('JVBER')) {

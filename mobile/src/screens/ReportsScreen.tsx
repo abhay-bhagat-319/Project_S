@@ -15,24 +15,55 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { ReportsService } from '../services/ReportsService';
 import { ReportItem } from '../services/CacheService';
+import { NetworkReachabilityService, NetworkState, IISERB_VPN_CONFIG } from '../services/NetworkReachabilityService';
+import { CampusConnectionHelper } from '../utils/CampusConnectionHelper';
 
 interface ReportsScreenProps {
   onBack: () => void;
   onRefreshPortal?: () => Promise<void>;
   isSyncing?: boolean;
+  networkState?: NetworkState;
+  isOffline?: boolean;
 }
 
 export default function ReportsScreen({
   onBack,
   onRefreshPortal,
   isSyncing = false,
+  networkState: propNetworkState,
+  isOffline: propIsOffline = false,
 }: ReportsScreenProps) {
   const insets = useSafeAreaInsets();
+  const [networkState, setNetworkState] = useState<NetworkState>(
+    propNetworkState || NetworkReachabilityService.getCurrentState()
+  );
+  const [isOffline, setIsOffline] = useState<boolean>(propIsOffline);
   const [reports, setReports] = useState<ReportItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeOpeningId, setActiveOpeningId] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<number>(0);
+
+  useEffect(() => {
+    if (propNetworkState) setNetworkState(propNetworkState);
+  }, [propNetworkState]);
+
+  useEffect(() => {
+    setIsOffline(propIsOffline);
+  }, [propIsOffline]);
+
+  // Subscribe to live reachability changes across campus Wi-Fi / VPN
+  useEffect(() => {
+    const unsubscribe = NetworkReachabilityService.subscribe((state) => {
+      setNetworkState(state);
+      if (state === 'OFFLINE') {
+        setIsOffline(true);
+      } else if (state === 'CAMPUS_ACTIVE') {
+        setIsOffline(false);
+      }
+    });
+    return unsubscribe;
+  }, []);
 
   const loadReports = useCallback(async () => {
     try {
@@ -58,6 +89,37 @@ export default function ReportsScreen({
   }, [isSyncing, loadReports]);
 
   const handleManualRefresh = async () => {
+    if (networkState === 'CAMPUS_CAPTIVE') {
+      Alert.alert(
+        'Wi-Fi Sign-in Required',
+        'Connected to campus Wi-Fi, but captive portal login is required to fetch grade reports.',
+        [
+          { text: 'Sign In to Wi-Fi', onPress: () => CampusConnectionHelper.openCaptivePortal() },
+          { text: 'Wi-Fi Settings', onPress: () => CampusConnectionHelper.openWifiSettings() },
+          { text: 'OK', style: 'cancel' }
+        ]
+      );
+      return;
+    }
+
+    if (networkState === 'EXTERNAL_ONLINE') {
+      Alert.alert(
+        'Campus Network Required',
+        `Grade reports require an active connection to IISERB Wi-Fi or FortiClient VPN (${IISERB_VPN_CONFIG.server}).`,
+        [
+          { text: 'Launch FortiClient', onPress: () => CampusConnectionHelper.launchFortiClient() },
+          { text: 'Wi-Fi Settings', onPress: () => CampusConnectionHelper.openWifiSettings() },
+          { text: 'OK', style: 'cancel' }
+        ]
+      );
+      return;
+    }
+
+    if (networkState === 'OFFLINE') {
+      Alert.alert('Offline Mode', 'Internet connection required to refresh reports.');
+      return;
+    }
+
     setRefreshing(true);
     if (onRefreshPortal) {
       try {
@@ -73,6 +135,37 @@ export default function ReportsScreen({
 
   const handleOpenReport = async (item: ReportItem) => {
     if (activeOpeningId) return;
+
+    if (!item.isCached && networkState !== 'CAMPUS_ACTIVE') {
+      if (networkState === 'CAMPUS_CAPTIVE') {
+        Alert.alert(
+          'Wi-Fi Sign-in Required',
+          'Please complete captive portal authentication to download this grade report.',
+          [
+            { text: 'Sign In to Wi-Fi', onPress: () => CampusConnectionHelper.openCaptivePortal() },
+            { text: 'OK', style: 'cancel' }
+          ]
+        );
+        return;
+      }
+      if (networkState === 'EXTERNAL_ONLINE') {
+        Alert.alert(
+          'Campus Network Required',
+          `Downloading new grade reports requires IISERB Wi-Fi or FortiClient VPN (${IISERB_VPN_CONFIG.server}).`,
+          [
+            { text: 'Launch FortiClient', onPress: () => CampusConnectionHelper.launchFortiClient() },
+            { text: 'Wi-Fi Settings', onPress: () => CampusConnectionHelper.openWifiSettings() },
+            { text: 'OK', style: 'cancel' }
+          ]
+        );
+        return;
+      }
+      if (networkState === 'OFFLINE') {
+        Alert.alert('Offline Mode', 'Internet connection required to download this report.');
+        return;
+      }
+    }
+
     setActiveOpeningId(item.id);
     setDownloadProgress(0);
 
@@ -159,6 +252,10 @@ export default function ReportsScreen({
     );
   };
 
+  const isCompleteOffline = networkState === 'OFFLINE' || (isOffline && networkState !== 'EXTERNAL_ONLINE' && networkState !== 'CAMPUS_ACTIVE' && networkState !== 'CAMPUS_CAPTIVE');
+  const isCaptive = networkState === 'CAMPUS_CAPTIVE';
+  const isExternalOnline = networkState === 'EXTERNAL_ONLINE';
+
   return (
     <View style={styles.container}>
       {/* Header */}
@@ -188,6 +285,32 @@ export default function ReportsScreen({
           )}
         </TouchableOpacity>
       </View>
+
+      {/* Network Status Banners */}
+      {isCompleteOffline ? (
+        <View style={styles.offlineBanner}>
+          <Ionicons name="cloud-offline-outline" size={15} color="#ffffff" />
+          <Text style={styles.bannerText}>No internet connection. Viewing offline reports cache.</Text>
+        </View>
+      ) : isCaptive ? (
+        <TouchableOpacity 
+          style={styles.campusBanner}
+          activeOpacity={0.8}
+          onPress={() => CampusConnectionHelper.openCaptivePortal()}
+        >
+          <Ionicons name="warning-outline" size={14} color="#f59e0b" />
+          <Text style={styles.campusBannerText}>Wi-Fi Sign-in Required • Tap to sign into campus Wi-Fi</Text>
+        </TouchableOpacity>
+      ) : isExternalOnline ? (
+        <TouchableOpacity 
+          style={styles.campusBanner}
+          activeOpacity={0.8}
+          onPress={() => CampusConnectionHelper.launchFortiClient()}
+        >
+          <Ionicons name="shield-half" size={14} color="#f59e0b" />
+          <Text style={styles.campusBannerText}>Campus Network Required • Connect to IISERB Wi-Fi or VPN to refresh</Text>
+        </TouchableOpacity>
+      ) : null}
 
       {/* Main List */}
       {loading ? (
@@ -393,5 +516,35 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  offlineBanner: {
+    backgroundColor: Theme.colors.error,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: Theme.spacing.padding,
+  },
+  bannerText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginLeft: 8,
+  },
+  campusBanner: {
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(245, 158, 11, 0.3)',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 7,
+    paddingHorizontal: Theme.spacing.padding,
+  },
+  campusBannerText: {
+    color: '#f59e0b',
+    fontSize: 11,
+    fontWeight: '600',
+    marginLeft: 6,
   },
 });
