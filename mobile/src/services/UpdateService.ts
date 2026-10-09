@@ -534,37 +534,44 @@ export class UpdateService {
         } catch {}
 
         let didResume = false;
-        if (savedSnapJson) {
-          try {
-            const savedData = JSON.parse(savedSnapJson);
-            const tmpInfo = await FileSystem.getInfoAsync(tempPath);
-            if (tmpInfo.exists && tmpInfo.size && tmpInfo.size > 0 && savedData.resumeData) {
-              resumable = new FileSystem.DownloadResumable(
-                savedData.url || apkUrl,
-                savedData.fileUri || tempPath,
-                savedData.options || {},
-                progressCallback,
-                savedData.resumeData
-              );
-              didResume = true;
-              console.log(`[UpdateService] Resuming download for v${cleanVer} from existing byte offset (${tmpInfo.size} bytes)...`);
-            } else {
-              resumable = FileSystem.createDownloadResumable(apkUrl, tempPath, {}, progressCallback);
-            }
-          } catch {
-            await AsyncStorage.removeItem(snapKey).catch(() => {});
-            resumable = FileSystem.createDownloadResumable(apkUrl, tempPath, {}, progressCallback);
+        const tmpInfo = await FileSystem.getInfoAsync(tempPath).catch(() => null);
+        const hasExistingBytes = !!(tmpInfo && tmpInfo.exists && tmpInfo.size && tmpInfo.size > 0);
+        let resumeByteOffset = 0;
+
+        if (hasExistingBytes && tmpInfo?.size) {
+          resumeByteOffset = tmpInfo.size;
+          // Android native FileSystemLegacyModule accepts byte offset string for resumeData
+          // It injects `Range: bytes=${offset}-` and opens FileOutputStream in append mode.
+          const resumeOffsetStr = resumeByteOffset.toString();
+          let targetUrl = apkUrl;
+          let targetOptions = {};
+
+          if (savedSnapJson) {
+            try {
+              const savedData = JSON.parse(savedSnapJson);
+              if (savedData.url) targetUrl = savedData.url;
+              if (savedData.options) targetOptions = savedData.options;
+            } catch {}
           }
+
+          resumable = new FileSystem.DownloadResumable(
+            targetUrl,
+            tempPath,
+            targetOptions,
+            progressCallback,
+            resumeOffsetStr
+          );
+          didResume = true;
+          console.log(`[UpdateService] Resuming download for v${cleanVer} directly from disk byte offset (${resumeByteOffset} bytes)...`);
         } else {
           resumable = FileSystem.createDownloadResumable(apkUrl, tempPath, {}, progressCallback);
         }
 
         this.activeDownloadResumable = resumable;
 
-        // Broadcast initial partial progress if resuming
-        const initialTmpInfo = await FileSystem.getInfoAsync(tempPath).catch(() => null);
-        if (initialTmpInfo && initialTmpInfo.exists && initialTmpInfo.size && expectedSize && expectedSize > 0) {
-          const initialFraction = Math.min(0.99, Math.max(0, initialTmpInfo.size / expectedSize));
+        // Broadcast initial partial progress immediately based on existing disk bytes
+        if (hasExistingBytes && expectedSize && expectedSize > 0) {
+          const initialFraction = Math.min(0.99, Math.max(0, resumeByteOffset / expectedSize));
           this.broadcastProgress(initialFraction, expectedSize);
         }
 
@@ -621,15 +628,19 @@ export class UpdateService {
 
         return finalPath;
       } catch (err: any) {
-        // If an error occurred (e.g. network cutoff), persist snapshot state if possible
-        if (this.activeDownloadResumable) {
-          try {
-            const snap = this.activeDownloadResumable.savable();
-            if (snap && snap.resumeData) {
-              await AsyncStorage.setItem(snapKey, JSON.stringify(snap));
-            }
-          } catch {}
-        }
+        // Persist disk size snapshot on error/cutoff so it resumes instantly when network recovers
+        try {
+          const latestTmp = await FileSystem.getInfoAsync(tempPath).catch(() => null);
+          if (latestTmp && latestTmp.exists && latestTmp.size && latestTmp.size > 0) {
+            const snap = {
+              url: apkUrl,
+              fileUri: tempPath,
+              options: {},
+              resumeData: latestTmp.size.toString(),
+            };
+            await AsyncStorage.setItem(snapKey, JSON.stringify(snap));
+          }
+        } catch {}
         throw err;
       } finally {
         this.activeDownloadResumable = null;

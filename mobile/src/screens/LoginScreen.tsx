@@ -28,7 +28,7 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
 
   const refreshNetworkStatus = async () => {
     setNetworkState('CHECKING');
-    const state = await NetworkReachabilityService.getNetworkState();
+    const state = await NetworkReachabilityService.getNetworkState(true);
     setNetworkState(state);
   };
 
