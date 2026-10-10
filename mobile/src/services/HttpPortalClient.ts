@@ -37,6 +37,7 @@ export interface HttpResponse<T = any> {
 export type PortalErrorCode =
   | 'NETWORK_ERROR'
   | 'CAMPUS_NETWORK_REQUIRED'
+  | 'CAMPUS_CAPTIVE'
   | 'SESSION_EXPIRED'
   | 'TIMEOUT'
   | 'SERVER_ERROR'
@@ -376,23 +377,45 @@ export class HttpPortalClient {
         throw err;
       }
 
-      if (err.name === 'AbortError') {
+      const errMsg = String(err?.message || '');
+      const isAbort =
+        err?.name === 'AbortError' ||
+        errMsg.toLowerCase().includes('canceled') ||
+        errMsg.toLowerCase().includes('cancelled') ||
+        errMsg.toLowerCase().includes('aborted');
+
+      if (isAbort) {
         const netState = await NetworkReachabilityService.recordFailure('Request timed out');
         if (netState === 'OFFLINE') {
           this.resetQueue();
         }
-        const code = netState === 'EXTERNAL_ONLINE' ? 'CAMPUS_NETWORK_REQUIRED' : 'TIMEOUT';
-        throw new PortalHttpError(
-          `Request to ${path} timed out after ${timeout}ms.`,
-          code
-        );
+        const code =
+          netState === 'CAMPUS_CAPTIVE'
+            ? 'CAMPUS_CAPTIVE'
+            : netState === 'EXTERNAL_ONLINE'
+            ? 'CAMPUS_NETWORK_REQUIRED'
+            : 'TIMEOUT';
+        const message =
+          netState === 'CAMPUS_CAPTIVE'
+            ? 'Wi-Fi sign-in required. Please authenticate on the campus captive portal.'
+            : netState === 'EXTERNAL_ONLINE'
+            ? 'Campus network required. Please connect to IISERB Wi-Fi or turn on FortiClient VPN (gateway.iiserb.ac.in).'
+            : `Request to ${path} timed out after ${timeout}ms.`;
+        throw new PortalHttpError(message, code);
       }
 
       // Network / SSL failure handling
-      const errorMsg = err.message || 'Network request failed';
+      const errorMsg = errMsg || 'Network request failed';
       const netState = await NetworkReachabilityService.recordFailure(errorMsg);
       if (netState === 'OFFLINE') {
         this.resetQueue();
+      }
+
+      if (netState === 'CAMPUS_CAPTIVE') {
+        throw new PortalHttpError(
+          'Wi-Fi sign-in required. Please authenticate on the campus captive portal.',
+          'CAMPUS_CAPTIVE'
+        );
       }
 
       if (netState === 'EXTERNAL_ONLINE') {

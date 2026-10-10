@@ -64,7 +64,6 @@ export class NotificationService {
           vibrationPattern: [0, 250, 250, 250],
           lightColor: '#6366F1',
           showBadge: true,
-          sound: 'default',
         });
       }
 
@@ -169,7 +168,7 @@ export class NotificationService {
             action: 'INSTALL_UPDATE',
             version,
           },
-          sound: true,
+          ...(Platform.OS === 'android' ? { channelId: UPDATE_NOTIFICATION_CHANNEL_ID } : { sound: true }),
           priority: Notifications.AndroidNotificationPriority.HIGH,
           color: '#6366F1',
         },
@@ -203,7 +202,7 @@ export class NotificationService {
             action: 'OPEN_UPDATE_MODAL',
             version,
           },
-          sound: true,
+          ...(Platform.OS === 'android' ? { channelId: UPDATE_NOTIFICATION_CHANNEL_ID } : { sound: true }),
           priority: Notifications.AndroidNotificationPriority.DEFAULT,
           color: '#6366F1',
         },
