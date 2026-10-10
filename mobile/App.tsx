@@ -448,6 +448,30 @@ function AppContent() {
       await startSync(scope, undefined, true);
     } catch (e: any) {
       console.warn('Manual HTTP refresh failed:', e);
+      const failedState = await NetworkReachabilityService.recordFailure(e?.message || 'Refresh failed');
+      if (failedState === 'CAMPUS_CAPTIVE') {
+        Alert.alert(
+          'Wi-Fi Sign-in Required',
+          'Connected to campus Wi-Fi, but captive portal login is required to access Shiksha.',
+          [
+            { text: 'Sign In to Wi-Fi', onPress: () => CampusConnectionHelper.openCaptivePortal() },
+            { text: 'Wi-Fi Settings', onPress: () => CampusConnectionHelper.openWifiSettings() },
+            { text: 'OK', style: 'cancel' },
+          ]
+        );
+      } else if (failedState === 'EXTERNAL_ONLINE') {
+        Alert.alert(
+          'Campus Network Required',
+          'Cannot reach Shiksha. Please check your connection to IISERB Wi-Fi or FortiClient VPN (gateway.iiserb.ac.in).',
+          [
+            { text: 'Launch FortiClient', onPress: () => CampusConnectionHelper.launchFortiClient() },
+            { text: 'Wi-Fi Settings', onPress: () => CampusConnectionHelper.openWifiSettings() },
+            { text: 'OK', style: 'cancel' },
+          ]
+        );
+      } else {
+        Alert.alert('Offline Mode', 'Cannot sync portal data. Please check your internet connection.');
+      }
     } finally {
       setRefreshing(false);
     }

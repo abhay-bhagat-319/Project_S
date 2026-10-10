@@ -89,7 +89,24 @@ export default function ReportsScreen({
   }, [isSyncing, loadReports]);
 
   const handleManualRefresh = async () => {
-    if (networkState === 'CAMPUS_CAPTIVE') {
+    let currentState = networkState;
+    if (currentState !== 'CAMPUS_ACTIVE') {
+      setRefreshing(true);
+      try {
+        currentState = await NetworkReachabilityService.getNetworkState();
+        setNetworkState(currentState);
+        if (currentState === 'CAMPUS_ACTIVE') {
+          setIsOffline(false);
+        } else if (currentState === 'OFFLINE') {
+          setIsOffline(true);
+        }
+      } catch {
+        // Fall back to existing state
+      }
+    }
+
+    if (currentState === 'CAMPUS_CAPTIVE') {
+      setRefreshing(false);
       Alert.alert(
         'Wi-Fi Sign-in Required',
         'Connected to campus Wi-Fi, but captive portal login is required to fetch grade reports.',
@@ -102,7 +119,8 @@ export default function ReportsScreen({
       return;
     }
 
-    if (networkState === 'EXTERNAL_ONLINE') {
+    if (currentState === 'EXTERNAL_ONLINE') {
+      setRefreshing(false);
       Alert.alert(
         'Campus Network Required',
         `Grade reports require an active connection to IISERB Wi-Fi or FortiClient VPN (${IISERB_VPN_CONFIG.server}).`,
@@ -115,7 +133,8 @@ export default function ReportsScreen({
       return;
     }
 
-    if (networkState === 'OFFLINE') {
+    if (currentState === 'OFFLINE') {
+      setRefreshing(false);
       Alert.alert('Offline Mode', 'Internet connection required to refresh reports.');
       return;
     }
@@ -140,8 +159,19 @@ export default function ReportsScreen({
   const handleOpenReport = async (item: ReportItem) => {
     if (activeOpeningId) return;
 
-    if (!item.isCached && networkState !== 'CAMPUS_ACTIVE') {
-      if (networkState === 'CAMPUS_CAPTIVE') {
+    if (!item.isCached) {
+      let currentState = networkState;
+      if (currentState !== 'CAMPUS_ACTIVE') {
+        currentState = await NetworkReachabilityService.getNetworkState();
+        setNetworkState(currentState);
+        if (currentState === 'CAMPUS_ACTIVE') {
+          setIsOffline(false);
+        } else if (currentState === 'OFFLINE') {
+          setIsOffline(true);
+        }
+      }
+
+      if (currentState === 'CAMPUS_CAPTIVE') {
         Alert.alert(
           'Wi-Fi Sign-in Required',
           'Please complete captive portal authentication to download this grade report.',
@@ -152,7 +182,7 @@ export default function ReportsScreen({
         );
         return;
       }
-      if (networkState === 'EXTERNAL_ONLINE') {
+      if (currentState === 'EXTERNAL_ONLINE') {
         Alert.alert(
           'Campus Network Required',
           `Downloading new grade reports requires IISERB Wi-Fi or FortiClient VPN (${IISERB_VPN_CONFIG.server}).`,
@@ -164,7 +194,7 @@ export default function ReportsScreen({
         );
         return;
       }
-      if (networkState === 'OFFLINE') {
+      if (currentState === 'OFFLINE') {
         Alert.alert('Offline Mode', 'Internet connection required to download this report.');
         return;
       }
