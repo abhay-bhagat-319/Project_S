@@ -331,4 +331,94 @@ export class HttpPortalClient {
       body: JSON.stringify(jsonData),
     });
   }
+
+  /**
+   * Directly authenticates credentials against Shiksha portal via POST /ldap_login_progress
+   */
+  public static async login(
+    username: string,
+    password: string,
+    timeoutMs = 15000
+  ): Promise<{
+    success: boolean;
+    code?: PortalErrorCode | 'AUTH_FAILED';
+    message?: string;
+    sessionCookie?: string;
+  }> {
+    const trimmedUser = username.trim();
+    const trimmedPass = password.trim();
+
+    if (!trimmedUser || !trimmedPass) {
+      return {
+        success: false,
+        code: 'AUTH_FAILED',
+        message: 'Please enter both username and password.',
+      };
+    }
+
+    // Reset current session state before fresh authentication
+    this.clearSession();
+
+    try {
+      const response = await this.postForm(
+        '/ldap_login_progress',
+        {
+          email: trimmedUser,
+          secret: trimmedPass,
+        },
+        {
+          timeoutMs,
+          skipSessionCheck: true, // We inspect authentication outcome manually
+        }
+      );
+
+      // Successful LDAP authentication:
+      // The portal redirects to /secure/studenthome or returns secure dashboard HTML
+      const isSuccess =
+        response.url.toLowerCase().includes('/secure') ||
+        response.rawText.includes('/secure/studenthome') ||
+        (response.status === 200 &&
+          !response.rawText.includes('ldap_login_progress') &&
+          !response.rawText.includes('Invalid username') &&
+          !response.rawText.includes('Invalid credentials'));
+
+      if (isSuccess) {
+        console.log('[HttpPortalClient] LDAP authentication successful. Cookie:', this.activeSessionCookie);
+        return {
+          success: true,
+          sessionCookie: this.activeSessionCookie || undefined,
+        };
+      }
+
+      // Check for portal failure alerts
+      let failMessage = 'Invalid LDAP credentials. Please check your username and password.';
+      if (
+        response.rawText.toLowerCase().includes('invalid username') ||
+        response.rawText.toLowerCase().includes('invalid credential')
+      ) {
+        failMessage = 'Invalid username or password.';
+      }
+
+      return {
+        success: false,
+        code: 'AUTH_FAILED',
+        message: failMessage,
+      };
+    } catch (err: any) {
+      if (err instanceof PortalHttpError) {
+        return {
+          success: false,
+          code: err.code,
+          message: err.message,
+        };
+      }
+
+      return {
+        success: false,
+        code: 'NETWORK_ERROR',
+        message: err.message || 'Unable to connect to Shiksha portal.',
+      };
+    }
+  }
 }
+
