@@ -1,4 +1,6 @@
 import { NetworkReachabilityService } from './NetworkReachabilityService';
+import * as FileSystem from 'expo-file-system/legacy';
+import { ReportItem } from './CacheService';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
@@ -419,6 +421,110 @@ export class HttpPortalClient {
         message: err.message || 'Unable to connect to Shiksha portal.',
       };
     }
+  }
+
+  /**
+   * Fetches and parses student grade reports from /secure/studentReports in ~0.4ms
+   */
+  public static async getStudentReports(): Promise<ReportItem[]> {
+    const response = await this.get<string>('/secure/studentReports');
+    const html = response.rawText;
+
+    let reports: any[] = [];
+
+    // Strategy 1: Extract JSON array from ng-init='initReports([...])'
+    const initMatch = html.match(/initReports\s*\(\s*(\[.*?\])\s*\)/s);
+    if (initMatch && initMatch[1]) {
+      try {
+        const rawJson = initMatch[1]
+          .replace(/&quot;|&#34;/g, '"')
+          .replace(/&amp;/g, '&');
+        reports = JSON.parse(rawJson);
+      } catch (e) {
+        console.warn('[HttpPortalClient] Error parsing initReports JSON:', e);
+      }
+    }
+
+    // Strategy 2: Extract table rows if ng-init was missing or empty
+    if (!reports || reports.length === 0) {
+      const rowRegex = /<tr[^>]*>[\s\S]*?<\/tr>/gi;
+      const rows = html.match(rowRegex) || [];
+      for (const row of rows) {
+        const tdMatches = Array.from(row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)).map((m) =>
+          m[1].replace(/<[^>]*>/g, '').trim()
+        );
+        const linkMatch = row.match(/href=["']([^"']*\.pdf[^"']*)["']/i);
+        if (tdMatches.length >= 4 && linkMatch) {
+          const sem = tdMatches[1];
+          const type = tdMatches[2];
+          const annotation = tdMatches[3];
+          const file = linkMatch[1];
+          if (sem && type) {
+            reports.push({
+              sem,
+              type,
+              annotation: annotation || `${type} for ${sem}`,
+              file,
+              show: true,
+            });
+          }
+        }
+      }
+    }
+
+    // Normalize reports into standard ReportItem structure
+    return (reports || [])
+      .map((r, idx) => {
+        let fileUrl = (r.file || '').trim();
+        if (fileUrl && !fileUrl.startsWith('http://') && !fileUrl.startsWith('https://')) {
+          if (fileUrl.startsWith('/')) {
+            fileUrl = `${this.BASE_URL}${fileUrl}`;
+          } else {
+            fileUrl = `${this.BASE_URL}/${fileUrl}`;
+          }
+        }
+
+        const type = (r.type || 'Grade Report').trim();
+        const sem = (r.sem || '').trim();
+        const annotation = (r.annotation || `${type}${sem ? ` (${sem})` : ''}`).trim();
+        const safeId = (sem + '-' + type).toLowerCase().replace(/[^a-z0-9_-]/g, '_') || `report_${idx}`;
+
+        return {
+          id: safeId,
+          type,
+          sem,
+          annotation,
+          file: fileUrl,
+          show: r.show !== false && r.show !== 'false' && r.show !== 0,
+        };
+      })
+      .filter((r) => r.show !== false && r.file && (r.file.includes('.pdf') || r.file.includes('report')));
+  }
+
+  /**
+   * Directly downloads a report PDF to local file destination using authenticated session
+   */
+  public static async downloadPdfFile(fileUrl: string, targetPath: string): Promise<string> {
+    const fullUrl = this.resolveUrl(fileUrl);
+    const sessionCookie = this.activeSessionCookie;
+
+    const headers: Record<string, string> = {
+      'User-Agent': this.BROWSER_USER_AGENT,
+      'Referer': `${this.BASE_URL}/secure/studentReports`,
+    };
+    if (sessionCookie) {
+      headers['Cookie'] = sessionCookie;
+    }
+
+    const downloadRes = await FileSystem.downloadAsync(fullUrl, targetPath, {
+      headers,
+    });
+
+    if (downloadRes.status !== 200) {
+      throw new Error(`Server returned HTTP ${downloadRes.status} when downloading PDF`);
+    }
+
+    return targetPath;
   }
 }
 

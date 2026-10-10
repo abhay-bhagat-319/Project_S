@@ -121,14 +121,18 @@ export default function ReportsScreen({
     }
 
     setRefreshing(true);
-    if (onRefreshPortal) {
-      try {
-        await onRefreshPortal();
-      } catch {
-        setRefreshing(false);
+    try {
+      const items = await ReportsService.syncReports();
+      setReports(items);
+    } catch {
+      if (onRefreshPortal) {
+        try {
+          await onRefreshPortal();
+        } catch {}
+      } else {
+        await loadReports();
       }
-    } else {
-      await loadReports();
+    } finally {
       setRefreshing(false);
     }
   };
