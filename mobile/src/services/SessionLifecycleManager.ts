@@ -1,6 +1,7 @@
 import { SecureStorageService } from './SecureStorageService';
 import { ScraperService } from './ScraperService';
 import { NetworkReachabilityService } from './NetworkReachabilityService';
+import { HttpPortalClient } from './HttpPortalClient';
 
 export interface AuthResult {
   success: boolean;
@@ -16,7 +17,7 @@ export interface AuthAdapterBridge {
 
 /**
  * Deep module governing the authentication and session lifecycle:
- * - Credential verification & portal handshake
+ * - Credential verification & portal handshake over direct HTTP (in ~200ms)
  * - Complete cookie jar & web storage sanitization on logout
  * - Server-side session invalidation
  * - Silent background session recovery
@@ -38,7 +39,8 @@ export class SessionLifecycleManager {
   private static isAuthenticating = false;
 
   /**
-   * Registers the active native WebView adapter hosted at the root of the app
+   * Registers the active native WebView adapter hosted at the root of the app.
+   * @deprecated Background WebViews are being retired in favor of direct HTTP.
    */
   public static registerAdapter(adapter: AuthAdapterBridge): () => void {
     this.adapter = adapter;
@@ -195,9 +197,9 @@ export class SessionLifecycleManager {
   }
 
   /**
-   * Authenticates user against the Shiksha portal with timeout safety guard
+   * Authenticates user against the Shiksha portal via direct HTTP login in ~200ms
    */
-  public static async authenticate(username: string, password: string, timeoutMs = 25000): Promise<AuthResult> {
+  public static async authenticate(username: string, password: string, timeoutMs = 15000): Promise<AuthResult> {
     const trimmedUser = username.trim();
     const trimmedPass = password.trim();
 
@@ -209,65 +211,40 @@ export class SessionLifecycleManager {
       };
     }
 
-    if (!this.adapter) {
+    this.isAuthenticating = true;
+
+    try {
+      const result = await HttpPortalClient.login(trimmedUser, trimmedPass, timeoutMs);
+
+      if (result.success) {
+        NetworkReachabilityService.recordSuccess();
+        await SecureStorageService.saveCredentials(trimmedUser, trimmedPass);
+        return { success: true };
+      }
+
+      let code: AuthResult['code'] = 'AUTH_FAILED';
+      if (result.code === 'CAMPUS_NETWORK_REQUIRED') {
+        code = 'CAMPUS_NETWORK_REQUIRED';
+      } else if (result.code === 'TIMEOUT') {
+        code = 'TIMEOUT';
+      } else if (result.code === 'NETWORK_ERROR') {
+        code = 'NETWORK_ERROR';
+      }
+
+      return {
+        success: false,
+        code,
+        message: result.message || 'Invalid LDAP credentials. Please check your username and password.',
+      };
+    } catch (err: any) {
       return {
         success: false,
         code: 'NETWORK_ERROR',
-        message: 'Authentication engine is initializing. Please try again.',
+        message: err.message || 'Unable to authenticate with Shiksha portal.',
       };
+    } finally {
+      this.isAuthenticating = false;
     }
-
-    if (this.pendingAuth) {
-      clearTimeout(this.pendingAuth.timer);
-      this.pendingAuth.resolve({
-        success: false,
-        code: 'UNKNOWN',
-        message: 'Superceded by a new login attempt.',
-      });
-      this.pendingAuth = null;
-    }
-
-    this.isAuthenticating = true;
-
-    return new Promise<AuthResult>((resolve) => {
-      const timer = setTimeout(async () => {
-        if (this.pendingAuth) {
-          this.pendingAuth = null;
-          this.isAuthenticating = false;
-
-          const netState = await NetworkReachabilityService.getNetworkState();
-          if (netState === 'EXTERNAL_ONLINE') {
-            resolve({
-              success: false,
-              code: 'CAMPUS_NETWORK_REQUIRED',
-              message: 'Campus network required. Please connect to IISERB Wi-Fi or turn on FortiClient VPN (gateway.iiserb.ac.in).',
-            });
-          } else if (netState === 'OFFLINE') {
-            resolve({
-              success: false,
-              code: 'NETWORK_ERROR',
-              message: 'No internet connection detected. Please check your network connection.',
-            });
-          } else {
-            resolve({
-              success: false,
-              code: 'TIMEOUT',
-              message: 'Portal verification took too long. Please verify your internet connection or LDAP credentials.',
-            });
-          }
-        }
-      }, timeoutMs);
-
-      this.pendingAuth = {
-        username: trimmedUser,
-        password: trimmedPass,
-        resolve,
-        timer,
-      };
-
-      // Navigate to login URL to begin handshake
-      this.adapter?.loadUrl('https://shiksha.iiserb.ac.in/login/');
-    });
   }
 
   /**
@@ -278,6 +255,9 @@ export class SessionLifecycleManager {
    */
   public static async purgeSession(timeoutMs = 4000): Promise<void> {
     console.log('[SessionLifecycleManager] Starting complete session purge...');
+
+    // Clear active HTTP client session
+    HttpPortalClient.clearSession();
 
     // 1. Fire-and-forget server-side logout beacon
     try {
