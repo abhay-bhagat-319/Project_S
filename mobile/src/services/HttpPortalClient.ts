@@ -114,6 +114,17 @@ export class HttpPortalClient {
   }
 
   /**
+   * Resets the request queue and active counter in case of catastrophic network drop or retry
+   */
+  public static resetQueue(): void {
+    this.activeRequests = 0;
+    while (this.requestQueue.length > 0) {
+      const next = this.requestQueue.shift();
+      if (next) next();
+    }
+  }
+
+  /**
    * Silently recovers an invalidated or expired session using stored credentials.
    * Utilizes a single in-flight Promise mutex so concurrent requests share the exact same login attempt.
    */
@@ -295,6 +306,7 @@ export class HttpPortalClient {
         body: options.body,
         signal: controller.signal,
         redirect: 'follow',
+        credentials: 'include',
       });
 
       clearTimeout(timer);
@@ -366,6 +378,9 @@ export class HttpPortalClient {
 
       if (err.name === 'AbortError') {
         const netState = await NetworkReachabilityService.recordFailure('Request timed out');
+        if (netState === 'OFFLINE') {
+          this.resetQueue();
+        }
         const code = netState === 'EXTERNAL_ONLINE' ? 'CAMPUS_NETWORK_REQUIRED' : 'TIMEOUT';
         throw new PortalHttpError(
           `Request to ${path} timed out after ${timeout}ms.`,
@@ -376,6 +391,9 @@ export class HttpPortalClient {
       // Network / SSL failure handling
       const errorMsg = err.message || 'Network request failed';
       const netState = await NetworkReachabilityService.recordFailure(errorMsg);
+      if (netState === 'OFFLINE') {
+        this.resetQueue();
+      }
 
       if (netState === 'EXTERNAL_ONLINE') {
         throw new PortalHttpError(

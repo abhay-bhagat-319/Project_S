@@ -1,4 +1,5 @@
 import { AppState, AppStateStatus } from 'react-native';
+import NetInfo, { NetInfoState } from '@react-native-community/netinfo';
 
 export type NetworkState = 'CAMPUS_ACTIVE' | 'CAMPUS_CAPTIVE' | 'EXTERNAL_ONLINE' | 'OFFLINE';
 
@@ -43,6 +44,8 @@ export class NetworkReachabilityService {
   private static lastSuccessfulPingTime = 0;
   private static listeners: Set<(state: NetworkState) => void> = new Set();
   private static isAppStateListenerAttached = false;
+  private static isNetInfoListenerAttached = false;
+  private static activeProbePromise: Promise<NetworkState> | null = null;
 
   static {
     // Automatically attach AppState listener when service class loads
@@ -51,11 +54,30 @@ export class NetworkReachabilityService {
       try {
         AppState.addEventListener('change', (nextState: AppStateStatus) => {
           if (nextState === 'active') {
-            // Re-probe immediately when user switches back to the app (e.g. from FortiClient or Wi-Fi settings)
-            NetworkReachabilityService.getNetworkState().catch(() => {});
+            // Re-probe immediately when user switches back to the app
+            NetworkReachabilityService.getNetworkState(true).catch(() => {});
           }
         });
       } catch {}
+    }
+
+    // Attach native NetInfo listener for real-time interface switches
+    if (!NetworkReachabilityService.isNetInfoListenerAttached) {
+      NetworkReachabilityService.isNetInfoListenerAttached = true;
+      try {
+        NetInfo.addEventListener((netState: NetInfoState) => {
+          if (!netState.isConnected) {
+            console.log('[NetworkReachabilityService] NetInfo reports disconnected -> OFFLINE');
+            NetworkReachabilityService.lastSuccessfulPingTime = 0;
+            NetworkReachabilityService.notifyListeners('OFFLINE');
+          } else {
+            console.log('[NetworkReachabilityService] NetInfo reports connection change -> probing reachability');
+            NetworkReachabilityService.getNetworkState(true).catch(() => {});
+          }
+        });
+      } catch (err) {
+        console.warn('[NetworkReachabilityService] Failed to attach NetInfo listener:', err);
+      }
     }
   }
 
@@ -115,16 +137,17 @@ export class NetworkReachabilityService {
    */
   public static async recordFailure(reason?: string): Promise<NetworkState> {
     console.log(`[NetworkReachabilityService] Intranet unreachable: ${reason || 'Unknown error'}`);
-    return await this.getNetworkState();
+    this.lastSuccessfulPingTime = 0;
+    return await this.getNetworkState(true);
   }
 
   /**
    * Fast parallel probe to determine whether the Shiksha intranet is directly reachable,
    * intercepted by a captive portal, or unreachable.
    */
-  public static async probeIntranet(timeoutMs = 2000): Promise<'CAMPUS_ACTIVE' | 'CAMPUS_CAPTIVE' | 'UNREACHABLE'> {
-    // If verified within the last 45 seconds, assume still reachable
-    if (Date.now() - this.lastSuccessfulPingTime < 45000 && this.currentState === 'CAMPUS_ACTIVE') {
+  public static async probeIntranet(timeoutMs = 2500, force = false): Promise<'CAMPUS_ACTIVE' | 'CAMPUS_CAPTIVE' | 'UNREACHABLE'> {
+    // If verified within the last 45 seconds, assume still reachable unless forced
+    if (!force && Date.now() - this.lastSuccessfulPingTime < 45000 && this.currentState === 'CAMPUS_ACTIVE') {
       return 'CAMPUS_ACTIVE';
     }
 
@@ -188,8 +211,8 @@ export class NetworkReachabilityService {
   /**
    * Fast probe to verify if the Shiksha intranet is directly reachable
    */
-  public static async isShikshaReachable(timeoutMs = 2000): Promise<boolean> {
-    const status = await this.probeIntranet(timeoutMs);
+  public static async isShikshaReachable(timeoutMs = 2500, force = false): Promise<boolean> {
+    const status = await this.probeIntranet(timeoutMs, force);
     return status === 'CAMPUS_ACTIVE';
   }
 
@@ -265,28 +288,40 @@ export class NetworkReachabilityService {
    * - 'EXTERNAL_ONLINE': Connected to public internet, but Shiksha is unreachable (Needs Wi-Fi / VPN)
    * - 'OFFLINE': No internet connection whatsoever
    */
-  public static async getNetworkState(): Promise<NetworkState> {
-    const intranetStatus = await this.probeIntranet(2000);
-    if (intranetStatus === 'CAMPUS_ACTIVE') {
-      return 'CAMPUS_ACTIVE';
-    }
-    if (intranetStatus === 'CAMPUS_CAPTIVE') {
-      this.notifyListeners('CAMPUS_CAPTIVE');
-      return 'CAMPUS_CAPTIVE';
+  public static async getNetworkState(force = false): Promise<NetworkState> {
+    if (this.activeProbePromise) {
+      return this.activeProbePromise;
     }
 
-    const publicStatus = await this.isPublicInternetReachable(2000);
-    if (publicStatus === 'CAMPUS_CAPTIVE') {
-      this.notifyListeners('CAMPUS_CAPTIVE');
-      return 'CAMPUS_CAPTIVE';
-    }
-    if (publicStatus === 'ONLINE') {
-      this.notifyListeners('EXTERNAL_ONLINE');
-      return 'EXTERNAL_ONLINE';
-    }
+    this.activeProbePromise = (async () => {
+      try {
+        const intranetStatus = await this.probeIntranet(2500, force);
+        if (intranetStatus === 'CAMPUS_ACTIVE') {
+          return 'CAMPUS_ACTIVE';
+        }
+        if (intranetStatus === 'CAMPUS_CAPTIVE') {
+          this.notifyListeners('CAMPUS_CAPTIVE');
+          return 'CAMPUS_CAPTIVE';
+        }
 
-    this.notifyListeners('OFFLINE');
-    return 'OFFLINE';
+        const publicStatus = await this.isPublicInternetReachable(2000);
+        if (publicStatus === 'CAMPUS_CAPTIVE') {
+          this.notifyListeners('CAMPUS_CAPTIVE');
+          return 'CAMPUS_CAPTIVE';
+        }
+        if (publicStatus === 'ONLINE') {
+          this.notifyListeners('EXTERNAL_ONLINE');
+          return 'EXTERNAL_ONLINE';
+        }
+
+        this.notifyListeners('OFFLINE');
+        return 'OFFLINE';
+      } finally {
+        this.activeProbePromise = null;
+      }
+    })();
+
+    return this.activeProbePromise;
   }
 
   public static getCurrentState(): NetworkState {
