@@ -64,15 +64,20 @@ export class NetworkReachabilityService {
     // Attach native NetInfo listener for real-time interface switches
     if (!NetworkReachabilityService.isNetInfoListenerAttached) {
       NetworkReachabilityService.isNetInfoListenerAttached = true;
+      let netInfoTimer: ReturnType<typeof setTimeout> | null = null;
       try {
         NetInfo.addEventListener((netState: NetInfoState) => {
           if (!netState.isConnected) {
             console.log('[NetworkReachabilityService] NetInfo reports disconnected -> OFFLINE');
             NetworkReachabilityService.lastSuccessfulPingTime = 0;
+            if (netInfoTimer) clearTimeout(netInfoTimer);
             NetworkReachabilityService.notifyListeners('OFFLINE');
           } else {
-            console.log('[NetworkReachabilityService] NetInfo reports connection change -> probing reachability');
-            NetworkReachabilityService.getNetworkState(true).catch(() => {});
+            if (netInfoTimer) clearTimeout(netInfoTimer);
+            netInfoTimer = setTimeout(() => {
+              console.log('[NetworkReachabilityService] NetInfo settled -> probing reachability');
+              NetworkReachabilityService.getNetworkState(true).catch(() => {});
+            }, 600);
           }
         });
       } catch (err) {

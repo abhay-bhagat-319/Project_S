@@ -93,7 +93,7 @@ export default function ReportsScreen({
     if (currentState !== 'CAMPUS_ACTIVE') {
       setRefreshing(true);
       try {
-        currentState = await NetworkReachabilityService.getNetworkState();
+        currentState = await NetworkReachabilityService.getNetworkState(true);
         setNetworkState(currentState);
         if (currentState === 'CAMPUS_ACTIVE') {
           setIsOffline(false);
@@ -162,7 +162,7 @@ export default function ReportsScreen({
     if (!item.isCached) {
       let currentState = networkState;
       if (currentState !== 'CAMPUS_ACTIVE') {
-        currentState = await NetworkReachabilityService.getNetworkState();
+        currentState = await NetworkReachabilityService.getNetworkState(true);
         setNetworkState(currentState);
         if (currentState === 'CAMPUS_ACTIVE') {
           setIsOffline(false);
