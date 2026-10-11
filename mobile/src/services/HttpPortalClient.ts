@@ -1,6 +1,6 @@
 import { NetworkReachabilityService } from './NetworkReachabilityService';
 import * as FileSystem from 'expo-file-system/legacy';
-import { ReportItem } from './CacheService';
+import { CacheService, ReportItem, AttendanceData, AttendanceItem, AttendanceRecord } from './CacheService';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
@@ -525,6 +525,279 @@ export class HttpPortalClient {
     }
 
     return targetPath;
+  }
+
+  /**
+   * Parses raw attendance records list into normalized AttendanceRecord format
+   */
+  private static parseAttendanceRecords(raw: any[]): AttendanceRecord[] {
+    if (!Array.isArray(raw)) return [];
+    const list: AttendanceRecord[] = [];
+
+    for (const item of raw) {
+      if (!item) continue;
+      if (typeof item === 'string') {
+        const parts = item.split(/[:,-]/);
+        list.push({
+          date: parts[0] ? parts[0].trim() : item,
+          status: parts[1] ? parts[1].trim() : 'Present',
+        });
+      } else if (Array.isArray(item)) {
+        list.push({
+          date: (item[0] || '').toString(),
+          status: (item[1] || 'Present').toString(),
+        });
+      } else if (typeof item === 'object') {
+        const keys = Object.keys(item);
+        let dateVal = '';
+        let statusVal = '';
+
+        for (const k of keys) {
+          const lk = k.toLowerCase();
+          if (lk.includes('date') || lk.includes('day') || lk.includes('time') || lk.includes('session')) {
+            dateVal = item[k];
+            break;
+          }
+        }
+        for (const k of keys) {
+          const lk = k.toLowerCase();
+          if (lk.includes('status') || lk.includes('attend') || lk.includes('present') || lk.includes('mark') || lk.includes('state')) {
+            statusVal = item[k];
+            break;
+          }
+        }
+        if (!dateVal && keys.length > 0) dateVal = item[keys[0]];
+        if (!statusVal && keys.length > 1) statusVal = item[keys[1]];
+
+        const normalizeDate = (ds: string): string => {
+          if (!ds) return '';
+          const str = ds.trim();
+          const ymd = str.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+          if (ymd) return `${ymd[3].padStart(2, '0')}-${ymd[2].padStart(2, '0')}-${ymd[1]}`;
+          const y8 = str.match(/^(\d{4})(\d{2})(\d{2})$/);
+          if (y8) return `${y8[3]}-${y8[2]}-${y8[1]}`;
+          const dmy = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+          if (dmy) return `${dmy[1].padStart(2, '0')}-${dmy[2].padStart(2, '0')}-${dmy[3]}`;
+          return str;
+        };
+
+        if (dateVal || statusVal) {
+          list.push({
+            date: normalizeDate(String(dateVal)),
+            status: String(statusVal || 'Present'),
+          });
+        }
+      }
+    }
+
+    return list;
+  }
+
+  /**
+   * Parses registered courses table from /secure/studentMyCourses HTML
+   */
+  private static parseRegisteredCoursesFromHtml(html: string): Array<{
+    courseCode: string;
+    courseTitle: string;
+    instructor: string;
+    attendanceArg: string;
+    srsStatus: {
+      midSemAvailable: boolean;
+      midSemUrl?: string;
+      endSemAvailable: boolean;
+      endSemUrl?: string;
+    };
+  }> {
+    const courses: Array<{
+      courseCode: string;
+      courseTitle: string;
+      instructor: string;
+      attendanceArg: string;
+      srsStatus: {
+        midSemAvailable: boolean;
+        midSemUrl?: string;
+        endSemAvailable: boolean;
+        endSemUrl?: string;
+      };
+    }> = [];
+
+    const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+    const rows = html.match(rowRegex) || [];
+
+    for (const row of rows) {
+      const tdMatches = Array.from(row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)).map((m) => m[1]);
+      if (tdMatches.length >= 4) {
+        const stripTags = (s: string) => s.replace(/<[^>]*>/g, '').trim();
+        const courseCode = stripTags(tdMatches[0]);
+        const courseTitle = stripTags(tdMatches[1]);
+        const instructor = stripTags(tdMatches[2]).replace(/\s+/g, ' ');
+
+        if (!courseCode || courseCode.toLowerCase().includes('course') || courseCode.toLowerCase().includes('no data')) {
+          continue;
+        }
+
+        const actionCell = tdMatches[3];
+        const argMatch = actionCell.match(/getAttendanceData\(['"](.*?)['"]\)/i);
+        const attendanceArg = argMatch ? argMatch[1] : `${courseCode},`;
+
+        const midSemMatch = actionCell.match(/href=["']([^"']*studentMidSemSRS[^"']*)["']/i);
+        const midSemAvailable = !!midSemMatch;
+        const midSemUrl = midSemMatch ? midSemMatch[1] : undefined;
+
+        const endSemMatch = actionCell.match(/href=["']([^"']*studentSRS[^"']*)["']/i);
+        const isEndSem = endSemMatch && !endSemMatch[1].includes('studentMidSemSRS');
+        const endSemAvailable = !!isEndSem;
+        const endSemUrl = isEndSem ? endSemMatch[1] : undefined;
+
+        courses.push({
+          courseCode,
+          courseTitle,
+          instructor,
+          attendanceArg,
+          srsStatus: {
+            midSemAvailable,
+            midSemUrl,
+            endSemAvailable,
+            endSemUrl,
+          },
+        });
+      }
+    }
+
+    return courses;
+  }
+
+  /**
+   * Fetches attendance metrics for a single course from /secure/studentMyCourseAttendance
+   */
+  public static async getCourseAttendance(
+    courseId: string,
+    roll: string
+  ): Promise<{
+    status: string;
+    totalClasses: number;
+    presentClasses: number;
+    relPresentPercentage?: string;
+    data: AttendanceRecord[];
+  }> {
+    const arg = courseId.endsWith(',') ? courseId : `${courseId},`;
+
+    const response = await this.postJson<{
+      status?: string;
+      totalClasses?: number;
+      presentClasses?: number;
+      relPresentPercentage?: string;
+      data?: any[];
+      records?: any[];
+      userAttendanceInfo?: any[];
+    }>('/secure/studentMyCourseAttendance', {
+      courseId: arg,
+      roll: roll.trim(),
+    });
+
+    const resJson = response.data;
+    if (resJson && resJson.status === 'ok') {
+      const records = this.parseAttendanceRecords(
+        resJson.data || resJson.records || resJson.userAttendanceInfo || []
+      );
+      return {
+        status: 'ok',
+        totalClasses: resJson.totalClasses ?? records.length,
+        presentClasses: resJson.presentClasses ?? 0,
+        relPresentPercentage: resJson.relPresentPercentage,
+        data: records,
+      };
+    }
+
+    return {
+      status: 'error',
+      totalClasses: 0,
+      presentClasses: 0,
+      data: [],
+    };
+  }
+
+  /**
+   * Directly synchronizes all course attendance records over HTTP in <300ms
+   */
+  public static async syncAttendance(rollNumber?: string): Promise<AttendanceData> {
+    let roll = rollNumber;
+    if (!roll) {
+      const profile = await CacheService.getCachedProfileData();
+      roll = profile?.roll;
+    }
+
+    const myCoursesRes = await this.get<string>('/secure/studentMyCourses');
+    const html = myCoursesRes.rawText;
+
+    if (!roll) {
+      const infoMatch = html.match(/id=["']userInfo["'][^>]*>([\s\S]*?)<\/div>/i);
+      if (infoMatch) {
+        try {
+          const parsed = JSON.parse(infoMatch[1]);
+          if (parsed && parsed.roll) roll = String(parsed.roll);
+        } catch {}
+      }
+      if (!roll) {
+        const rollMatch = html.match(/["']roll["']\s*:\s*["']?(\w+)["']?/i);
+        if (rollMatch) roll = rollMatch[1];
+      }
+    }
+
+    const courses = this.parseRegisteredCoursesFromHtml(html);
+    if (!courses || courses.length === 0) {
+      const emptyData: AttendanceData = {
+        items: [],
+        timestamp: new Date().toISOString(),
+      };
+      await CacheService.cacheAttendanceData(emptyData);
+      return emptyData;
+    }
+
+    const items: AttendanceItem[] = await Promise.all(
+      courses.map(async (course) => {
+        try {
+          const attRes = await this.getCourseAttendance(course.attendanceArg, roll || '');
+          const total = attRes.totalClasses;
+          const present = attRes.presentClasses;
+          const absent = Math.max(0, total - present);
+          const percentage = total > 0 ? (present / total) * 100 : 100;
+
+          return {
+            courseCode: course.courseCode,
+            courseTitle: course.courseTitle,
+            instructor: course.instructor,
+            present,
+            absent,
+            totalClasses: total,
+            percentage,
+            records: attRes.data,
+            srsStatus: course.srsStatus,
+          };
+        } catch (e) {
+          console.warn(`[HttpPortalClient] Error fetching attendance for ${course.courseCode}:`, e);
+          return {
+            courseCode: course.courseCode,
+            courseTitle: course.courseTitle,
+            instructor: course.instructor,
+            present: 0,
+            absent: 0,
+            totalClasses: 0,
+            percentage: 0,
+            records: [],
+            srsStatus: course.srsStatus,
+          };
+        }
+      })
+    );
+
+    const data: AttendanceData = {
+      items,
+      timestamp: new Date().toISOString(),
+    };
+
+    await CacheService.cacheAttendanceData(data);
+    return data;
   }
 }
 
