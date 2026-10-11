@@ -3,18 +3,12 @@ import { StyleSheet, Text, View, FlatList, TouchableOpacity, RefreshControl, Ale
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
-import { CourseDetail, CourseSRSStatus } from '../services/CacheService';
+import { CourseDetail, CourseSRSStatus, Course } from '../services/CacheService';
 import { getCourseDetailFor } from '../utils/courseCatalog';
 import CourseDetailModal from './CourseDetailModal';
 import CourseMarksModal from './CourseMarksModal';
 import CourseSrsModal, { SrsFormData } from './CourseSrsModal';
-
-export interface Course {
-  courseCode: string;
-  courseTitle: string;
-  instructor: string;
-  srsStatus?: CourseSRSStatus;
-}
+export { Course };
 
 interface CoursesScreenProps {
   courses: Course[];

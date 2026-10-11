@@ -311,13 +311,15 @@ function AppContent() {
     // Load local cache to immediately show dashboards offline
     const cachedProfile = await CacheService.getCachedProfileData();
     const cachedAttendance = await CacheService.getCachedAttendanceData();
+    const cachedCourses = await CacheService.getCachedCoursesData();
     const cachedDetails = await CacheService.getCachedCourseDetails();
     
     if (cachedProfile) {
       setProfileData(cachedProfile);
     }
-    if (cachedAttendance) {
-      setAttendanceData(cachedAttendance);
+    if (cachedCourses && cachedCourses.length > 0) {
+      setCourses(cachedCourses);
+    } else if (cachedAttendance) {
       const submittedSrs = await CacheService.getSubmittedSrsCourses();
       // Map attendance item list back to registered course structures
       const mappedCourses = cachedAttendance.items.map(item => ({
@@ -332,6 +334,9 @@ function AppContent() {
         }
       }));
       setCourses(mappedCourses);
+    }
+    if (cachedAttendance) {
+      setAttendanceData(cachedAttendance);
     }
     if (cachedDetails) {
       setCourseDetails(cachedDetails);
@@ -382,6 +387,51 @@ function AppContent() {
     priorityCourseCodeRef.current = priorityCourseCode || '';
     setSyncScope(scope);
     setSyncActive(true);
+
+    // Fast path: Try direct HTTP calls first (if not specifically MARKS)
+    if (scope !== 'MARKS') {
+      try {
+        if (scope === 'PROFILE') {
+          const freshProfile = await HttpPortalClient.syncProfile();
+          setProfileData(freshProfile);
+          finishSync();
+          return;
+        }
+        if (scope === 'COURSES') {
+          const freshCourses = await HttpPortalClient.syncCourses();
+          setCourses(freshCourses.courses);
+          if (freshCourses.courseDetails) {
+            setCourseDetails((prev) => ({ ...prev, ...freshCourses.courseDetails }));
+          }
+          finishSync();
+          return;
+        }
+        if (scope === 'ATTENDANCE') {
+          const freshAttendance = await HttpPortalClient.syncAttendance();
+          setAttendanceData(freshAttendance);
+          finishSync();
+          return;
+        }
+        if (scope === 'REPORTS') {
+          await ReportsService.syncReports();
+          finishSync();
+          return;
+        }
+        if (scope === 'ALL') {
+          const result = await HttpPortalClient.syncAll();
+          setProfileData(result.profile);
+          setCourses(result.courses);
+          if (result.courseDetails) {
+            setCourseDetails((prev) => ({ ...prev, ...result.courseDetails }));
+          }
+          setAttendanceData(result.attendance);
+          finishSync();
+          return;
+        }
+      } catch (httpErr) {
+        console.warn(`[startSync] Direct HTTP sync for scope [${scope}] failed, falling back to background WebView:`, httpErr);
+      }
+    }
 
     return new Promise<void>((resolve) => {
       syncResolverRef.current = resolve;
@@ -447,6 +497,19 @@ function AppContent() {
       }
       if (scope === 'REPORTS') {
         await ReportsService.syncReports();
+        return;
+      }
+      if (scope === 'PROFILE') {
+        const freshProfile = await HttpPortalClient.syncProfile();
+        setProfileData(freshProfile);
+        return;
+      }
+      if (scope === 'COURSES') {
+        const freshCourses = await HttpPortalClient.syncCourses();
+        setCourses(freshCourses.courses);
+        if (freshCourses.courseDetails) {
+          setCourseDetails((prev) => ({ ...prev, ...freshCourses.courseDetails }));
+        }
         return;
       }
       await startSync(scope, undefined, true);
