@@ -2,7 +2,6 @@ import { Platform, Linking } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { CacheService, ReportItem } from './CacheService';
-import { NetworkReachabilityService } from './NetworkReachabilityService';
 import { SessionLifecycleManager } from './SessionLifecycleManager';
 import { HttpPortalClient } from './HttpPortalClient';
 
@@ -228,16 +227,6 @@ export class ReportsService {
       } catch {
         await FileSystem.deleteAsync(finalPath, { idempotent: true });
       }
-    }
-
-    // Pre-flight reachability check
-    const isShikshaUp = await NetworkReachabilityService.isShikshaReachable(2000);
-    if (!isShikshaUp) {
-      const netState = NetworkReachabilityService.getCurrentState();
-      if (netState === 'CAMPUS_CAPTIVE') {
-        throw new Error('Campus Wi-Fi sign-in required. Please complete captive portal login before downloading reports.');
-      }
-      throw new Error('Campus network required. Please connect to IISERB Wi-Fi or FortiClient VPN (gateway.iiserb.ac.in).');
     }
 
     if (onProgress) onProgress(0.2);

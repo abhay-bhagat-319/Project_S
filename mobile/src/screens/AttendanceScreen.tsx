@@ -8,14 +8,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { AttendanceItem, AttendanceRecord, AttendanceData } from '../services/CacheService';
 import { calculateAttendance } from '../utils/AttendanceCalc';
-import { NetworkState } from '../services/NetworkReachabilityService';
 
 interface AttendanceScreenProps {
   attendanceData: AttendanceData | null;
   onRefresh: () => Promise<void>;
   refreshing: boolean;
   isOffline?: boolean;
-  networkState?: NetworkState;
 }
 
 type Filter = 'ALL' | 'PRESENT' | 'ABSENT';
@@ -25,7 +23,6 @@ export default function AttendanceScreen({
   onRefresh,
   refreshing,
   isOffline,
-  networkState,
 }: AttendanceScreenProps) {
   const insets = useSafeAreaInsets();
   const [selectedCourse, setSelectedCourse] = useState<AttendanceItem | null>(null);
@@ -211,33 +208,14 @@ export default function AttendanceScreen({
 
   const recordsList = selectedCourse ? getFilteredRecords(selectedCourse.records) : [];
 
-  const isCompleteOffline = networkState === 'OFFLINE' || (isOffline && networkState !== 'EXTERNAL_ONLINE' && networkState !== 'CAMPUS_ACTIVE' && networkState !== 'CAMPUS_CAPTIVE');
-  const isCaptive = networkState === 'CAMPUS_CAPTIVE';
-  const isExternalOnline = networkState === 'EXTERNAL_ONLINE';
-
   return (
     <View style={styles.container}>
-      {isCompleteOffline ? (
-        <View style={styles.offlineBanner}>
-          <Ionicons name="cloud-offline-outline" size={15} color="#ffffff" />
-          <Text style={styles.bannerText}>No internet connection. Viewing offline cache.</Text>
-        </View>
-      ) : isCaptive ? (
-        <View style={styles.campusBanner}>
-          <Ionicons name="warning-outline" size={14} color="#f59e0b" />
-          <Text style={styles.campusBannerText}>Wi-Fi Sign-in Required • Log in to captive portal to refresh</Text>
-        </View>
-      ) : isExternalOnline ? (
-        <View style={styles.campusBanner}>
-          <Ionicons name="shield-half" size={14} color="#f59e0b" />
-          <Text style={styles.campusBannerText}>Campus Network Required • Connect to IISERB Wi-Fi or VPN to refresh</Text>
-        </View>
-      ) : attendanceData ? (
+      {attendanceData && (
         <View style={styles.syncBanner}>
           <Ionicons name="sync-outline" size={14} color={Theme.colors.textSecondary} />
           <Text style={styles.syncBannerText}>Cached from {formattedSyncTime()}</Text>
         </View>
-      ) : null}
+      )}
 
       <FlatList
         data={attendanceData?.items || []}

@@ -6,8 +6,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { ScraperService } from '../services/ScraperService';
 import { ReportsService } from '../services/ReportsService';
-import { NetworkReachabilityService, IISERB_VPN_CONFIG } from '../services/NetworkReachabilityService';
-import { CampusConnectionHelper } from '../utils/CampusConnectionHelper';
 import { SessionLifecycleManager } from '../services/SessionLifecycleManager';
 
 export interface PortalWebviewHandle {
@@ -42,16 +40,6 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
   const [progress, setProgress] = useState(0);
   const [isCampusError, setIsCampusError] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
-
-  // Subscribe to reachability: auto-heal when campus Wi-Fi / VPN reconnects
-  useEffect(() => {
-    const unsubscribe = NetworkReachabilityService.subscribe((state) => {
-      if (state === 'CAMPUS_ACTIVE') {
-        setIsCampusError(false);
-      }
-    });
-    return unsubscribe;
-  }, []);
 
   // Register WebView as the authenticated PDF downloader bridge
   useEffect(() => {
@@ -113,7 +101,6 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
     setLoading(false);
     setProgress(1);
     setIsCampusError(false);
-    NetworkReachabilityService.recordSuccess();
     // Inject desktop viewport and clean font smoothing
     webViewRef.current?.injectJavaScript(ScraperService.getDesktopViewportScript());
   };
@@ -121,7 +108,6 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
   const handleError = () => {
     setLoading(false);
     setIsCampusError(true);
-    NetworkReachabilityService.recordFailure('Portal WebView load error').catch(() => {});
   };
 
   const handleRetry = () => {
@@ -272,62 +258,29 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
         {isCampusError && (
           <View style={[styles.fallbackContainer, StyleSheet.absoluteFill, { backgroundColor: Theme.colors.background }]}>
             <View style={styles.fallbackShieldIcon}>
-              <Ionicons name="shield-half" size={44} color="#f59e0b" />
+              <Ionicons name="cloud-offline-outline" size={44} color="#f59e0b" />
             </View>
-            <Text style={styles.fallbackTitle}>Campus Network Required</Text>
+            <Text style={styles.fallbackTitle}>Unable to Reach Shiksha</Text>
             <Text style={styles.fallbackSubtitle}>
-              The Shiksha Portal is hosted on IISER Bhopal's internal intranet and cannot be accessed over public internet without an active tunnel.
+              Please verify your connection to campus Wi-Fi or VPN, then tap retry.
             </Text>
-
-            <View style={styles.vpnInfoBox}>
-              <View style={styles.vpnInfoRow}>
-                <Ionicons name="server-outline" size={16} color={Theme.colors.primary} style={{ marginRight: 8 }} />
-                <Text style={styles.vpnInfoLabel}>VPN Gateway:</Text>
-                <Text style={styles.vpnInfoVal}>{IISERB_VPN_CONFIG.server}</Text>
-              </View>
-              <View style={[styles.vpnInfoRow, { marginTop: 6 }]}>
-                <Ionicons name="hardware-chip-outline" size={16} color={Theme.colors.primary} style={{ marginRight: 8 }} />
-                <Text style={styles.vpnInfoLabel}>Port / Tunnel:</Text>
-                <Text style={styles.vpnInfoVal}>{IISERB_VPN_CONFIG.port} ({IISERB_VPN_CONFIG.tunnelName})</Text>
-              </View>
-            </View>
 
             <View style={styles.fallbackActions}>
               <TouchableOpacity 
                 style={styles.primaryActionBtn} 
-                onPress={() => CampusConnectionHelper.launchFortiClient()}
+                onPress={handleRetry}
+                disabled={isRetrying}
                 activeOpacity={0.7}
               >
-                <Ionicons name="shield-checkmark" size={18} color="#ffffff" style={{ marginRight: 8 }} />
-                <Text style={styles.primaryActionBtnText}>Launch FortiClient VPN</Text>
+                {isRetrying ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <>
+                    <Ionicons name="refresh" size={18} color="#ffffff" style={{ marginRight: 8 }} />
+                    <Text style={styles.primaryActionBtnText}>Retry Connection</Text>
+                  </>
+                )}
               </TouchableOpacity>
-
-              <View style={styles.secondaryActionsRow}>
-                <TouchableOpacity 
-                  style={styles.secondaryActionBtn} 
-                  onPress={() => CampusConnectionHelper.openWifiSettings()}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons name="wifi" size={16} color={Theme.colors.textPrimary} style={{ marginRight: 6 }} />
-                  <Text style={styles.secondaryActionBtnText}>Wi-Fi Settings</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity 
-                  style={styles.retryActionBtn} 
-                  onPress={handleRetry}
-                  disabled={isRetrying}
-                  activeOpacity={0.7}
-                >
-                  {isRetrying ? (
-                    <ActivityIndicator size="small" color={Theme.colors.primary} />
-                  ) : (
-                    <>
-                      <Ionicons name="refresh" size={16} color={Theme.colors.primary} style={{ marginRight: 6 }} />
-                      <Text style={styles.retryActionBtnText}>Retry</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              </View>
             </View>
           </View>
         )}

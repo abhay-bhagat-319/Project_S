@@ -14,8 +14,6 @@ import { ScraperService } from './src/services/ScraperService';
 import { ReportsService } from './src/services/ReportsService';
 import { SessionLifecycleManager } from './src/services/SessionLifecycleManager';
 import { HttpPortalClient } from './src/services/HttpPortalClient';
-import { NetworkReachabilityService, NetworkState } from './src/services/NetworkReachabilityService';
-import { CampusConnectionHelper } from './src/utils/CampusConnectionHelper';
 
 import LockScreen from './src/screens/LockScreen';
 import LoginScreen from './src/screens/LoginScreen';
@@ -70,7 +68,6 @@ function AppContent() {
   const syncResolverRef = useRef<(() => void) | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
-  const [networkState, setNetworkState] = useState<NetworkState>('CAMPUS_ACTIVE');
   
   // Portal Navigation Target
   const [portalTargetUrl, setPortalTargetUrl] = useState<string | null>(null);
@@ -198,22 +195,11 @@ function AppContent() {
       }));
     });
 
-    // Subscribe to network reachability changes
-    const unsubscribeNetwork = NetworkReachabilityService.subscribe((state) => {
-      setNetworkState(state);
-      if (state === 'CAMPUS_ACTIVE') {
-        setIsOffline(false);
-      } else if (state === 'OFFLINE') {
-        setIsOffline(true);
-      }
-    });
-
     checkAppUpdates();
 
     return () => {
       unsubscribeNotification();
       unsubscribeProgress();
-      unsubscribeNetwork();
     };
   }, []);
 
@@ -322,12 +308,6 @@ function AppContent() {
     }
   };
 
-  const checkOfflineStatus = async (): Promise<boolean> => {
-    // Fast probe against Shiksha portal (< 2000ms)
-    const reachable = await NetworkReachabilityService.isShikshaReachable(2000);
-    return !reachable;
-  };
-
   const finishSync = () => {
     setSyncActive(false);
     setRefreshing(false);
@@ -388,32 +368,6 @@ function AppContent() {
       }
     } catch (httpErr: any) {
       console.warn(`[startSync] Direct HTTP sync for scope [${scope}] failed:`, httpErr);
-      const failedState = await NetworkReachabilityService.recordFailure(httpErr?.message || 'Sync failed');
-      if (isUserInitiated) {
-        if (failedState === 'CAMPUS_CAPTIVE') {
-          Alert.alert(
-            'Wi-Fi Sign-in Required',
-            'Connected to campus Wi-Fi, but captive portal login is required to access Shiksha.',
-            [
-              { text: 'Sign In to Wi-Fi', onPress: () => CampusConnectionHelper.openCaptivePortal() },
-              { text: 'Wi-Fi Settings', onPress: () => CampusConnectionHelper.openWifiSettings() },
-              { text: 'OK', style: 'cancel' },
-            ]
-          );
-        } else if (failedState === 'EXTERNAL_ONLINE') {
-          Alert.alert(
-            'Campus Network Required',
-            'Cannot reach Shiksha. Please check your connection to IISERB Wi-Fi or FortiClient VPN (gateway.iiserb.ac.in).',
-            [
-              { text: 'Launch FortiClient', onPress: () => CampusConnectionHelper.launchFortiClient() },
-              { text: 'Wi-Fi Settings', onPress: () => CampusConnectionHelper.openWifiSettings() },
-              { text: 'OK', style: 'cancel' },
-            ]
-          );
-        } else {
-          Alert.alert('Offline Mode', 'Cannot sync portal data. Please check your internet connection.');
-        }
-      }
     } finally {
       finishSync();
     }
@@ -448,30 +402,6 @@ function AppContent() {
       await startSync(scope, undefined, true);
     } catch (e: any) {
       console.warn('Manual HTTP refresh failed:', e);
-      const failedState = await NetworkReachabilityService.recordFailure(e?.message || 'Refresh failed');
-      if (failedState === 'CAMPUS_CAPTIVE') {
-        Alert.alert(
-          'Wi-Fi Sign-in Required',
-          'Connected to campus Wi-Fi, but captive portal login is required to access Shiksha.',
-          [
-            { text: 'Sign In to Wi-Fi', onPress: () => CampusConnectionHelper.openCaptivePortal() },
-            { text: 'Wi-Fi Settings', onPress: () => CampusConnectionHelper.openWifiSettings() },
-            { text: 'OK', style: 'cancel' },
-          ]
-        );
-      } else if (failedState === 'EXTERNAL_ONLINE') {
-        Alert.alert(
-          'Campus Network Required',
-          'Cannot reach Shiksha. Please check your connection to IISERB Wi-Fi or FortiClient VPN (gateway.iiserb.ac.in).',
-          [
-            { text: 'Launch FortiClient', onPress: () => CampusConnectionHelper.launchFortiClient() },
-            { text: 'Wi-Fi Settings', onPress: () => CampusConnectionHelper.openWifiSettings() },
-            { text: 'OK', style: 'cancel' },
-          ]
-        );
-      } else {
-        Alert.alert('Offline Mode', 'Cannot sync portal data. Please check your internet connection.');
-      }
     } finally {
       setRefreshing(false);
     }
@@ -615,8 +545,6 @@ function AppContent() {
                 onBack={() => setSubScreen(null)} 
                 onRefreshPortal={() => startSync('REPORTS', undefined, true)}
                 isSyncing={syncActive && syncScope === 'REPORTS'}
-                networkState={networkState}
-                isOffline={isOffline}
               />
             ) : (
               <DashboardScreen 
@@ -637,7 +565,6 @@ function AppContent() {
               onRefresh={() => handleManualRefresh('ATTENDANCE')} 
               refreshing={refreshing && syncScope === 'ATTENDANCE'}
               isOffline={isOffline}
-              networkState={networkState}
             />
           </View>
 

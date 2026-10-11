@@ -1,11 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ActivityIndicator, Alert, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { SessionLifecycleManager } from '../services/SessionLifecycleManager';
-import { NetworkReachabilityService, NetworkState, IISERB_VPN_CONFIG } from '../services/NetworkReachabilityService';
-import { CampusConnectionHelper } from '../utils/CampusConnectionHelper';
 
 interface LoginScreenProps {
   onSuccess: (username: string) => void;
@@ -17,20 +15,6 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
-  const [networkState, setNetworkState] = useState<NetworkState | 'CHECKING'>('CHECKING');
-
-  useEffect(() => {
-    const unsubscribe = NetworkReachabilityService.subscribe((state) => {
-      setNetworkState(state);
-    });
-    return unsubscribe;
-  }, []);
-
-  const refreshNetworkStatus = async () => {
-    setNetworkState('CHECKING');
-    const state = await NetworkReachabilityService.getNetworkState();
-    setNetworkState(state);
-  };
 
   const handleLogin = async () => {
     const trimmedUser = username.trim();
@@ -52,23 +36,10 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
         onSuccess(trimmedUser);
       } else {
         setLoading(false);
-        if (result.code === 'CAMPUS_NETWORK_REQUIRED') {
-          setNetworkState('EXTERNAL_ONLINE');
-          Alert.alert(
-            'Campus Network Required',
-            'Shiksha portal is accessible only on IISERB Wi-Fi or via FortiClient VPN (gateway.iiserb.ac.in). Please connect and try again.',
-            [
-              { text: 'Launch FortiClient', onPress: () => CampusConnectionHelper.launchFortiClient() },
-              { text: 'Wi-Fi Settings', onPress: () => CampusConnectionHelper.openWifiSettings() },
-              { text: 'OK', style: 'cancel' },
-            ]
-          );
-        } else {
-          Alert.alert(
-            result.code === 'AUTH_FAILED' ? 'Authentication Failed' : 'Connection Notice',
-            result.message || 'Invalid username or password.'
-          );
-        }
+        Alert.alert(
+          result.code === 'AUTH_FAILED' ? 'Authentication Failed' : 'Connection Notice',
+          result.message || 'Invalid username or password.'
+        );
       }
     } catch (e: any) {
       setLoading(false);
@@ -100,86 +71,6 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
           <Text style={styles.title}>Welcome to Shiksha</Text>
           <Text style={styles.subtitle}>Log in using your IISERB LDAP credentials</Text>
         </View>
-
-        {/* Campus Network Guidance Banner for External Networks */}
-        {networkState === 'EXTERNAL_ONLINE' && (
-          <View style={styles.campusNoticeCard}>
-            <View style={styles.campusNoticeHeader}>
-              <Ionicons name="shield-half" size={20} color="#f59e0b" style={{ marginRight: 8 }} />
-              <Text style={styles.campusNoticeTitle}>Campus Network Required</Text>
-            </View>
-            <Text style={styles.campusNoticeText}>
-              Shiksha portal requires an active connection to <Text style={styles.boldText}>IISERB Wi-Fi</Text> or the <Text style={styles.boldText}>FortiClient VPN</Text> ({IISERB_VPN_CONFIG.server}).
-            </Text>
-            <View style={styles.campusNoticeActions}>
-              <TouchableOpacity 
-                style={styles.vpnActionBtn} 
-                onPress={() => CampusConnectionHelper.launchFortiClient()}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="shield-checkmark" size={15} color="#ffffff" style={{ marginRight: 5 }} />
-                <Text style={styles.vpnActionBtnText}>Launch FortiClient</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity 
-                style={styles.wifiActionBtn} 
-                onPress={() => CampusConnectionHelper.openWifiSettings()}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="wifi" size={15} color={Theme.colors.textPrimary} style={{ marginRight: 5 }} />
-                <Text style={styles.wifiActionBtnText}>Wi-Fi</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity 
-                style={styles.recheckBtn} 
-                onPress={refreshNetworkStatus}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="refresh" size={15} color={Theme.colors.primary} />
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
-        {/* Captive Portal Authentication Banner */}
-        {networkState === 'CAMPUS_CAPTIVE' && (
-          <View style={[styles.campusNoticeCard, { borderColor: 'rgba(239, 68, 68, 0.3)', backgroundColor: 'rgba(239, 68, 68, 0.08)' }]}>
-            <View style={styles.campusNoticeHeader}>
-              <Ionicons name="warning" size={20} color="#ef4444" style={{ marginRight: 8 }} />
-              <Text style={[styles.campusNoticeTitle, { color: '#ef4444' }]}>Wi-Fi Sign-in Required</Text>
-            </View>
-            <Text style={styles.campusNoticeText}>
-              You are connected to IISERB Wi-Fi, but captive portal login is required to access the Shiksha intranet.
-            </Text>
-            <View style={styles.campusNoticeActions}>
-              <TouchableOpacity 
-                style={[styles.vpnActionBtn, { backgroundColor: '#ef4444' }]} 
-                onPress={() => CampusConnectionHelper.openCaptivePortal()}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="open-outline" size={15} color="#ffffff" style={{ marginRight: 5 }} />
-                <Text style={styles.vpnActionBtnText}>Sign In to Wi-Fi</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity 
-                style={styles.wifiActionBtn} 
-                onPress={() => CampusConnectionHelper.openWifiSettings()}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="wifi" size={15} color={Theme.colors.textPrimary} style={{ marginRight: 5 }} />
-                <Text style={styles.wifiActionBtnText}>Wi-Fi</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity 
-                style={styles.recheckBtn} 
-                onPress={refreshNetworkStatus}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="refresh" size={15} color={Theme.colors.primary} />
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
 
         <View style={styles.form}>
           <Text style={styles.label}>LDAP Username</Text>
