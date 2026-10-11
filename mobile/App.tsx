@@ -14,6 +14,7 @@ import { CacheService, ProfileData, AttendanceData, CourseDetail } from './src/s
 import { ScraperService } from './src/services/ScraperService';
 import { ReportsService } from './src/services/ReportsService';
 import { SessionLifecycleManager } from './src/services/SessionLifecycleManager';
+import { HttpPortalClient } from './src/services/HttpPortalClient';
 import { NetworkReachabilityService, NetworkState } from './src/services/NetworkReachabilityService';
 import { CampusConnectionHelper } from './src/utils/CampusConnectionHelper';
 
@@ -439,7 +440,21 @@ function AppContent() {
     setSyncScope(scope);
     setRefreshing(true);
     try {
+      if (scope === 'ATTENDANCE') {
+        const fresh = await HttpPortalClient.syncAttendance();
+        setAttendanceData(fresh);
+        return;
+      }
+      if (scope === 'REPORTS') {
+        await ReportsService.syncReports();
+        return;
+      }
       await startSync(scope, undefined, true);
+    } catch (e: any) {
+      console.warn('Manual HTTP refresh failed, falling back to sync:', e);
+      try {
+        await startSync(scope, undefined, true);
+      } catch {}
     } finally {
       setRefreshing(false);
     }
