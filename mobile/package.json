@@ -32,7 +32,9 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "check:attendance": "node --experimental-strip-types tests/attendanceNormalizer.check.ts"
+    "check:attendance": "node --experimental-strip-types tests/attendanceNormalizer.check.ts",
+    "check:portal": "node --experimental-strip-types tests/portalJson.check.ts",
+    "check": "npm run check:attendance && npm run check:portal"
   },
   "private": true
 }

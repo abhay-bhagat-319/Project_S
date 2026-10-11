@@ -28,6 +28,7 @@ export interface DiagEvent {
 }
 
 const STORAGE_KEY = 'shiksha_diag_log_v1';
+const PAGES_KEY = 'shiksha_diag_pages_v1';
 const MAX_EVENTS = 200;
 const PERSIST_THROTTLE_MS = 2500;
 
@@ -152,10 +153,39 @@ export const SyncDiagnostics = {
     };
   },
 
+  /**
+   * Records the structural fingerprint of the last portal page fetched for a
+   * given scope (see utils/portalJson.describePortalPage).
+   *
+   * This is the cheapest way to answer "is /secure/studentMyCourses rendered
+   * server-side or injected by Angular?" from a device: one line in the
+   * diagnostics panel, no HAR export and no file transfer required.
+   */
+  async setPageFingerprint(scope: string, text: string): Promise<void> {
+    try {
+      const raw = await AsyncStorage.getItem(PAGES_KEY);
+      const map = raw ? JSON.parse(raw) : {};
+      map[scope] = { at: Date.now(), text };
+      await AsyncStorage.setItem(PAGES_KEY, JSON.stringify(map));
+    } catch {
+      // ignore
+    }
+  },
+
+  async getPageFingerprints(): Promise<Record<string, { at: number; text: string }>> {
+    try {
+      const raw = await AsyncStorage.getItem(PAGES_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  },
+
   async clear(): Promise<void> {
     events = [];
     try {
       await AsyncStorage.removeItem(STORAGE_KEY);
+      await AsyncStorage.removeItem(PAGES_KEY);
     } catch {
       // ignore
     }

@@ -13,6 +13,7 @@ import {
 } from './CacheService';
 import { SyncDiagnostics } from './SyncDiagnostics';
 import { normalizeCourseAttendance } from '../utils/attendanceNormalizer';
+import { extractJsonCall, describePortalPage } from '../utils/portalJson';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
@@ -334,6 +335,18 @@ export class HttpPortalClient {
     }
     const cleanPath = path.startsWith('/') ? path : `/${path}`;
     return `${this.BASE_URL}${cleanPath}`;
+  }
+
+  /**
+   * Records (and logs) a structural fingerprint of a fetched portal page so a
+   * device-side diagnostics dump is enough to tell server-rendered markup from
+   * Angular-injected markup, login redirects and error pages.
+   */
+  private static recordPageFingerprint(scope: string, html: string, url?: string): string {
+    const fingerprint = describePortalPage(html, url);
+    SyncDiagnostics.log({ kind: 'request', label: `page:${scope}`, detail: fingerprint });
+    SyncDiagnostics.setPageFingerprint(scope, fingerprint).catch(() => {});
+    return fingerprint;
   }
 
   /**
@@ -842,19 +855,30 @@ export class HttpPortalClient {
   public static async getStudentReports(): Promise<ReportItem[]> {
     const response = await this.get<string>('/secure/studentReports');
     const html = response.rawText;
+    this.recordPageFingerprint('REPORTS', html, response.url);
 
     let reports: any[] = [];
 
-    // Strategy 1: Extract JSON array from ng-init='initReports([...])'
-    const initMatch = html.match(/initReports\s*\(\s*(\[.*?\])\s*\)/s);
-    if (initMatch && initMatch[1]) {
-      try {
-        const rawJson = initMatch[1]
-          .replace(/&quot;|&#34;/g, '"')
-          .replace(/&amp;/g, '&');
-        reports = JSON.parse(rawJson);
-      } catch (e) {
-        console.warn('[HttpPortalClient] Error parsing initReports JSON:', e);
+    // Strategy 1a: balanced-bracket extraction — tolerates &quot; escaping,
+    // nesting of any depth, and braces/brackets inside string values (e.g. a
+    // PDF filename or an annotation), all of which defeat a lazy regex.
+    const extracted = extractJsonCall(html, 'initReports');
+    if (Array.isArray(extracted)) {
+      reports = extracted;
+    }
+
+    // Strategy 1b: legacy lazy-regex path, retained as a fallback.
+    if (reports.length === 0) {
+      const initMatch = html.match(/initReports\s*\(\s*(\[.*?\])\s*\)/s);
+      if (initMatch && initMatch[1]) {
+        try {
+          const rawJson = initMatch[1]
+            .replace(/&quot;|&#34;/g, '"')
+            .replace(/&amp;/g, '&');
+          reports = JSON.parse(rawJson);
+        } catch (e) {
+          console.warn('[HttpPortalClient] Error parsing initReports JSON:', e);
+        }
       }
     }
 
@@ -1243,6 +1267,7 @@ export class HttpPortalClient {
     if (!courses || courses.length === 0) {
       const myCoursesRes = await this.get<string>('/secure/studentMyCourses');
       const html = myCoursesRes.rawText;
+      this.recordPageFingerprint('COURSES', html, myCoursesRes.url);
 
       if (!roll) {
         const infoMatch = html.match(/id=["']userInfo["'][^>]*>([\s\S]*?)<\/div>/i);
@@ -1420,19 +1445,24 @@ export class HttpPortalClient {
   public static async getProfile(): Promise<ProfileData> {
     const response = await this.get('/secure/studenthome');
     const html = response.rawText;
+    this.recordPageFingerprint('PROFILE', html, response.url);
 
     // 1. Extract JSON from ng-init="initProfileInfo('...')"
-    const profileMatch =
-      html.match(/initProfileInfo\s*\(\s*['"]?(\{[\s\S]*?\})['"]?\s*\)/) ||
-      html.match(/initProfileInfo\s*\(\s*['"]([\s\S]*?)['"]\s*\)/);
+    //    Balanced-bracket extraction first (handles nesting + braces in string
+    //    values), then the legacy lazy regex as a fallback.
+    let parsed: any = extractJsonCall(html, 'initProfileInfo');
 
-    let parsed: any = null;
-    if (profileMatch && profileMatch[1]) {
-      try {
-        const rawStr = profileMatch[1].replace(/&quot;|&#34;/g, '"').replace(/&amp;/g, '&');
-        parsed = JSON.parse(rawStr);
-      } catch (e) {
-        console.warn('[HttpPortalClient] Failed to parse initProfileInfo JSON:', e);
+    if (!parsed || typeof parsed !== 'object') {
+      const profileMatch =
+        html.match(/initProfileInfo\s*\(\s*['"]?(\{[\s\S]*?\})['"]?\s*\)/) ||
+        html.match(/initProfileInfo\s*\(\s*['"]([\s\S]*?)['"]\s*\)/);
+      if (profileMatch && profileMatch[1]) {
+        try {
+          const rawStr = profileMatch[1].replace(/&quot;|&#34;/g, '"').replace(/&amp;/g, '&');
+          parsed = JSON.parse(rawStr);
+        } catch (e) {
+          console.warn('[HttpPortalClient] Failed to parse initProfileInfo JSON:', e);
+        }
       }
     }
 
@@ -1457,14 +1487,19 @@ export class HttpPortalClient {
 
     // 2. Extract discipline mapping from initDiscp if available
     let discpMap: Record<string, string> = {};
-    const discpMatch =
-      html.match(/initDiscp\s*\(\s*['"]?(\{[\s\S]*?\})['"]?\s*\)/) ||
-      html.match(/initDiscp\s*\(\s*['"]([\s\S]*?)['"]\s*\)/);
-    if (discpMatch && discpMatch[1]) {
-      try {
-        const rawDiscp = discpMatch[1].replace(/&quot;|&#34;/g, '"').replace(/&amp;/g, '&');
-        discpMap = JSON.parse(rawDiscp);
-      } catch {}
+    const discpParsed = extractJsonCall(html, 'initDiscp');
+    if (discpParsed && typeof discpParsed === 'object') {
+      discpMap = discpParsed as Record<string, string>;
+    } else {
+      const discpMatch =
+        html.match(/initDiscp\s*\(\s*['"]?(\{[\s\S]*?\})['"]?\s*\)/) ||
+        html.match(/initDiscp\s*\(\s*['"]([\s\S]*?)['"]\s*\)/);
+      if (discpMatch && discpMatch[1]) {
+        try {
+          const rawDiscp = discpMatch[1].replace(/&quot;|&#34;/g, '"').replace(/&amp;/g, '&');
+          discpMap = JSON.parse(rawDiscp);
+        } catch {}
+      }
     }
 
     const major = parsed.acadIISER && parsed.acadIISER.major ? parsed.acadIISER.major : '';
@@ -1480,21 +1515,26 @@ export class HttpPortalClient {
       }));
     } else {
       // Fallback to initPrformanceRep if performance array inside profile is empty
-      const perfMatch =
-        html.match(/initPrformanceRep\s*\(\s*['"]?(\{[\s\S]*?\})['"]?\s*\)/) ||
-        html.match(/initPrformanceRep\s*\(\s*['"]([\s\S]*?)['"]\s*\)/);
-      if (perfMatch && perfMatch[1]) {
-        try {
-          const rawPerf = perfMatch[1].replace(/&quot;|&#34;/g, '"').replace(/&amp;/g, '&');
-          const pData = JSON.parse(rawPerf);
-          if (pData && Array.isArray(pData.x)) {
-            performance = pData.x.map((semName: string, sIdx: number) => ({
-              sem: semName,
-              spi: pData.ySPI && pData.ySPI[sIdx] !== undefined ? Number(pData.ySPI[sIdx]) : 0,
-              cpi: pData.yCPI && pData.yCPI[sIdx] !== undefined ? Number(pData.yCPI[sIdx]) : 0,
-            }));
-          }
-        } catch {}
+      let pData: any = extractJsonCall(html, 'initPrformanceRep');
+
+      if (!pData) {
+        const perfMatch =
+          html.match(/initPrformanceRep\s*\(\s*['"]?(\{[\s\S]*?\})['"]?\s*\)/) ||
+          html.match(/initPrformanceRep\s*\(\s*['"]([\s\S]*?)['"]\s*\)/);
+        if (perfMatch && perfMatch[1]) {
+          try {
+            const rawPerf = perfMatch[1].replace(/&quot;|&#34;/g, '"').replace(/&amp;/g, '&');
+            pData = JSON.parse(rawPerf);
+          } catch {}
+        }
+      }
+
+      if (pData && Array.isArray(pData.x)) {
+        performance = pData.x.map((semName: string, sIdx: number) => ({
+          sem: semName,
+          spi: pData.ySPI && pData.ySPI[sIdx] !== undefined ? Number(pData.ySPI[sIdx]) : 0,
+          cpi: pData.yCPI && pData.yCPI[sIdx] !== undefined ? Number(pData.yCPI[sIdx]) : 0,
+        }));
       }
     }
 
@@ -1615,6 +1655,7 @@ export class HttpPortalClient {
   }> {
     const response = await this.get('/secure/studentMyCourses');
     const html = response.rawText;
+    this.recordPageFingerprint('COURSES', html, response.url);
 
     const rawCourses = this.parseRegisteredCoursesFromHtml(html);
 

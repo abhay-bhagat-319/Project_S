@@ -120,9 +120,10 @@ export default function SettingsScreen({
    */
   const handleShowDiagnostics = async () => {
     try {
-      const [events, summary] = await Promise.all([
+      const [events, summary, pages] = await Promise.all([
         SyncDiagnostics.getRecent(20),
         SyncDiagnostics.summary(),
+        SyncDiagnostics.getPageFingerprints(),
       ]);
       const health = HttpPortalClient.getPortalHealth();
       const header = [
@@ -132,9 +133,23 @@ export default function SettingsScreen({
         '--------------------------------------',
       ];
       const lines = events.length > 0 ? SyncDiagnostics.format(events) : ['No sync activity recorded yet.'];
+
+      // Structural fingerprints of the last portal page fetched per scope:
+      // this is what tells server-rendered markup apart from Angular-injected
+      // markup (see utils/portalJson.describePortalPage).
+      const pageLines = Object.entries(pages).map(([scope, entry]) => {
+        const time = new Date(entry.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return `${scope} @${time}: ${entry.text}`;
+      });
+
       Alert.alert(
         'Sync Diagnostics',
-        [...header, ...lines].join('\n'),
+        [
+          ...header,
+          ...pageLines,
+          pageLines.length > 0 ? '--------------------------------------' : '',
+          ...lines,
+        ].filter(Boolean).join('\n'),
         [
           {
             text: 'Clear log',

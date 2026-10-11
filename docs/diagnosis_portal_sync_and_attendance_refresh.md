@@ -67,6 +67,16 @@ Code changes shipped with this document:
 | `SettingsScreen.tsx` | "Sync Diagnostics" row: portal reachability, failure streak, last 20 events (paths/status/durations only — no cookies or bodies). |
 | `tests/attendanceNormalizer.check.ts` *(new)* | 10 assertions covering the envelopes that used to produce fake 0% cards. Run with `npm run check:attendance` (Node 22+). |
 
+**Patch 0b - the same turn, after the portal-page HTML could not be transferred to the analyst environment:**
+
+| File | Change |
+|---|---|
+| `src/utils/portalJson.ts` *(new)* | `extractJsonCall(source, fnName)` - a balanced-bracket scanner with string/escape tracking that replaces the lazy regexes used for `initReports`, `initProfileInfo`, `initDiscp` and `initPrformanceRep`. The old `/(\{[\s\S]*?\})/` style patterns truncate at the first `}` **anywhere**, including one inside a string value (a PDF filename, an annotation, a course title), which produces invalid JSON and a silent parse failure. Also exposes `describePortalPage(html, url)` - a one-line structural fingerprint of any portal response. |
+| `HttpPortalClient.ts` | Uses the balanced extractor first for reports/profile/discipline/performance, keeping the legacy regex as a fallback; records a page fingerprint for every `studenthome`, `studentMyCourses` and `studentReports` fetch. |
+| `SyncDiagnostics.ts` | Persists the last fingerprint per scope. |
+| `SettingsScreen.tsx` | The Sync Diagnostics panel now shows those fingerprints, so **one screenshot of that dialog answers which markup shape the portal is serving** - no HAR export and no file transfer required. |
+| `tests/portalJson.check.ts` *(new)* | 13 assertions, including the regression case where braces/brackets appear inside string values, and the fingerprint cases that distinguish a rendered-but-empty `<tbody>` (Angular-injected) from server-rendered rows. Run with `npm run check:portal`; `npm run check` runs both suites (23 checks). |
+
 **Observable behaviour after Patch 0, with the portal down**
 
 * Login still works (unchanged).
@@ -372,7 +382,20 @@ The parsers are written against saved page HTML that is git-ignored and absent h
 4. `POST /secure/studentMyCourseAttendance` → request **and** response, plus response headers. *Need:* the real status/count key names and types, and whether `X-Requested-With`/`Content-Type` changes the answer.
 5. Login `POST /ldap_login_progress` → response headers only (`Set-Cookie` **names** and attributes, not values). *Need:* confirm the session cookie name (`PHPSESSID` vs `ci_session`) and whether more than one cookie is issued.
 
-**Capture recipe (no code changes needed):**
+**Fastest route (no files, no HAR):** open **Settings -> Sync Diagnostics** in the app once the portal is
+up and share the `COURSES`/`ATTENDANCE`/`PROFILE`/`REPORTS` fingerprint lines. They look like:
+
+```
+COURSES @10:42: bytes=184320 dataTable=y tr=6 tbodyTr=6 ngRepeat=n ngApp=y login=n courseKeys=0 initReports=0 initProfile=0 url=/secure/studentMyCourses
+```
+
+* `tbodyTr` > 0 with `ngRepeat=n` -> the course table is server-rendered and the current parser is correct.
+* `tbodyTr=0` (or `tbodyTr=1` with `no data`) while `ngRepeat=y` -> the table is Angular-injected, the HTML
+  parser can never see courses, and the fix is to call the JSON endpoint the controller uses.
+* `login=y` -> the request was served the login page (session question, see P0.1).
+* `bytes` near zero or a 5xx/HTML error page -> the portal backend for that page is down (see 1.2).
+
+**Capture recipe (if the raw files are preferred):**
 
 1. On a laptop connected to **campus Wi-Fi or the IISERB VPN**, log into `https://shiksha.iiserb.ac.in` in Chrome/Edge.
 2. For each page (`/secure/studenthome`, `/secure/studentMyCourses`, `/secure/studentReports`): press **Ctrl+U** ("View page source" — *not* the DevTools Elements panel, which shows the post-Angular DOM) and save the file.
@@ -381,6 +404,10 @@ The parsers are written against saved page HTML that is git-ignored and absent h
 5. Drop the files into `docs/portal_pages/` (already git-ignored, so nothing becomes public) or attach them here.
 
 > **Do not wait for the portal to be stable to send these.** Even a partial capture — the My Courses *source* view taken during a slow load — settles §1.1. And the new **Settings → Sync Diagnostics** log records what the app actually received during an outage (paths, status codes, durations), which is exactly the evidence needed to confirm §1.2 in the field.
+
+Note: two attempts to attach these HTML files to the working session did not reach the analyst environment,
+so the fingerprint route above is the recommended path. As a fallback, rename the `.html` files to `.txt` and
+attach them, zip them into a single archive, or paste the relevant `<tbody>`/`<script>` snippets directly as text.
 
 Alternative if you only have the phone: add a `__DEV__`-only dump in `executeRequest` that writes `rawText` to `FileSystem.documentDirectory + 'capture_' + <sanitised path> + '.html'`, reproduce each screen once, and `adb pull` the files. I can write that patch in ~20 lines if you want it.
 
