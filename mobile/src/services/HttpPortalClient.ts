@@ -1,6 +1,15 @@
 import { NetworkReachabilityService } from './NetworkReachabilityService';
 import * as FileSystem from 'expo-file-system/legacy';
-import { CacheService, ReportItem, AttendanceData, AttendanceItem, AttendanceRecord } from './CacheService';
+import {
+  CacheService,
+  ReportItem,
+  AttendanceData,
+  AttendanceItem,
+  AttendanceRecord,
+  ProfileData,
+  Course,
+  CourseDetail,
+} from './CacheService';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
@@ -798,6 +807,265 @@ export class HttpPortalClient {
 
     await CacheService.cacheAttendanceData(data);
     return data;
+  }
+
+  /**
+   * Fetches and parses student profile and academic performance from /secure/studenthome
+   */
+  public static async getProfile(): Promise<ProfileData> {
+    const response = await this.get('/secure/studenthome');
+    const html = response.rawText;
+
+    // 1. Extract JSON from ng-init="initProfileInfo('...')"
+    const profileMatch =
+      html.match(/initProfileInfo\s*\(\s*['"]?(\{[\s\S]*?\})['"]?\s*\)/) ||
+      html.match(/initProfileInfo\s*\(\s*['"]([\s\S]*?)['"]\s*\)/);
+
+    let parsed: any = null;
+    if (profileMatch && profileMatch[1]) {
+      try {
+        const rawStr = profileMatch[1].replace(/&quot;|&#34;/g, '"').replace(/&amp;/g, '&');
+        parsed = JSON.parse(rawStr);
+      } catch (e) {
+        console.warn('[HttpPortalClient] Failed to parse initProfileInfo JSON:', e);
+      }
+    }
+
+    if (!parsed) {
+      // Fallback: search for profile JSON in document text
+      const jsonMatch = html.match(/\{[\s\S]*?"roll"[\s\S]*?"name"[\s\S]*?\}/);
+      if (jsonMatch) {
+        try {
+          parsed = JSON.parse(jsonMatch[0].replace(/&quot;|&#34;/g, '"').replace(/&amp;/g, '&'));
+        } catch {}
+      }
+    }
+
+    if (!parsed) {
+      throw new Error('Unable to extract student profile information from portal.');
+    }
+
+    // 2. Extract discipline mapping from initDiscp if available
+    let discpMap: Record<string, string> = {};
+    const discpMatch =
+      html.match(/initDiscp\s*\(\s*['"]?(\{[\s\S]*?\})['"]?\s*\)/) ||
+      html.match(/initDiscp\s*\(\s*['"]([\s\S]*?)['"]\s*\)/);
+    if (discpMatch && discpMatch[1]) {
+      try {
+        const rawDiscp = discpMatch[1].replace(/&quot;|&#34;/g, '"').replace(/&amp;/g, '&');
+        discpMap = JSON.parse(rawDiscp);
+      } catch {}
+    }
+
+    const major = parsed.acadIISER && parsed.acadIISER.major ? parsed.acadIISER.major : '';
+    const dept = (major && discpMap[major]) || (major ? major.toUpperCase() : (parsed.dept || ''));
+
+    // 3. Performance array extraction
+    let performance: Array<{ sem: string; spi: number; cpi: number }> = [];
+    if (Array.isArray(parsed.performance) && parsed.performance.length > 0) {
+      performance = parsed.performance.map((p: any) => ({
+        sem: String(p.sem || ''),
+        spi: p.spi !== undefined ? Number(p.spi) : 0,
+        cpi: p.cpi !== undefined ? Number(p.cpi) : 0,
+      }));
+    } else {
+      // Fallback to initPrformanceRep if performance array inside profile is empty
+      const perfMatch =
+        html.match(/initPrformanceRep\s*\(\s*['"]?(\{[\s\S]*?\})['"]?\s*\)/) ||
+        html.match(/initPrformanceRep\s*\(\s*['"]([\s\S]*?)['"]\s*\)/);
+      if (perfMatch && perfMatch[1]) {
+        try {
+          const rawPerf = perfMatch[1].replace(/&quot;|&#34;/g, '"').replace(/&amp;/g, '&');
+          const pData = JSON.parse(rawPerf);
+          if (pData && Array.isArray(pData.x)) {
+            performance = pData.x.map((semName: string, sIdx: number) => ({
+              sem: semName,
+              spi: pData.ySPI && pData.ySPI[sIdx] !== undefined ? Number(pData.ySPI[sIdx]) : 0,
+              cpi: pData.yCPI && pData.yCPI[sIdx] !== undefined ? Number(pData.yCPI[sIdx]) : 0,
+            }));
+          }
+        } catch {}
+      }
+    }
+
+    // 4. Photo URL resolution
+    let photoUrl = '';
+    if (parsed.profilePicture && typeof parsed.profilePicture === 'string') {
+      photoUrl = parsed.profilePicture;
+    } else if (parsed._attachments && parsed._id) {
+      const attachKeys = Object.keys(parsed._attachments);
+      const picKey = attachKeys.find((k) => {
+        const lk = k.toLowerCase();
+        return lk.includes('profilepic') || lk.includes('.jpg') || lk.includes('.png') || lk.includes('.jpeg');
+      });
+      if (picKey) {
+        photoUrl = `https://shiksha.iiserb.ac.in/students/profilepic/${parsed._id}/${picKey}`;
+      }
+    }
+    if (!photoUrl) {
+      const imgMatch = html.match(/<img[^>]+src=["'](https?:\/\/[^"']*profilepic[^"']*)["']/i);
+      if (imgMatch) {
+        photoUrl = imgMatch[1];
+      }
+    }
+
+    // Preserve existing photoBase64 from cache if roll matches
+    let photoBase64: string | undefined = undefined;
+    const existingCache = await CacheService.getCachedProfileData();
+    if (existingCache && existingCache.roll === String(parsed.roll || '') && existingCache.photoBase64) {
+      photoBase64 = existingCache.photoBase64;
+    }
+
+    const profileData: ProfileData = {
+      name: String(parsed.name || ''),
+      roll: String(parsed.roll || ''),
+      dept,
+      passedCourses:
+        parsed.current && Array.isArray(parsed.current.passedCourses)
+          ? parsed.current.passedCourses
+          : (Array.isArray(parsed.passedCourses) ? parsed.passedCourses : []),
+      failedCourses:
+        parsed.current && Array.isArray(parsed.current.failedCourses)
+          ? parsed.current.failedCourses
+          : (Array.isArray(parsed.failedCourses) ? parsed.failedCourses : []),
+      performance,
+      photoUrl: photoUrl || undefined,
+      photoBase64,
+    };
+
+    // 5. If reports are embedded in the profile, cache them immediately
+    if (Array.isArray(parsed.reports) && parsed.reports.length > 0) {
+      try {
+        const normalizedReports: ReportItem[] = parsed.reports
+          .map((r: any, idx: number) => {
+            let fileUrl = r.file || '';
+            if (fileUrl && !fileUrl.startsWith('http')) {
+              fileUrl = fileUrl.startsWith('/')
+                ? `https://shiksha.iiserb.ac.in${fileUrl}`
+                : `https://shiksha.iiserb.ac.in/${fileUrl}`;
+            }
+            const type = (r.type || 'Grade Report').trim();
+            const sem = (r.sem || '').trim();
+            const annotation = (r.annotation || `${type}${sem ? ` (${sem})` : ''}`).trim();
+            const safeId = `${sem}-${type}`.toLowerCase().replace(/[^a-z0-9_-]/g, '_') || `report_${idx}`;
+            return {
+              id: safeId,
+              type,
+              sem,
+              annotation,
+              file: fileUrl,
+              show: r.show !== false,
+            };
+          })
+          .filter((r: any) => r.file && r.file.length > 0);
+
+        if (normalizedReports.length > 0) {
+          await CacheService.cacheReportsData(normalizedReports);
+        }
+      } catch (e) {
+        console.warn('[HttpPortalClient] Error caching embedded reports:', e);
+      }
+    }
+
+    return profileData;
+  }
+
+  /**
+   * Syncs profile data directly via HTTP and caches it locally
+   */
+  public static async syncProfile(): Promise<ProfileData> {
+    const profile = await this.getProfile();
+    await CacheService.cacheProfileData(profile);
+    NetworkReachabilityService.recordSuccess();
+    return profile;
+  }
+
+  /**
+   * Fetches registered courses list and course details from /secure/studentMyCourses
+   */
+  public static async getCourses(): Promise<{
+    courses: Course[];
+    courseDetails: Record<string, CourseDetail>;
+  }> {
+    const response = await this.get('/secure/studentMyCourses');
+    const html = response.rawText;
+
+    const rawCourses = this.parseRegisteredCoursesFromHtml(html);
+    const submittedSrs = await CacheService.getSubmittedSrsCourses();
+
+    const courses: Course[] = rawCourses.map((c) => ({
+      courseCode: c.courseCode,
+      courseTitle: c.courseTitle,
+      instructor: c.instructor,
+      srsStatus: {
+        midSemAvailable: c.srsStatus.midSemAvailable,
+        midSemUrl: c.srsStatus.midSemUrl,
+        endSemAvailable: c.srsStatus.endSemAvailable,
+        endSemUrl: c.srsStatus.endSemUrl,
+        isSubmitted: submittedSrs.includes(c.courseCode),
+      },
+    }));
+
+    const cachedDetails = (await CacheService.getCachedCourseDetails()) || {};
+    const courseDetails: Record<string, CourseDetail> = { ...cachedDetails };
+
+    return { courses, courseDetails };
+  }
+
+  /**
+   * Syncs registered courses directly via HTTP and caches them locally
+   */
+  public static async syncCourses(): Promise<{
+    courses: Course[];
+    courseDetails: Record<string, CourseDetail>;
+  }> {
+    const result = await this.getCourses();
+    await CacheService.cacheCoursesData(result.courses);
+    if (result.courseDetails && Object.keys(result.courseDetails).length > 0) {
+      await CacheService.cacheCourseDetails(result.courseDetails);
+    }
+    NetworkReachabilityService.recordSuccess();
+    return result;
+  }
+
+  /**
+   * Performs an instant complete portal sync of Profile, Courses, Attendance, and Reports
+   */
+  public static async syncAll(): Promise<{
+    profile: ProfileData;
+    courses: Course[];
+    courseDetails: Record<string, CourseDetail>;
+    attendance: AttendanceData;
+    reports: ReportItem[];
+  }> {
+    const [profile, coursesResult] = await Promise.all([
+      this.syncProfile(),
+      this.syncCourses(),
+    ]);
+
+    const attendance = await this.syncAttendance();
+
+    let reports: ReportItem[] = [];
+    try {
+      reports = await this.getStudentReports();
+      if (reports.length > 0) {
+        await CacheService.cacheReportsData(reports);
+      }
+    } catch (e) {
+      console.warn('[HttpPortalClient] Error syncing reports in syncAll:', e);
+      reports = (await CacheService.getCachedReportsData()) || [];
+    }
+
+    await CacheService.setLastSyncTime(Date.now());
+    NetworkReachabilityService.recordSuccess();
+
+    return {
+      profile,
+      courses: coursesResult.courses,
+      courseDetails: coursesResult.courseDetails,
+      attendance,
+      reports,
+    };
   }
 }
 

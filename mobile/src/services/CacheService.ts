@@ -25,6 +25,13 @@ export interface CourseSRSStatus {
   isSubmitted?: boolean;
 }
 
+export interface Course {
+  courseCode: string;
+  courseTitle: string;
+  instructor: string;
+  srsStatus?: CourseSRSStatus;
+}
+
 export interface ReportItem {
   id: string;
   type: string;
@@ -59,6 +66,7 @@ export interface CourseMarksData {
 
 const KEY_PROFILE_DATA = 'shiksha_cache_profile';
 const KEY_ATTENDANCE_DATA = 'shiksha_cache_attendance';
+const KEY_COURSES_DATA = 'shiksha_cache_courses';
 const KEY_COURSE_DETAILS = 'shiksha_cache_course_details';
 const KEY_COURSE_MARKS_PREFIX = 'shiksha_cache_marks_';
 const KEY_REPORTS_DATA = 'shiksha_cache_reports';
@@ -142,6 +150,21 @@ export const CacheService = {
    */
   async getCachedAttendanceData(): Promise<AttendanceData | null> {
     const raw = await AsyncStorage.getItem(KEY_ATTENDANCE_DATA);
+    return raw ? JSON.parse(raw) : null;
+  },
+
+  /**
+   * Cache registered courses list
+   */
+  async cacheCoursesData(courses: Course[]): Promise<void> {
+    await AsyncStorage.setItem(KEY_COURSES_DATA, JSON.stringify(courses));
+  },
+
+  /**
+   * Retrieve cached registered courses list
+   */
+  async getCachedCoursesData(): Promise<Course[] | null> {
+    const raw = await AsyncStorage.getItem(KEY_COURSES_DATA);
     return raw ? JSON.parse(raw) : null;
   },
 
