@@ -13,7 +13,8 @@ import { CacheService, ProfileData, AttendanceData, CourseDetail } from './src/s
 import { ScraperService } from './src/services/ScraperService';
 import { ReportsService } from './src/services/ReportsService';
 import { SessionLifecycleManager } from './src/services/SessionLifecycleManager';
-import { HttpPortalClient } from './src/services/HttpPortalClient';
+import { HttpPortalClient, PortalHttpError, PortalErrorCode } from './src/services/HttpPortalClient';
+import { SyncDiagnostics } from './src/services/SyncDiagnostics';
 
 import LockScreen from './src/screens/LockScreen';
 import LoginScreen from './src/screens/LoginScreen';
@@ -26,6 +27,7 @@ import AcademicSchedulesScreen from './src/screens/AcademicSchedulesScreen';
 import ReportsScreen from './src/screens/ReportsScreen';
 import UpdateModal from './src/screens/UpdateModal';
 import BackgroundDownloadPill from './src/components/BackgroundDownloadPill';
+import SyncStatusBanner from './src/components/SyncStatusBanner';
 import { UpdateService, UpdateInfo } from './src/services/UpdateService';
 import { NotificationService } from './src/services/NotificationService';
 
@@ -68,6 +70,15 @@ function AppContent() {
   const syncResolverRef = useRef<(() => void) | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
+
+  // Last sync failure, surfaced through the SyncStatusBanner. Kept separately
+  // from the data state so a failed refresh never looks like "you have no data".
+  const [syncError, setSyncError] = useState<{
+    scope: SyncScope;
+    code: PortalErrorCode;
+    message: string;
+  } | null>(null);
+  const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
   
   // Portal Navigation Target
   const [portalTargetUrl, setPortalTargetUrl] = useState<string | null>(null);
@@ -261,6 +272,11 @@ function AppContent() {
   };
 
   const loadCacheAndLogin = async () => {
+    // Age of the newest successfully synced scope (for the status banner)
+    CacheService.getLastSuccessAt()
+      .then((at) => setLastSyncAt(at))
+      .catch(() => {});
+
     // Load local cache to immediately show dashboards offline
     const cachedProfile = await CacheService.getCachedProfileData();
     const cachedAttendance = await CacheService.getCachedAttendanceData();
@@ -304,7 +320,7 @@ function AppContent() {
     // Check sync cooldown
     const needsSync = await CacheService.isSyncCooledDown();
     if (needsSync) {
-      startSync('ALL');
+      runSync('ALL');
     }
   };
 
@@ -317,7 +333,18 @@ function AppContent() {
     }
   };
 
-  const startSync = async (scope: SyncScope = 'ALL', priorityCourseCode?: string, isUserInitiated = false): Promise<void> => {
+  /**
+   * Single entry point for every portal sync.
+   *
+   * Previously startSync() and handleManualRefresh() each re-implemented the
+   * same five-way scope switch with subtle drift (manual refresh bypassed
+   * syncActive, so the header spinner never appeared; the REPORTS scope updated
+   * no state at all). Both are now this one function.
+   */
+  const runSync = async (
+    scope: SyncScope = 'ALL',
+    options: { userInitiated?: boolean; priorityCourseCode?: string } = {}
+  ): Promise<void> => {
     const creds = await SecureStorageService.getCredentials();
     if (!creds) {
       setAppState('NEEDS_LOGIN');
@@ -326,11 +353,18 @@ function AppContent() {
     }
     setCredentials(creds);
 
-    console.log(`Starting portal sync [scope: ${scope}${priorityCourseCode ? `, priority: ${priorityCourseCode}` : ''}]...`);
+    const userInitiated = options.userInitiated === true;
+
+    console.log(`Starting portal sync [scope: ${scope}${options.priorityCourseCode ? `, priority: ${options.priorityCourseCode}` : ''}]...`);
     syncScopeRef.current = scope;
-    priorityCourseCodeRef.current = priorityCourseCode || '';
+    priorityCourseCodeRef.current = options.priorityCourseCode || '';
     setSyncScope(scope);
     setSyncActive(true);
+    if (userInitiated) {
+      setRefreshing(true);
+    } else {
+      setRefreshing(false);
+    }
 
     try {
       if (scope === 'PROFILE') {
@@ -343,7 +377,38 @@ function AppContent() {
           setCourseDetails((prev) => ({ ...prev, ...freshCourses.courseDetails }));
         }
       } else if (scope === 'ATTENDANCE') {
-        const freshAttendance = await HttpPortalClient.syncAttendance();
+        // Reuse the cached course list when it is fresh, so a pull-to-refresh
+        // does not re-download the whole My Courses page. Cards update as each
+        // course request lands.
+        const cachedCourses = await CacheService.getCachedCoursesData();
+        const coursesAreFresh = !(await CacheService.isScopeStale('COURSES', 12 * 60 * 60 * 1000));
+        // Only skip the /studentMyCourses fetch when every cached course carries
+        // the portal's own attendance argument; otherwise the per-course POSTs
+        // could be built with the wrong identifier.
+        const reusableCourses =
+          coursesAreFresh &&
+          cachedCourses &&
+          cachedCourses.length > 0 &&
+          cachedCourses.every((c) => !!c.attendanceArg)
+            ? cachedCourses
+            : undefined;
+        const freshAttendance = await HttpPortalClient.syncAttendance({
+          courses: reusableCourses,
+          onCourse: (item) => {
+            setAttendanceData((prev) => {
+              if (!prev) {
+                // First sync with no cache yet: still show cards as they land.
+                return { items: [item], timestamp: new Date().toISOString() };
+              }
+              const existingIndex = prev.items.findIndex((i) => i.courseCode === item.courseCode);
+              const items =
+                existingIndex >= 0
+                  ? prev.items.map((i, idx) => (idx === existingIndex ? item : i))
+                  : [...prev.items, item];
+              return { ...prev, items };
+            });
+          },
+        });
         setAttendanceData(freshAttendance);
       } else if (scope === 'REPORTS') {
         await ReportsService.syncReports();
@@ -352,59 +417,54 @@ function AppContent() {
         setCourses(fresh.courses);
         if (fresh.courseDetails) {
           setCourseDetails((prev) => ({ ...prev, ...fresh.courseDetails }));
-          if (priorityCourseCode && fresh.courseDetails[priorityCourseCode] && marksResolveMapRef.current[priorityCourseCode]) {
-            marksResolveMapRef.current[priorityCourseCode](fresh.courseDetails[priorityCourseCode]);
-            delete marksResolveMapRef.current[priorityCourseCode];
+          if (options.priorityCourseCode && fresh.courseDetails[options.priorityCourseCode] && marksResolveMapRef.current[options.priorityCourseCode]) {
+            marksResolveMapRef.current[options.priorityCourseCode](fresh.courseDetails[options.priorityCourseCode]);
+            delete marksResolveMapRef.current[options.priorityCourseCode];
           }
         }
       } else if (scope === 'ALL') {
         const result = await HttpPortalClient.syncAll();
-        setProfileData(result.profile);
-        setCourses(result.courses);
+
+        // Only overwrite state for scopes that actually succeeded; failed or
+        // degraded scopes keep whatever the cache/UI already shows.
+        if (result.profile) setProfileData(result.profile);
+        if (result.courses) setCourses(result.courses);
         if (result.courseDetails) {
           setCourseDetails((prev) => ({ ...prev, ...result.courseDetails }));
         }
-        setAttendanceData(result.attendance);
+        if (result.attendance) setAttendanceData(result.attendance);
+
+        if (result.errors.length > 0) {
+          const primary = result.errors[0];
+          setSyncError({ scope: primary.scope, code: primary.code, message: primary.message });
+        } else {
+          setSyncError(null);
+        }
       }
-    } catch (httpErr: any) {
-      console.warn(`[startSync] Direct HTTP sync for scope [${scope}] failed:`, httpErr);
+
+      if (scope !== 'ALL') {
+        setSyncError(null);
+      }
+    } catch (err: any) {
+      const code: PortalErrorCode = err instanceof PortalHttpError ? err.code : 'UNKNOWN';
+      const message = err?.message || 'Sync failed.';
+      console.warn(`[runSync] scope [${scope}] failed (${code}): ${message}`);
+      setSyncError({ scope, code, message });
     } finally {
+      CacheService.getLastSuccessAt()
+        .then((at) => setLastSyncAt(at))
+        .catch(() => {});
       finishSync();
     }
   };
 
   const handleManualRefresh = async (scope: SyncScope = 'ATTENDANCE') => {
-    setSyncScope(scope);
-    setRefreshing(true);
-    try {
-      if (scope === 'ATTENDANCE') {
-        const fresh = await HttpPortalClient.syncAttendance();
-        setAttendanceData(fresh);
-        return;
-      }
-      if (scope === 'REPORTS') {
-        await ReportsService.syncReports();
-        return;
-      }
-      if (scope === 'PROFILE') {
-        const freshProfile = await HttpPortalClient.syncProfile();
-        setProfileData(freshProfile);
-        return;
-      }
-      if (scope === 'COURSES') {
-        const freshCourses = await HttpPortalClient.syncCourses();
-        setCourses(freshCourses.courses);
-        if (freshCourses.courseDetails) {
-          setCourseDetails((prev) => ({ ...prev, ...freshCourses.courseDetails }));
-        }
-        return;
-      }
-      await startSync(scope, undefined, true);
-    } catch (e: any) {
-      console.warn('Manual HTTP refresh failed:', e);
-    } finally {
-      setRefreshing(false);
-    }
+    await runSync(scope, { userInitiated: true });
+  };
+
+  const handleRetryFromBanner = async () => {
+    const scope = syncError?.scope || 'ALL';
+    await runSync(scope, { userInitiated: true });
   };
 
   const handleRefreshMarks = async (courseCode: string): Promise<any> => {
@@ -445,7 +505,7 @@ function AppContent() {
 
   const completeLogin = async () => {
     setAppState('LOGGED_IN');
-    startSync();
+    runSync('ALL');
   };
 
   const handleUnlockSuccess = async () => {
@@ -458,6 +518,8 @@ function AppContent() {
     setCourses([]);
     setCourseDetails({});
     setCredentials(null);
+    setSyncError(null);
+    setLastSyncAt(null);
     setSubScreen(null);
     setActiveTab('Profile');
     pagerRef.current?.setPageWithoutAnimation(0);
@@ -519,6 +581,18 @@ function AppContent() {
             </View>
           )}
 
+      {/* Sync health banner: explains a failed refresh instead of silently
+          showing stale/empty data. Hidden while the Portal tab is focused. */}
+      {activeTab !== 'Portal' && (
+        <SyncStatusBanner
+          error={syncError}
+          lastSyncAt={lastSyncAt}
+          retrying={syncActive}
+          onRetry={handleRetryFromBanner}
+          onDismiss={() => setSyncError(null)}
+        />
+      )}
+
       {/* Screen Content Area with Native Gesture PagerView */}
       <View style={styles.content}>
         {/*
@@ -543,7 +617,7 @@ function AppContent() {
             ) : subScreen === 'reports' ? (
               <ReportsScreen 
                 onBack={() => setSubScreen(null)} 
-                onRefreshPortal={() => startSync('REPORTS', undefined, true)}
+                onRefreshPortal={() => runSync('REPORTS', { userInitiated: true })}
                 isSyncing={syncActive && syncScope === 'REPORTS'}
               />
             ) : (

@@ -107,7 +107,21 @@ export default function AttendanceScreen({
   };
 
   const renderAttendanceCard = ({ item }: { item: AttendanceItem }) => {
-    const { percentage, isAbove, message, value } = calculateAttendance(item.present, item.totalClasses);
+    // A course whose refresh failed (and that has never been fetched) must not
+    // masquerade as a healthy 100% card — calculateAttendance(present, 0)
+    // intentionally returns "no classes conducted yet".
+    const hasData = item.totalClasses > 0 || (item.records?.length ?? 0) > 0;
+    const metrics = hasData
+      ? calculateAttendance(item.present, item.totalClasses)
+      : {
+          percentage: 0,
+          isAbove: false,
+          message: item.stale
+            ? 'Could not refresh this course. Showing saved data where available.'
+            : 'No attendance has been published for this course yet.',
+          value: 0,
+        };
+    const { percentage, isAbove, message, value } = metrics;
     const recordsCount = item.records ? item.records.length : 0;
 
     return (
@@ -123,6 +137,12 @@ export default function AttendanceScreen({
           <View style={styles.titleColumn}>
             <View style={styles.codeRow}>
               <Text style={styles.courseCode}>{item.courseCode}</Text>
+              {item.stale ? (
+                <View style={styles.stalePill}>
+                  <Ionicons name="cloud-offline-outline" size={10} color="#f59e0b" />
+                  <Text style={styles.stalePillText}>saved</Text>
+                </View>
+              ) : null}
               {item.instructor ? (
                 <Text style={styles.instructorText} numberOfLines={1}>• {item.instructor}</Text>
               ) : null}
@@ -135,9 +155,9 @@ export default function AttendanceScreen({
           ]}>
             <Text style={[
               styles.percentageText,
-              { color: isAbove ? Theme.colors.success : Theme.colors.error }
+              { color: hasData ? (isAbove ? Theme.colors.success : Theme.colors.error) : Theme.colors.textSecondary }
             ]}>
-              {percentage.toFixed(1)}%
+              {hasData ? `${percentage.toFixed(1)}%` : '—'}
             </Text>
           </View>
         </View>
@@ -431,6 +451,16 @@ const styles = StyleSheet.create({
   titleColumn: { flex: 1, marginRight: 10 },
   codeRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   courseCode: { fontSize: 14, fontWeight: 'bold', color: Theme.colors.primary },
+  stalePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: Theme.radii.pill,
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+  },
+  stalePillText: { fontSize: 9.5, fontWeight: '700', color: '#f59e0b' },
   instructorText: { fontSize: 12, color: Theme.colors.textSecondary, flex: 1 },
   courseTitle: { fontSize: 16, fontWeight: '700', color: Theme.colors.textPrimary, marginTop: 4 },
 

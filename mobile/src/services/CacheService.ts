@@ -29,6 +29,13 @@ export interface Course {
   courseTitle: string;
   instructor: string;
   srsStatus?: CourseSRSStatus;
+  /**
+   * Exact argument the portal's own `getAttendanceData('<arg>')` handler used
+   * for this course (e.g. "BIO301," or "BIO301,2026-2027-1"). Persisted so an
+   * attendance refresh can reuse the cached course list without re-downloading
+   * /secure/studentMyCourses and without guessing the argument.
+   */
+  attendanceArg?: string;
 }
 
 export interface ReportItem {
@@ -100,6 +107,13 @@ export interface AttendanceItem {
   percentage: number;
   totalClasses: number;
   records?: AttendanceRecord[];
+  /** Epoch ms of the last successful fetch of this course's attendance. */
+  fetchedAt?: number;
+  /**
+   * True when the latest sync could not refresh this course and the numbers
+   * shown are the last known good values. Never rendered as a zero.
+   */
+  stale?: boolean;
   // Calculations
   xMiss?: number;
   yAttend?: number;
@@ -109,7 +123,24 @@ export interface AttendanceItem {
 export interface AttendanceData {
   items: AttendanceItem[];
   timestamp: string;
+  /** True when at least one course could not be refreshed in the last sync. */
+  degraded?: boolean;
+  /** Course codes that could not be refreshed (kept from cache). */
+  partialFailures?: string[];
 }
+
+export type SyncScopeName = 'ALL' | 'PROFILE' | 'ATTENDANCE' | 'COURSES' | 'MARKS' | 'REPORTS';
+
+export interface ScopeStatus {
+  /** Epoch ms of the last successful sync of this scope. */
+  lastSuccessAt?: number;
+  /** Epoch ms of the last sync attempt (successful or not). */
+  lastAttemptAt?: number;
+  lastErrorCode?: string;
+  lastErrorMessage?: string;
+}
+
+const KEY_SYNC_STATUS = 'shiksha_sync_status';
 
 import { UpdateService } from './UpdateService';
 
@@ -211,6 +242,87 @@ export const CacheService = {
     return raw ? parseInt(raw, 10) : 0;
   },
 
+  // ---------------------------------------------------------------------------
+  // Per-scope sync status
+  //
+  // A single global "last sync time" cannot express "attendance is 3 minutes old
+  // but the profile failed", which is precisely the state the app is in whenever
+  // the portal is partially down. These helpers record, per scope, when data was
+  // last *successfully* refreshed and what the last failure was.
+  // ---------------------------------------------------------------------------
+
+  async getSyncStatusMap(): Promise<Record<string, ScopeStatus>> {
+    try {
+      const raw = await AsyncStorage.getItem(KEY_SYNC_STATUS);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  },
+
+  async getScopeStatus(scope: SyncScopeName): Promise<ScopeStatus | null> {
+    const map = await this.getSyncStatusMap();
+    return map[scope] || null;
+  },
+
+  async markScopeSuccess(scope: SyncScopeName): Promise<void> {
+    try {
+      const map = await this.getSyncStatusMap();
+      const prev = map[scope] || {};
+      map[scope] = {
+        ...prev,
+        lastSuccessAt: Date.now(),
+        lastAttemptAt: Date.now(),
+        lastErrorCode: undefined,
+        lastErrorMessage: undefined,
+      };
+      await AsyncStorage.setItem(KEY_SYNC_STATUS, JSON.stringify(map));
+    } catch {
+      // ignore
+    }
+  },
+
+  async markScopeFailure(scope: SyncScopeName, code: string, message: string): Promise<void> {
+    try {
+      const map = await this.getSyncStatusMap();
+      const prev = map[scope] || {};
+      map[scope] = {
+        ...prev,
+        lastAttemptAt: Date.now(),
+        lastErrorCode: code,
+        lastErrorMessage: message,
+      };
+      await AsyncStorage.setItem(KEY_SYNC_STATUS, JSON.stringify(map));
+    } catch {
+      // ignore
+    }
+  },
+
+  /**
+   * Most recent successful refresh across all scopes (used by the status banner).
+   */
+  async getLastSuccessAt(): Promise<number | null> {
+    const map = await this.getSyncStatusMap();
+    let latest: number | null = null;
+    for (const status of Object.values(map)) {
+      if (status?.lastSuccessAt && (latest === null || status.lastSuccessAt > latest)) {
+        latest = status.lastSuccessAt;
+      }
+    }
+    const fallback = await this.getLastSyncTime();
+    if (!latest && fallback) return fallback;
+    return latest;
+  },
+
+  /**
+   * True when the given scope has never synced or is older than `ttlMs`.
+   */
+  async isScopeStale(scope: SyncScopeName, ttlMs: number): Promise<boolean> {
+    const status = await this.getScopeStatus(scope);
+    if (!status?.lastSuccessAt) return true;
+    return Date.now() - status.lastSuccessAt >= ttlMs;
+  },
+
   /**
    * Verify if sync is cooled down (true if more than 24 hours have passed)
    */
@@ -227,7 +339,7 @@ export const CacheService = {
    */
   async getCacheStats(): Promise<CacheStats> {
     try {
-      const keys = [KEY_PROFILE_DATA, KEY_ATTENDANCE_DATA, KEY_COURSE_DETAILS, KEY_REPORTS_DATA, KEY_LAST_SYNC_TIME];
+      const keys = [KEY_PROFILE_DATA, KEY_ATTENDANCE_DATA, KEY_COURSES_DATA, KEY_COURSE_DETAILS, KEY_REPORTS_DATA, KEY_LAST_SYNC_TIME, KEY_SYNC_STATUS];
       let memoryBytes = 0;
       for (const k of keys) {
         const item = await AsyncStorage.getItem(k);
@@ -279,11 +391,36 @@ export const CacheService = {
    * Clear all cache on logout or user reset (wipes AsyncStorage, update files, and report files)
    */
   async clearCache(): Promise<void> {
-    await AsyncStorage.removeItem(KEY_PROFILE_DATA);
-    await AsyncStorage.removeItem(KEY_ATTENDANCE_DATA);
-    await AsyncStorage.removeItem(KEY_COURSE_DETAILS);
-    await AsyncStorage.removeItem(KEY_REPORTS_DATA);
-    await AsyncStorage.removeItem(KEY_LAST_SYNC_TIME);
+    // Remove every key this service owns, including the per-course marks entries
+    // and course-list cache (previously missed here, which leaked the previous
+    // user's course list across a log-out / log-in cycle).
+    try {
+      const allKeys = await AsyncStorage.getAllKeys();
+      const owned = allKeys.filter(
+        (k) =>
+          k === KEY_PROFILE_DATA ||
+          k === KEY_ATTENDANCE_DATA ||
+          k === KEY_COURSES_DATA ||
+          k === KEY_COURSE_DETAILS ||
+          k === KEY_REPORTS_DATA ||
+          k === KEY_LAST_SYNC_TIME ||
+          k === KEY_SYNC_STATUS ||
+          k.startsWith(KEY_COURSE_MARKS_PREFIX)
+      );
+      if (owned.length > 0) {
+        await AsyncStorage.multiRemove(owned);
+      }
+    } catch {
+      // Fall back to explicit removals if getAllKeys is unavailable
+      await AsyncStorage.removeItem(KEY_PROFILE_DATA);
+      await AsyncStorage.removeItem(KEY_ATTENDANCE_DATA);
+      await AsyncStorage.removeItem(KEY_COURSES_DATA);
+      await AsyncStorage.removeItem(KEY_COURSE_DETAILS);
+      await AsyncStorage.removeItem(KEY_REPORTS_DATA);
+      await AsyncStorage.removeItem(KEY_LAST_SYNC_TIME);
+      await AsyncStorage.removeItem(KEY_SYNC_STATUS);
+    }
+
     await UpdateService.clearAllUpdateFiles();
     try {
       const { ReportsService } = require('./ReportsService');

@@ -7,6 +7,8 @@ import { SecureStorageService } from '../services/SecureStorageService';
 import { CacheService } from '../services/CacheService';
 import { SessionLifecycleManager } from '../services/SessionLifecycleManager';
 import { UpdateService, UpdateInfo } from '../services/UpdateService';
+import { SyncDiagnostics } from '../services/SyncDiagnostics';
+import { HttpPortalClient } from '../services/HttpPortalClient';
 import { AppConfig } from '../constants/Config';
 import CreditsModal from './CreditsModal';
 
@@ -110,6 +112,43 @@ export default function SettingsScreen({
         }
       ]
     );
+  };
+
+  /**
+   * Field diagnostics: what the sync engine actually did (paths, status codes,
+   * durations, error codes) and whether the portal circuit breaker is open.
+   */
+  const handleShowDiagnostics = async () => {
+    try {
+      const [events, summary] = await Promise.all([
+        SyncDiagnostics.getRecent(20),
+        SyncDiagnostics.summary(),
+      ]);
+      const health = HttpPortalClient.getPortalHealth();
+      const header = [
+        `Portal: ${health.circuitOpen ? 'NOT RESPONDING (fail-fast active)' : 'reachable'}`,
+        `Failures streak: ${health.failureStreak}`,
+        `Requests (10 min): ${summary.requests}, failed: ${summary.failures}`,
+        '--------------------------------------',
+      ];
+      const lines = events.length > 0 ? SyncDiagnostics.format(events) : ['No sync activity recorded yet.'];
+      Alert.alert(
+        'Sync Diagnostics',
+        [...header, ...lines].join('\n'),
+        [
+          {
+            text: 'Clear log',
+            style: 'destructive',
+            onPress: () => {
+              SyncDiagnostics.clear().catch(() => {});
+            },
+          },
+          { text: 'Close', style: 'cancel' },
+        ]
+      );
+    } catch {
+      Alert.alert('Sync Diagnostics', 'Could not read the diagnostics log.');
+    }
   };
 
   const handleCheckForUpdates = async () => {
@@ -281,6 +320,20 @@ export default function SettingsScreen({
             <Text style={styles.settingDescription}>Erase stored dashboards, charts & downloaded update files</Text>
           </View>
           <Ionicons name="trash-outline" size={20} color={Theme.colors.error} />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.settingItem, styles.borderTop]}
+          onPress={handleShowDiagnostics}
+          activeOpacity={0.7}
+        >
+          <View style={styles.settingTextContainer}>
+            <Text style={styles.settingLabel}>Sync Diagnostics</Text>
+            <Text style={styles.settingDescription}>
+              Portal reachability & the last 20 sync events (share these when reporting a bug)
+            </Text>
+          </View>
+          <Ionicons name="pulse-outline" size={20} color={Theme.colors.primary} />
         </TouchableOpacity>
       </View>
 

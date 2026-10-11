@@ -3,7 +3,8 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { CacheService, ReportItem } from './CacheService';
 import { SessionLifecycleManager } from './SessionLifecycleManager';
-import { HttpPortalClient } from './HttpPortalClient';
+import { HttpPortalClient, PortalHttpError } from './HttpPortalClient';
+import { SyncDiagnostics } from './SyncDiagnostics';
 
 export type PdfDownloaderFn = (fileUrl: string, reportId: string) => Promise<string>;
 
@@ -189,15 +190,33 @@ export class ReportsService {
    * Synchronizes grade reports from Shiksha over direct HTTP in ~0.4ms
    */
   public static async syncReports(): Promise<ReportItem[]> {
+    const startedAt = Date.now();
     try {
       const freshReports = await HttpPortalClient.getStudentReports();
       if (freshReports && freshReports.length > 0) {
         await CacheService.cacheReportsData(freshReports);
       }
+      await CacheService.markScopeSuccess('REPORTS');
+      SyncDiagnostics.log({
+        kind: 'sync',
+        label: 'REPORTS',
+        ok: true,
+        ms: Date.now() - startedAt,
+        detail: `${freshReports?.length ?? 0} entries`,
+      });
       return await this.getReports();
-    } catch (err) {
-      console.warn('[ReportsService] Direct HTTP sync failed:', err);
-      return await this.getReports();
+    } catch (err: any) {
+      // Keep the cached list on screen; the caller shows why in the status banner.
+      const code = err instanceof PortalHttpError ? err.code : 'UNKNOWN';
+      await CacheService.markScopeFailure('REPORTS', code, err?.message || 'Reports sync failed.');
+      SyncDiagnostics.log({
+        kind: 'sync',
+        label: 'REPORTS',
+        ok: false,
+        ms: Date.now() - startedAt,
+        detail: `${code}: ${err?.message || err}`,
+      });
+      throw err;
     }
   }
 

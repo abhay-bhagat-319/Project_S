@@ -9,7 +9,10 @@ import {
   ProfileData,
   Course,
   CourseDetail,
+  CourseSRSStatus,
 } from './CacheService';
+import { SyncDiagnostics } from './SyncDiagnostics';
+import { normalizeCourseAttendance } from '../utils/attendanceNormalizer';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
@@ -20,6 +23,7 @@ export interface HttpRequestOptions {
   timeoutMs?: number;
   skipSessionCheck?: boolean;
   skipQueue?: boolean;
+  skipCircuitBreaker?: boolean;
   isRetry?: boolean;
 }
 
@@ -38,7 +42,31 @@ export type PortalErrorCode =
   | 'SESSION_EXPIRED'
   | 'TIMEOUT'
   | 'SERVER_ERROR'
+  | 'PARSE_ERROR'
+  | 'EMPTY_RESPONSE'
+  | 'CIRCUIT_OPEN'
   | 'UNKNOWN';
+
+/** Scopes that can be synchronized independently. */
+export type PortalSyncScope = 'PROFILE' | 'COURSES' | 'ATTENDANCE' | 'REPORTS';
+
+export interface PortalSyncError {
+  scope: PortalSyncScope;
+  code: PortalErrorCode;
+  message: string;
+}
+
+export interface PortalSyncAllResult {
+  /** Null when that scope failed; cached data was preserved in that case. */
+  profile: ProfileData | null;
+  courses: Course[] | null;
+  courseDetails: Record<string, CourseDetail> | null;
+  attendance: AttendanceData | null;
+  reports: ReportItem[] | null;
+  errors: PortalSyncError[];
+}
+
+export const COURSE_ENTRY_TIMEOUT_MS = 6000;
 
 export class PortalHttpError extends Error {
   public readonly code: PortalErrorCode;
@@ -78,9 +106,30 @@ export class HttpPortalClient {
 
   private static activeSessionCookie: string | null = null;
   private static activeRequests = 0;
-  private static readonly MAX_CONCURRENT_REQUESTS = 8;
+  /**
+   * Shiksha runs on PHP with file-backed sessions, which serialise on the
+   * session file lock server-side. Fanning out further than this only queues
+   * requests inside the server (and burns the client-side timeout budget), so
+   * the cap is deliberately small.
+   */
+  private static readonly MAX_CONCURRENT_REQUESTS = 4;
+  private static readonly QUEUE_WATCHDOG_MS = 20000;
   private static readonly requestQueue: Array<() => void> = [];
   private static reauthPromise: Promise<boolean> | null = null;
+
+  // --- Portal health / circuit breaker -------------------------------------
+  // During a portal outage (e.g. the AngularJS data backend behind
+  // /secure/studentMyCourses is down while /secure/studenthome still renders),
+  // every refresh previously waited the full 10s timeout and then failed
+  // silently. The breaker lets the UI fail fast with a clear reason once the
+  // portal has proven unhealthy, while still probing for recovery.
+  private static readonly FAILURE_THRESHOLD = 3;
+  private static readonly CIRCUIT_COOLDOWN_MS = 45000;
+  private static failureStreak = 0;
+  private static circuitOpenedAt = 0;
+  private static probeInFlight = false;
+  private static lastLoginAt = 0;
+  private static readonly LOGIN_COOLDOWN_MS = 20000;
 
   /**
    * Acquires a concurrency slot to prevent PHP session file lock contention
@@ -92,10 +141,22 @@ export class HttpPortalClient {
     }
 
     return new Promise<void>((resolve) => {
-      this.requestQueue.push(() => {
+      const entry = () => {
+        clearTimeout(watchdog);
         this.activeRequests++;
         resolve();
-      });
+      };
+      // Watchdog: a slot can never be lost forever, otherwise one hung request
+      // would block every subsequent request for the rest of the session.
+      const watchdog = setTimeout(() => {
+        const idx = this.requestQueue.indexOf(entry);
+        if (idx >= 0) this.requestQueue.splice(idx, 1);
+        console.warn('[HttpPortalClient] Request queue watchdog fired; releasing slot.');
+        this.activeRequests++;
+        resolve();
+      }, this.QUEUE_WATCHDOG_MS);
+
+      this.requestQueue.push(entry);
     });
   }
 
@@ -123,11 +184,28 @@ export class HttpPortalClient {
 
   /**
    * Silently recovers an invalidated or expired session using stored credentials.
-   * Utilizes a single in-flight Promise mutex so concurrent requests share the exact same login attempt.
+   *
+   * Shiksha allows only ONE active session per student, so re-authenticating is
+   * a destructive operation for every other holder of the old cookie (the
+   * Portal WebView, a second request in flight...). This method therefore:
+   *   1. shares a single in-flight login across all callers (mutex), and
+   *   2. refuses to start another login within LOGIN_COOLDOWN_MS of the last one,
+   * which prevents the "each side evicts the other's session" ping-pong.
    */
   public static async recoverSession(): Promise<boolean> {
     if (this.reauthPromise) {
       return this.reauthPromise;
+    }
+
+    const sinceLastLogin = Date.now() - this.lastLoginAt;
+    if (this.lastLoginAt > 0 && sinceLastLogin < this.LOGIN_COOLDOWN_MS) {
+      SyncDiagnostics.log({
+        kind: 'auth',
+        label: 'recoverSession',
+        ok: false,
+        detail: `suppressed (cooldown, ${Math.round((this.LOGIN_COOLDOWN_MS - sinceLastLogin) / 1000)}s left)`,
+      });
+      return false;
     }
 
     this.reauthPromise = (async () => {
@@ -136,15 +214,24 @@ export class HttpPortalClient {
         const creds = await SecureStorageService.getCredentials();
         if (!creds || !creds.username || !creds.password) {
           console.warn('[HttpPortalClient] Cannot auto-recover session: no credentials stored in SecureStore.');
+          SyncDiagnostics.log({ kind: 'auth', label: 'recoverSession', ok: false, detail: 'no stored credentials' });
           return false;
         }
 
         const loginResult = await this.login(creds.username, creds.password, 15000);
         if (loginResult.success) {
+          this.lastLoginAt = Date.now();
           console.log('[HttpPortalClient] Transparent session recovery succeeded! New session established.');
+          SyncDiagnostics.log({ kind: 'auth', label: 'recoverSession', ok: true });
           return true;
         } else {
           console.warn('[HttpPortalClient] Transparent session recovery failed:', loginResult.message);
+          SyncDiagnostics.log({
+            kind: 'auth',
+            label: 'recoverSession',
+            ok: false,
+            detail: loginResult.code || loginResult.message || 'unknown',
+          });
           return false;
         }
       } catch (err) {
@@ -156,6 +243,60 @@ export class HttpPortalClient {
     })();
 
     return this.reauthPromise;
+  }
+
+  /**
+   * True when the portal has accumulated enough recent failures that new
+   * requests should fail fast instead of waiting for a timeout.
+   */
+  public static isCircuitOpen(): boolean {
+    if (this.failureStreak < this.FAILURE_THRESHOLD) return false;
+    // Still inside the cooldown window → stay open.
+    if (Date.now() - this.circuitOpenedAt < this.CIRCUIT_COOLDOWN_MS) return true;
+    // Cooldown elapsed → half-open: allow exactly one probe.
+    return this.probeInFlight;
+  }
+
+  /**
+   * Marks a single half-open probe when the circuit cooldown has elapsed.
+   */
+  private static takeHalfOpenProbe(): boolean {
+    if (this.failureStreak < this.FAILURE_THRESHOLD) return false;
+    if (Date.now() - this.circuitOpenedAt < this.CIRCUIT_COOLDOWN_MS) return false;
+    if (this.probeInFlight) return false;
+    this.probeInFlight = true;
+    return true;
+  }
+
+  private static recordRequestSuccess(): void {
+    this.failureStreak = 0;
+    this.circuitOpenedAt = 0;
+    this.probeInFlight = false;
+  }
+
+  private static recordRequestFailure(code: PortalErrorCode): void {
+    if (code !== 'TIMEOUT' && code !== 'NETWORK_ERROR' && code !== 'SERVER_ERROR') {
+      return;
+    }
+    this.failureStreak++;
+    if (this.failureStreak >= this.FAILURE_THRESHOLD) {
+      this.circuitOpenedAt = Date.now();
+      SyncDiagnostics.log({
+        kind: 'circuit',
+        label: 'portal',
+        ok: false,
+        detail: `opened after ${this.failureStreak} consecutive failures (${code})`,
+      });
+    }
+  }
+
+  /** Snapshot of portal health, exposed for diagnostics/UIs. */
+  public static getPortalHealth(): { failureStreak: number; circuitOpen: boolean; sinceLastLoginMs: number } {
+    return {
+      failureStreak: this.failureStreak,
+      circuitOpen: this.isCircuitOpen(),
+      sinceLastLoginMs: this.lastLoginAt ? Date.now() - this.lastLoginAt : -1,
+    };
   }
 
   /**
@@ -218,7 +359,14 @@ export class HttpPortalClient {
    * Inspects response to detect whether Shiksha redirected the request back to the login page
    */
   private static checkSessionExpired(url: string, rawText: string, status: number, requestedPath: string): boolean {
-    if (status === 401 || status === 403) {
+    if (status === 401) {
+      return true;
+    }
+
+    // A 403 is NOT proof of an expired session (it can be CSRF/permission), and
+    // treating it as one previously triggered a needless full re-login — which,
+    // on a single-session portal, logs the user out everywhere else.
+    if (status === 403 && url.toLowerCase().includes('/login')) {
       return true;
     }
 
@@ -270,11 +418,67 @@ export class HttpPortalClient {
   }
 
   /**
-   * Low-level fetch execution with session expiration detection and automatic retry
+   * Executes an HTTP request against Shiksha with circuit-breaker fast-fail,
+   * concurrency throttling, diagnostics and transparent session recovery.
    */
   private static async executeRequest<T = any>(
     path: string,
-    options: HttpRequestOptions = {}
+    options: HttpRequestOptions = {},
+    startedAt: number = Date.now()
+  ): Promise<HttpResponse<T>> {
+    if (!options.skipCircuitBreaker && this.isCircuitOpen()) {
+      SyncDiagnostics.log({
+        kind: 'circuit',
+        label: path,
+        ok: false,
+        detail: 'fast-fail (portal unhealthy)',
+      });
+      throw new PortalHttpError(
+        'Shiksha is not responding right now. Showing saved data — tap refresh to try again.',
+        'CIRCUIT_OPEN'
+      );
+    }
+
+    const halfOpenProbe = this.takeHalfOpenProbe();
+    const startedAtMs = Date.now();
+
+    try {
+      const response = await this.performRequest<T>(path, options, startedAt);
+      this.recordRequestSuccess();
+      SyncDiagnostics.log({
+        kind: 'request',
+        label: path,
+        ok: true,
+        status: response.status,
+        ms: Date.now() - startedAtMs,
+      });
+      return response;
+    } catch (err: any) {
+      const code: PortalErrorCode =
+        err instanceof PortalHttpError ? err.code : 'UNKNOWN';
+      this.recordRequestFailure(code);
+      SyncDiagnostics.log({
+        kind: 'request',
+        label: path,
+        ok: false,
+        ms: Date.now() - startedAtMs,
+        detail: `${code}: ${err?.message || err}`,
+      });
+      throw err;
+    } finally {
+      if (halfOpenProbe) {
+        this.probeInFlight = false;
+      }
+    }
+  }
+
+  /**
+   * Low-level fetch execution with session expiration detection and automatic retry
+   */
+  private static async performRequest<T = any>(
+    path: string,
+    options: HttpRequestOptions = {},
+    startedAt: number = Date.now()
   ): Promise<HttpResponse<T>> {
     const fullUrl = this.resolveUrl(path);
     const timeout = options.timeoutMs ?? this.DEFAULT_TIMEOUT_MS;
@@ -285,10 +489,18 @@ export class HttpPortalClient {
       'Accept-Language': 'en-US,en;q=0.9',
       'Origin': this.BASE_URL,
       'Referer': `${this.BASE_URL}/`,
+      // The WebView's own fetch() calls sent this; some CodeIgniter/Angular
+      // endpoints branch on it. Harmless if unused, cheaper than being served
+      // an HTML wrapper instead of JSON.
+      'X-Requested-With': 'XMLHttpRequest',
       ...options.headers,
     };
 
-    // Attach active session cookie if explicitly tracked
+    // NOTE: cookies are managed by React Native's networking stack
+    // (ReactCookieJarContainer + ForwardingCookieHandler ⇄ android.webkit.CookieManager),
+    // which is shared with the Portal WebView. OkHttp's BridgeInterceptor REPLACES
+    // an explicitly-set Cookie header with the jar's cookies, so the value below
+    // is only a fallback used when the jar has nothing for this host.
     if (this.activeSessionCookie && !headers['Cookie'] && !headers['cookie']) {
       headers['Cookie'] = this.activeSessionCookie;
     }
@@ -333,7 +545,12 @@ export class HttpPortalClient {
       };
 
       if (!options.skipSessionCheck && isSessionExpired) {
-        if (!options.isRetry) {
+        // Retry at most once, and only against the session state this request
+        // actually started with. If a re-login already completed after this
+        // request began, retrying would just be evicted again (session
+        // ping-pong), so surface the expiry instead.
+        const loginIsStale = this.lastLoginAt >= startedAt;
+        if (!options.isRetry && !loginIsStale) {
           console.warn(`[HttpPortalClient] Session expired on ${path}. Initiating silent auto-recovery...`);
           const recovered = await this.recoverSession();
           if (recovered) {
@@ -341,7 +558,7 @@ export class HttpPortalClient {
             return await this.executeRequest<T>(path, {
               ...options,
               isRetry: true,
-            });
+            }, startedAt);
           }
         }
 
@@ -370,7 +587,11 @@ export class HttpPortalClient {
         throw err;
       }
 
-      this.resetQueue();
+      // NOTE: the request queue is intentionally NOT reset here. The queue slot
+      // is always released in request()'s finally block, and a slot acquired by
+      // a hung call is recovered by the queue watchdog in acquireRequestSlot().
+      // Wiping the queue on every transport error released every waiter at once,
+      // which defeated throttling exactly when the server was already struggling.
 
       const errMsg = String(err?.message || '');
       const isAbort =
@@ -665,7 +886,7 @@ export class HttpPortalClient {
     }
 
     // Normalize reports into standard ReportItem structure
-    return (reports || [])
+    const normalized = (reports || [])
       .map((r, idx) => {
         let fileUrl = (r.file || '').trim();
         if (fileUrl && !fileUrl.startsWith('http://') && !fileUrl.startsWith('https://')) {
@@ -691,6 +912,20 @@ export class HttpPortalClient {
         };
       })
       .filter((r) => r.show !== false && r.file && (r.file.includes('.pdf') || r.file.includes('report')));
+
+    if (reports.length > 0 && normalized.length === 0) {
+      // The portal listed reports but none survived normalization — most likely
+      // the file URL/id shape changed. Log it instead of silently showing an
+      // empty Reports tab.
+      SyncDiagnostics.log({
+        kind: 'sync',
+        label: 'REPORTS',
+        ok: false,
+        detail: `parsed ${reports.length} entries, none usable after normalization`,
+      });
+    }
+
+    return normalized;
   }
 
   /**
@@ -873,13 +1108,22 @@ export class HttpPortalClient {
   }
 
   /**
-   * Fetches attendance metrics for a single course from /secure/studentMyCourseAttendance
+   * Fetches attendance metrics for a single course from /secure/studentMyCourseAttendance.
+   *
+   * The response contract is treated as *tolerant* on purpose: the legacy
+   * WebView scraper derived counts from the record list and accepted several
+   * envelope shapes, whereas the previous native implementation required
+   * `status === 'ok'` and `presentClasses` to be a number. Anything else — a
+   * different status token, counts serialised as strings, or only
+   * `relPresentPercentage` — was silently rendered as 0 present out of N total,
+   * i.e. a 0 % attendance card. That is a display bug, not a data truth.
    */
   public static async getCourseAttendance(
     courseId: string,
-    roll: string
+    roll: string,
+    options: { timeoutMs?: number } = {}
   ): Promise<{
-    status: string;
+    status: 'ok' | 'empty' | 'error';
     totalClasses: number;
     presentClasses: number;
     relPresentPercentage?: string;
@@ -889,119 +1133,284 @@ export class HttpPortalClient {
 
     const response = await this.postJson<{
       status?: string;
-      totalClasses?: number;
-      presentClasses?: number;
-      relPresentPercentage?: string;
+      totalClasses?: number | string;
+      presentClasses?: number | string;
+      present?: number | string;
+      total?: number | string;
+      relPresentPercentage?: string | number;
       data?: any[];
       records?: any[];
       userAttendanceInfo?: any[];
+      relPresentdays?: any[];
     }>('/secure/studentMyCourseAttendance', {
       courseId: arg,
       roll: roll.trim(),
-    }, { timeoutMs: 10000 });
+    }, { timeoutMs: options.timeoutMs ?? COURSE_ENTRY_TIMEOUT_MS });
 
-    const resJson = response.data;
-    if (resJson && resJson.status === 'ok') {
-      const records = this.parseAttendanceRecords(
-        resJson.data || resJson.records || resJson.userAttendanceInfo || []
-      );
-      return {
-        status: 'ok',
-        totalClasses: resJson.totalClasses ?? records.length,
-        presentClasses: resJson.presentClasses ?? 0,
-        relPresentPercentage: resJson.relPresentPercentage,
-        data: records,
-      };
+    const resJson: any = response.data;
+
+    if (!resJson || typeof resJson !== 'object') {
+      return { status: 'error', totalClasses: 0, presentClasses: 0, data: [] };
     }
 
+    const records = this.parseAttendanceRecords(
+      resJson.data || resJson.records || resJson.userAttendanceInfo || resJson.relPresentdays || []
+    );
+
+    // Pure, unit-tested normalisation (see utils/attendanceNormalizer.ts).
+    const normalized = normalizeCourseAttendance(resJson, records);
+
     return {
-      status: 'error',
-      totalClasses: 0,
-      presentClasses: 0,
-      data: [],
+      status: normalized.status === 'error' ? 'error' : normalized.status,
+      totalClasses: normalized.totalClasses,
+      presentClasses: normalized.presentClasses,
+      relPresentPercentage: normalized.relPresentPercentage,
+      data: records,
     };
   }
 
   /**
-   * Directly synchronizes all course attendance records over HTTP in parallel
+   * Runs `fn` over `items` with a hard concurrency cap, collecting results in
+   * input order. Used for the per-course attendance fan-out.
    */
-  public static async syncAttendance(rollNumber?: string): Promise<AttendanceData> {
-    let roll = rollNumber;
+  private static async mapWithConcurrency<T, R>(
+    items: T[],
+    limit: number,
+    fn: (item: T, index: number) => Promise<R>
+  ): Promise<Array<{ ok: true; value: R } | { ok: false; error: unknown }>> {
+    const results: Array<{ ok: true; value: R } | { ok: false; error: unknown }> = new Array(items.length);
+    let cursor = 0;
+
+    const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+      while (cursor < items.length) {
+        const index = cursor++;
+        try {
+          results[index] = { ok: true, value: await fn(items[index], index) };
+        } catch (error) {
+          results[index] = { ok: false, error };
+        }
+      }
+    });
+
+    await Promise.all(workers);
+    return results;
+  }
+
+  /**
+   * Synchronizes course attendance over HTTP.
+   *
+   * Behavioural guarantees (these are the fixes for the "attendance never
+   * refreshes / shows nothing" reports):
+   *  1. A failed course keeps its last known good numbers and is flagged
+   *     `stale` — it is never written as 0/0.
+   *  2. If *every* course fails, the previous cache is left untouched and a
+   *     typed error is thrown so the UI can explain why.
+   *  3. Courses are fetched with a bounded concurrency and delivered through
+   *     `onCourse` as they arrive, so the first card updates in ~300-400ms
+   *     instead of waiting for the slowest request.
+   *  4. The course list can be supplied by the caller (cached), avoiding a full
+   *     /secure/studentMyCourses page fetch on every pull-to-refresh.
+   */
+  public static async syncAttendance(options: {
+    rollNumber?: string;
+    courses?: Array<{
+      courseCode: string;
+      courseTitle: string;
+      instructor: string;
+      attendanceArg?: string;
+      srsStatus?: CourseSRSStatus;
+    }>;
+    concurrency?: number;
+    timeoutMs?: number;
+    onCourse?: (item: AttendanceItem) => void;
+    /** Skip writing the result to cache (used by dry-run diagnostics). */
+    skipCache?: boolean;
+  } = {}): Promise<AttendanceData> {
+    const startedAt = Date.now();
+    const previous = await CacheService.getCachedAttendanceData();
+    const previousByCode = new Map<string, AttendanceItem>(
+      (previous?.items || []).map((item) => [item.courseCode, item])
+    );
+
+    let roll = options.rollNumber;
     if (!roll) {
       const profile = await CacheService.getCachedProfileData();
       roll = profile?.roll;
     }
 
-    const myCoursesRes = await this.get<string>('/secure/studentMyCourses');
-    const html = myCoursesRes.rawText;
+    let courses = options.courses;
+
+    if (!courses || courses.length === 0) {
+      const myCoursesRes = await this.get<string>('/secure/studentMyCourses');
+      const html = myCoursesRes.rawText;
+
+      if (!roll) {
+        const infoMatch = html.match(/id=["']userInfo["'][^>]*>([\s\S]*?)<\/div>/i);
+        if (infoMatch) {
+          try {
+            const parsed = JSON.parse(infoMatch[1]);
+            if (parsed && parsed.roll) roll = String(parsed.roll);
+          } catch {}
+        }
+        if (!roll) {
+          const rollMatch = html.match(/["']roll["']\s*:\s*["']?(\w+)["']?/i);
+          if (rollMatch) roll = rollMatch[1];
+        }
+      }
+
+      const parsedCourses = this.parseRegisteredCoursesFromHtml(html);
+      if (!parsedCourses || parsedCourses.length === 0) {
+        const pageLooksRendered = /id=["']dataTable["']/i.test(html) || /no\s*data/i.test(html);
+        const message = pageLooksRendered
+          ? 'The portal rendered your course list without any registered courses.'
+          : 'Could not read your course list from the portal response.';
+        if (!options.skipCache) {
+          await CacheService.markScopeFailure('ATTENDANCE', 'EMPTY_RESPONSE', message);
+        }
+        throw new PortalHttpError(message, 'EMPTY_RESPONSE');
+      }
+      courses = parsedCourses;
+    }
 
     if (!roll) {
-      const infoMatch = html.match(/id=["']userInfo["'][^>]*>([\s\S]*?)<\/div>/i);
-      if (infoMatch) {
-        try {
-          const parsed = JSON.parse(infoMatch[1]);
-          if (parsed && parsed.roll) roll = String(parsed.roll);
-        } catch {}
+      const message = 'Missing roll number — sign in again so the app can read your profile.';
+      if (!options.skipCache) {
+        await CacheService.markScopeFailure('ATTENDANCE', 'PARSE_ERROR', message);
       }
-      if (!roll) {
-        const rollMatch = html.match(/["']roll["']\s*:\s*["']?(\w+)["']?/i);
-        if (rollMatch) roll = rollMatch[1];
-      }
+      throw new PortalHttpError(message, 'PARSE_ERROR');
     }
 
-    const courses = this.parseRegisteredCoursesFromHtml(html);
-    if (!courses || courses.length === 0) {
-      const emptyData: AttendanceData = {
-        items: [],
-        timestamp: new Date().toISOString(),
+    const resolvedRoll = roll;
+    const timeoutMs = options.timeoutMs ?? COURSE_ENTRY_TIMEOUT_MS;
+    const concurrency = options.concurrency ?? this.MAX_CONCURRENT_REQUESTS;
+
+    const failures: string[] = [];
+
+    const settled = await this.mapWithConcurrency(courses, concurrency, async (course) => {
+      const attendanceArg = course.attendanceArg || `${course.courseCode},`;
+      const attRes = await this.getCourseAttendance(attendanceArg, resolvedRoll, { timeoutMs });
+
+      if (attRes.status === 'empty') {
+        throw new PortalHttpError(
+          `${course.courseCode}: portal returned no attendance payload`,
+          'EMPTY_RESPONSE'
+        );
+      }
+
+      const total = attRes.totalClasses;
+      const present = attRes.presentClasses;
+      const absent = Math.max(0, total - present);
+      const percentage =
+        total > 0
+          ? (present / total) * 100
+          : attRes.relPresentPercentage
+            ? parseFloat(attRes.relPresentPercentage)
+            : 100;
+
+      const item: AttendanceItem = {
+        courseCode: course.courseCode,
+        courseTitle: course.courseTitle,
+        instructor: course.instructor,
+        present,
+        absent,
+        totalClasses: total,
+        percentage,
+        records: attRes.data,
+        fetchedAt: Date.now(),
+        stale: false,
+        srsStatus: course.srsStatus,
       };
-      await CacheService.cacheAttendanceData(emptyData);
-      return emptyData;
+
+      // Progressive delivery: hand each card to the UI as soon as it lands.
+      options.onCourse?.(item);
+      return item;
+    });
+
+    const items: AttendanceItem[] = settled.map((result, index) => {
+      const course = courses![index];
+
+      if (result.ok) {
+        return result.value;
+      }
+
+      failures.push(course.courseCode);
+      console.warn(`[HttpPortalClient] Attendance refresh failed for ${course.courseCode}:`, result.error);
+
+      const previousItem = previousByCode.get(course.courseCode);
+      if (previousItem) {
+        // Keep the last known good numbers; mark them as stale rather than 0.
+        // NOTE: progressive delivery is intentionally NOT used here — if the
+        // whole refresh turns out to be a failure we throw below and must not
+        // have already mutated the UI with a half-applied result.
+        return {
+          ...previousItem,
+          courseTitle: course.courseTitle || previousItem.courseTitle,
+          instructor: course.instructor || previousItem.instructor,
+          srsStatus: course.srsStatus ?? previousItem.srsStatus,
+          stale: true,
+        };
+      }
+
+      return {
+        courseCode: course.courseCode,
+        courseTitle: course.courseTitle,
+        instructor: course.instructor,
+        present: 0,
+        absent: 0,
+        totalClasses: 0,
+        percentage: 0,
+        records: [],
+        stale: true,
+        srsStatus: course.srsStatus,
+      };
+    });
+
+    const everyCourseFailed = items.length > 0 && failures.length === items.length;
+
+    if (everyCourseFailed) {
+      const message =
+        'Shiksha did not return attendance for any course. Saved data is being shown instead.';
+      if (!options.skipCache) {
+        await CacheService.markScopeFailure('ATTENDANCE', 'EMPTY_RESPONSE', message);
+      }
+      SyncDiagnostics.log({
+        kind: 'sync',
+        label: 'ATTENDANCE',
+        ok: false,
+        ms: Date.now() - startedAt,
+        detail: `all ${items.length} course requests failed`,
+      });
+      // Do NOT overwrite good cache with a fully degraded result.
+      throw new PortalHttpError(message, 'EMPTY_RESPONSE');
     }
 
-    const items: AttendanceItem[] = await Promise.all(
-      courses.map(async (course) => {
-        try {
-          const attRes = await this.getCourseAttendance(course.attendanceArg, roll || '');
-          const total = attRes.totalClasses;
-          const present = attRes.presentClasses;
-          const absent = Math.max(0, total - present);
-          const percentage = total > 0 ? (present / total) * 100 : 100;
-
-          return {
-            courseCode: course.courseCode,
-            courseTitle: course.courseTitle,
-            instructor: course.instructor,
-            present,
-            absent,
-            totalClasses: total,
-            percentage,
-            records: attRes.data,
-            srsStatus: course.srsStatus,
-          };
-        } catch (e) {
-          console.warn(`[HttpPortalClient] Error fetching attendance for ${course.courseCode}:`, e);
-          return {
-            courseCode: course.courseCode,
-            courseTitle: course.courseTitle,
-            instructor: course.instructor,
-            present: 0,
-            absent: 0,
-            totalClasses: 0,
-            percentage: 0,
-            records: [],
-            srsStatus: course.srsStatus,
-          };
-        }
-      })
-    );
+    // Partial success: now it is safe to push the stale (saved) cards to the UI.
+    if (failures.length > 0) {
+      for (const item of items) {
+        if (item.stale) options.onCourse?.(item);
+      }
+    }
 
     const data: AttendanceData = {
       items,
       timestamp: new Date().toISOString(),
+      degraded: failures.length > 0,
+      partialFailures: failures.length > 0 ? failures : undefined,
     };
 
-    await CacheService.cacheAttendanceData(data);
+    if (!options.skipCache) {
+      await CacheService.cacheAttendanceData(data);
+      await CacheService.markScopeSuccess('ATTENDANCE');
+    }
+
+    SyncDiagnostics.log({
+      kind: 'sync',
+      label: 'ATTENDANCE',
+      ok: true,
+      ms: Date.now() - startedAt,
+      detail: failures.length > 0 ? `${failures.length}/${items.length} courses failed` : undefined,
+    });
+
     return data;
   }
 
@@ -1038,7 +1447,12 @@ export class HttpPortalClient {
     }
 
     if (!parsed) {
-      throw new Error('Unable to extract student profile information from portal.');
+      // Typed so callers can keep showing cached profile data and explain the
+      // failure instead of aborting the whole sync.
+      throw new PortalHttpError(
+        'Could not read your profile from the portal response.',
+        'PARSE_ERROR'
+      );
     }
 
     // 2. Extract discipline mapping from initDiscp if available
@@ -1170,9 +1584,26 @@ export class HttpPortalClient {
    * Syncs profile data directly via HTTP and caches it locally
    */
   public static async syncProfile(): Promise<ProfileData> {
-    const profile = await this.getProfile();
-    await CacheService.cacheProfileData(profile);
-    return profile;
+    const startedAt = Date.now();
+    try {
+      const profile = await this.getProfile();
+      await CacheService.cacheProfileData(profile);
+      await CacheService.markScopeSuccess('PROFILE');
+      SyncDiagnostics.log({ kind: 'sync', label: 'PROFILE', ok: true, ms: Date.now() - startedAt });
+      return profile;
+    } catch (err: any) {
+      const code: PortalErrorCode = err instanceof PortalHttpError ? err.code : 'UNKNOWN';
+      const message = err?.message || 'Profile sync failed.';
+      await CacheService.markScopeFailure('PROFILE', code, message);
+      SyncDiagnostics.log({
+        kind: 'sync',
+        label: 'PROFILE',
+        ok: false,
+        ms: Date.now() - startedAt,
+        detail: `${code}: ${message}`,
+      });
+      throw err;
+    }
   }
 
   /**
@@ -1191,6 +1622,7 @@ export class HttpPortalClient {
       courseCode: c.courseCode,
       courseTitle: c.courseTitle,
       instructor: c.instructor,
+      attendanceArg: c.attendanceArg,
       srsStatus: {
         midSemAvailable: c.srsStatus.midSemAvailable,
         midSemUrl: c.srsStatus.midSemUrl,
@@ -1212,51 +1644,130 @@ export class HttpPortalClient {
     courses: Course[];
     courseDetails: Record<string, CourseDetail>;
   }> {
-    const result = await this.getCourses();
-    await CacheService.cacheCoursesData(result.courses);
-    if (result.courseDetails && Object.keys(result.courseDetails).length > 0) {
-      await CacheService.cacheCourseDetails(result.courseDetails);
+    const startedAt = Date.now();
+    try {
+      const result = await this.getCourses();
+
+      if (!result.courses || result.courses.length === 0) {
+        // Empty parse → almost always a failed/blocked fetch rather than a
+        // genuinely empty registration. Preserve whatever we already have.
+        const cached = await CacheService.getCachedCoursesData();
+        const message = cached && cached.length > 0
+          ? 'The portal did not return your course list. Showing saved courses.'
+          : 'Could not read your course list from the portal response.';
+        await CacheService.markScopeFailure('COURSES', 'EMPTY_RESPONSE', message);
+        SyncDiagnostics.log({
+          kind: 'sync',
+          label: 'COURSES',
+          ok: false,
+          ms: Date.now() - startedAt,
+          detail: message,
+        });
+        throw new PortalHttpError(message, 'EMPTY_RESPONSE');
+      }
+
+      await CacheService.cacheCoursesData(result.courses);
+      if (result.courseDetails && Object.keys(result.courseDetails).length > 0) {
+        await CacheService.cacheCourseDetails(result.courseDetails);
+      }
+      await CacheService.markScopeSuccess('COURSES');
+      SyncDiagnostics.log({ kind: 'sync', label: 'COURSES', ok: true, ms: Date.now() - startedAt });
+      return result;
+    } catch (err: any) {
+      if (!(err instanceof PortalHttpError)) {
+        await CacheService.markScopeFailure('COURSES', 'UNKNOWN', err?.message || 'Courses sync failed.');
+        SyncDiagnostics.log({
+          kind: 'sync',
+          label: 'COURSES',
+          ok: false,
+          ms: Date.now() - startedAt,
+          detail: err?.message || 'Courses sync failed.',
+        });
+      }
+      throw err;
     }
-    return result;
   }
 
   /**
-   * Performs an instant complete portal sync of Profile, Courses, Attendance, and Reports
+   * Synchronizes every scope independently.
+   *
+   * Previously this used `Promise.all([syncProfile(), syncCourses()])`, so a
+   * single throwing parser (the profile regex is the flakiest one) aborted the
+   * entire sync: no courses, no attendance, no reports, no lastSyncTime — which
+   * is exactly the reported "nothing past the login screen loads" behaviour.
+   * Failures are now collected per scope, successful scopes still commit, and
+   * degraded scopes keep their cache.
    */
-  public static async syncAll(): Promise<{
-    profile: ProfileData;
-    courses: Course[];
-    courseDetails: Record<string, CourseDetail>;
-    attendance: AttendanceData;
-    reports: ReportItem[];
-  }> {
-    const [profile, coursesResult] = await Promise.all([
+  public static async syncAll(): Promise<PortalSyncAllResult> {
+    const startedAt = Date.now();
+    const errors: PortalSyncError[] = [];
+
+    const collect = (scope: PortalSyncScope, error: unknown) => {
+      const code: PortalErrorCode = error instanceof PortalHttpError ? error.code : 'UNKNOWN';
+      errors.push({
+        scope,
+        code,
+        message: (error as any)?.message || `${scope} sync failed.`,
+      });
+    };
+
+    // Profile and the course list are independent → run them together, but
+    // settle each one separately.
+    const [profileResult, coursesResult] = await Promise.allSettled([
       this.syncProfile(),
       this.syncCourses(),
     ]);
 
-    const attendance = await this.syncAttendance();
+    const profile = profileResult.status === 'fulfilled' ? profileResult.value : null;
+    if (profileResult.status === 'rejected') collect('PROFILE', profileResult.reason);
 
-    let reports: ReportItem[] = [];
+    const courses = coursesResult.status === 'fulfilled' ? coursesResult.value.courses : null;
+    const courseDetails =
+      coursesResult.status === 'fulfilled' ? coursesResult.value.courseDetails : null;
+    if (coursesResult.status === 'rejected') collect('COURSES', coursesResult.reason);
+
+    // Attendance depends on the course list; fall back to the cached list so a
+    // courses failure never cascades into attendance.
+    let attendance: AttendanceData | null = null;
     try {
-      reports = await this.getStudentReports();
-      if (reports.length > 0) {
-        await CacheService.cacheReportsData(reports);
-      }
-    } catch (e) {
-      console.warn('[HttpPortalClient] Error syncing reports in syncAll:', e);
-      reports = (await CacheService.getCachedReportsData()) || [];
+      attendance = await this.syncAttendance(
+        courses && courses.length > 0 ? { courses } : {}
+      );
+    } catch (error) {
+      collect('ATTENDANCE', error);
     }
 
-    await CacheService.setLastSyncTime(Date.now());
+    let reports: ReportItem[] | null = null;
+    try {
+      const fetched = await this.getStudentReports();
+      if (fetched.length > 0) {
+        await CacheService.cacheReportsData(fetched);
+      }
+      reports = fetched;
+      await CacheService.markScopeSuccess('REPORTS');
+    } catch (error) {
+      collect('REPORTS', error);
+      const code: PortalErrorCode = error instanceof PortalHttpError ? error.code : 'UNKNOWN';
+      await CacheService.markScopeFailure('REPORTS', code, (error as any)?.message || 'Reports sync failed.');
+      reports = null;
+    }
 
-    return {
-      profile,
-      courses: coursesResult.courses,
-      courseDetails: coursesResult.courseDetails,
-      attendance,
-      reports,
-    };
+    const anySuccess = errors.length < 4;
+    if (anySuccess) {
+      await CacheService.setLastSyncTime(Date.now());
+    }
+
+    SyncDiagnostics.log({
+      kind: 'sync',
+      label: 'ALL',
+      ok: errors.length === 0,
+      ms: Date.now() - startedAt,
+      detail: errors.length > 0
+        ? errors.map((e) => `${e.scope}:${e.code}`).join(', ')
+        : 'all scopes ok',
+    });
+
+    return { profile, courses, courseDetails, attendance, reports, errors };
   }
 }
 
