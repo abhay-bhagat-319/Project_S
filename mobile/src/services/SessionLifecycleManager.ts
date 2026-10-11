@@ -1,12 +1,11 @@
 import { SecureStorageService } from './SecureStorageService';
 import { ScraperService } from './ScraperService';
-import { NetworkReachabilityService } from './NetworkReachabilityService';
 import { HttpPortalClient } from './HttpPortalClient';
 
 export interface AuthResult {
   success: boolean;
   message?: string;
-  code?: 'AUTH_FAILED' | 'TIMEOUT' | 'NETWORK_ERROR' | 'CAMPUS_NETWORK_REQUIRED' | 'UNKNOWN';
+  code?: 'AUTH_FAILED' | 'TIMEOUT' | 'NETWORK_ERROR' | 'UNKNOWN';
 }
 
 export interface AuthAdapterBridge {
@@ -83,7 +82,6 @@ export class SessionLifecycleManager {
     }
 
     if (data.type === 'AUTH_SUCCESS') {
-      NetworkReachabilityService.recordSuccess();
       if (this.pendingAuth) {
         clearTimeout(this.pendingAuth.timer);
         const { resolve, username, password } = this.pendingAuth;
@@ -107,7 +105,6 @@ export class SessionLifecycleManager {
 
     // If navigated to secure area, authentication was successful
     if (url.includes('/secure/') || url.includes('/secure')) {
-      NetworkReachabilityService.recordSuccess();
       if (this.pendingAuth) {
         clearTimeout(this.pendingAuth.timer);
         const { resolve, username, password } = this.pendingAuth;
@@ -126,7 +123,6 @@ export class SessionLifecycleManager {
 
     // If on login page and an authentication attempt is active, inject the login script
     if (url.includes('/login')) {
-      NetworkReachabilityService.recordSuccess();
       if (this.pendingAuth && this.adapter) {
         const script = ScraperService.getLoginInjectionScript(
           this.pendingAuth.username,
@@ -142,10 +138,6 @@ export class SessionLifecycleManager {
    */
   public static handleLoadEnd(currentUrl: string) {
     if (!currentUrl) return;
-
-    if (currentUrl.includes('/login') || currentUrl.includes('/secure')) {
-      NetworkReachabilityService.recordSuccess();
-    }
 
     if (this.pendingAuth && this.adapter) {
       if (currentUrl.includes('/secure')) {
@@ -173,26 +165,11 @@ export class SessionLifecycleManager {
       this.pendingAuth = null;
       this.isAuthenticating = false;
 
-      const netState = await NetworkReachabilityService.recordFailure(errorMsg);
-      if (netState === 'EXTERNAL_ONLINE') {
-        resolve({
-          success: false,
-          code: 'CAMPUS_NETWORK_REQUIRED',
-          message: 'Campus network required. Please connect to IISERB Wi-Fi or turn on FortiClient VPN (gateway.iiserb.ac.in).',
-        });
-      } else if (netState === 'OFFLINE') {
-        resolve({
-          success: false,
-          code: 'NETWORK_ERROR',
-          message: 'No internet connection detected. Please check your network connection.',
-        });
-      } else {
-        resolve({
-          success: false,
-          code: 'NETWORK_ERROR',
-          message: errorMsg || 'Unable to connect to Shiksha portal. Please check your connection and try again.',
-        });
-      }
+      resolve({
+        success: false,
+        code: 'NETWORK_ERROR',
+        message: errorMsg || 'Unable to connect to Shiksha portal. Please check your connection and try again.',
+      });
     }
   }
 
@@ -217,15 +194,12 @@ export class SessionLifecycleManager {
       const result = await HttpPortalClient.login(trimmedUser, trimmedPass, timeoutMs);
 
       if (result.success) {
-        NetworkReachabilityService.recordSuccess();
         await SecureStorageService.saveCredentials(trimmedUser, trimmedPass);
         return { success: true };
       }
 
       let code: AuthResult['code'] = 'AUTH_FAILED';
-      if (result.code === 'CAMPUS_NETWORK_REQUIRED') {
-        code = 'CAMPUS_NETWORK_REQUIRED';
-      } else if (result.code === 'TIMEOUT') {
+      if (result.code === 'TIMEOUT') {
         code = 'TIMEOUT';
       } else if (result.code === 'NETWORK_ERROR') {
         code = 'NETWORK_ERROR';

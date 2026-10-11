@@ -1,4 +1,3 @@
-import { NetworkReachabilityService } from './NetworkReachabilityService';
 import { SecureStorageService } from './SecureStorageService';
 import * as FileSystem from 'expo-file-system/legacy';
 import {
@@ -36,8 +35,6 @@ export interface HttpResponse<T = any> {
 
 export type PortalErrorCode =
   | 'NETWORK_ERROR'
-  | 'CAMPUS_NETWORK_REQUIRED'
-  | 'CAMPUS_CAPTIVE'
   | 'SESSION_EXPIRED'
   | 'TIMEOUT'
   | 'SERVER_ERROR'
@@ -70,12 +67,11 @@ export class PortalHttpError extends Error {
  * - Domain-appropriate browser headers (User-Agent, Origin, Referer)
  * - Automatic cookie jar tracking & bidirectional CookieManager synchronization
  * - Detection of single-session expirations (302 redirects to /login/)
- * - Integration with NetworkReachabilityService for campus network failure diagnosis
  */
 export class HttpPortalClient {
   public static readonly BASE_URL = 'https://shiksha.iiserb.ac.in';
 
-  private static readonly DEFAULT_TIMEOUT_MS = 15000;
+  private static readonly DEFAULT_TIMEOUT_MS = 10000;
 
   private static readonly BROWSER_USER_AGENT =
     'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36';
@@ -318,9 +314,6 @@ export class HttpPortalClient {
       const rawText = await response.text();
       const isSessionExpired = this.checkSessionExpired(response.url, rawText, response.status, path);
 
-      // Record successful connectivity to Shiksha
-      NetworkReachabilityService.recordSuccess();
-
       let parsedData: any = rawText;
       const contentType = response.headers.get('content-type') || '';
       if (contentType.includes('application/json')) {
@@ -377,6 +370,8 @@ export class HttpPortalClient {
         throw err;
       }
 
+      this.resetQueue();
+
       const errMsg = String(err?.message || '');
       const isAbort =
         err?.name === 'AbortError' ||
@@ -385,55 +380,14 @@ export class HttpPortalClient {
         errMsg.toLowerCase().includes('aborted');
 
       if (isAbort) {
-        const netState = await NetworkReachabilityService.recordFailure('Request timed out');
-        if (netState === 'OFFLINE') {
-          this.resetQueue();
-        }
-        const code =
-          netState === 'CAMPUS_CAPTIVE'
-            ? 'CAMPUS_CAPTIVE'
-            : netState === 'EXTERNAL_ONLINE'
-            ? 'CAMPUS_NETWORK_REQUIRED'
-            : 'TIMEOUT';
-        const message =
-          netState === 'CAMPUS_CAPTIVE'
-            ? 'Wi-Fi sign-in required. Please authenticate on the campus captive portal.'
-            : netState === 'EXTERNAL_ONLINE'
-            ? 'Campus network required. Please connect to IISERB Wi-Fi or turn on FortiClient VPN (gateway.iiserb.ac.in).'
-            : `Request to ${path} timed out after ${timeout}ms.`;
-        throw new PortalHttpError(message, code);
-      }
-
-      // Network / SSL failure handling
-      const errorMsg = errMsg || 'Network request failed';
-      const netState = await NetworkReachabilityService.recordFailure(errorMsg);
-      if (netState === 'OFFLINE') {
-        this.resetQueue();
-      }
-
-      if (netState === 'CAMPUS_CAPTIVE') {
         throw new PortalHttpError(
-          'Wi-Fi sign-in required. Please authenticate on the campus captive portal.',
-          'CAMPUS_CAPTIVE'
-        );
-      }
-
-      if (netState === 'EXTERNAL_ONLINE') {
-        throw new PortalHttpError(
-          'Campus network required. Please connect to IISERB Wi-Fi or turn on FortiClient VPN (gateway.iiserb.ac.in).',
-          'CAMPUS_NETWORK_REQUIRED'
-        );
-      }
-
-      if (netState === 'OFFLINE') {
-        throw new PortalHttpError(
-          'No internet connection detected. Please check your network connection.',
-          'NETWORK_ERROR'
+          `Request to ${path} timed out. Please check campus connection and retry.`,
+          'TIMEOUT'
         );
       }
 
       throw new PortalHttpError(
-        `Unable to reach Shiksha: ${errorMsg}`,
+        'Unable to reach Shiksha portal. Connect to campus network and retry.',
         'NETWORK_ERROR'
       );
     }
@@ -1218,7 +1172,6 @@ export class HttpPortalClient {
   public static async syncProfile(): Promise<ProfileData> {
     const profile = await this.getProfile();
     await CacheService.cacheProfileData(profile);
-    NetworkReachabilityService.recordSuccess();
     return profile;
   }
 
@@ -1264,7 +1217,6 @@ export class HttpPortalClient {
     if (result.courseDetails && Object.keys(result.courseDetails).length > 0) {
       await CacheService.cacheCourseDetails(result.courseDetails);
     }
-    NetworkReachabilityService.recordSuccess();
     return result;
   }
 
@@ -1297,7 +1249,6 @@ export class HttpPortalClient {
     }
 
     await CacheService.setLastSyncTime(Date.now());
-    NetworkReachabilityService.recordSuccess();
 
     return {
       profile,
