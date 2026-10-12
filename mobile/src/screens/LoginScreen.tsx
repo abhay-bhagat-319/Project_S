@@ -76,6 +76,8 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
     }
   };
 
+  const [showPassword, setShowPassword] = useState(false);
+
   return (
     <KeyboardAvoidingView 
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -202,13 +204,24 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
               style={styles.input}
               placeholder="••••••••"
               placeholderTextColor={Theme.colors.textSecondary}
-              secureTextEntry
+              secureTextEntry={!showPassword}
               value={password}
               onChangeText={setPassword}
               autoCapitalize="none"
               autoCorrect={false}
               editable={!loading}
             />
+            <TouchableOpacity 
+              onPress={() => setShowPassword(!showPassword)}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={{ padding: 4 }}
+            >
+              <Ionicons 
+                name={showPassword ? 'eye-off-outline' : 'eye-outline'} 
+                size={20} 
+                color={Theme.colors.textSecondary} 
+              />
+            </TouchableOpacity>
           </View>
 
           {loading ? (

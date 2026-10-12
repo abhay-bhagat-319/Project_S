@@ -29,6 +29,7 @@ const BROWSER_HEADERS = {
 export class NetworkReachabilityService {
   private static SHIKSHA_PING_URLS = [
     'https://shiksha.iiserb.ac.in/login/',
+    'http://shiksha.iiserb.ac.in',
     'https://shiksha.iiserb.ac.in/favicon.ico',
     'https://shiksha.iiserb.ac.in/',
   ];
@@ -146,8 +147,20 @@ export class NetworkReachabilityService {
           return 'CAMPUS_ACTIVE';
         }
         throw new Error('No status');
-      } catch (err) {
+      } catch (err: any) {
         clearTimeout(timer);
+        const errMsg = String(err?.message || '');
+        // If an SSL handshake error occurred trying to connect to shiksha.iiserb.ac.in,
+        // it confirms the device reached the institutional server or captive gateway.
+        if (
+          url.includes('iiserb.ac.in') &&
+          (errMsg.includes('SSLHandshakeException') ||
+           errMsg.includes('CertPathValidatorException') ||
+           errMsg.includes('Trust anchor') ||
+           errMsg.includes('certificate'))
+        ) {
+          return 'CAMPUS_ACTIVE';
+        }
         throw err;
       }
     };

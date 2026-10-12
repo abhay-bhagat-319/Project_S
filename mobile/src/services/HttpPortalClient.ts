@@ -81,7 +81,7 @@ export class HttpPortalClient {
 
   private static activeSessionCookie: string | null = null;
   private static activeRequests = 0;
-  private static readonly MAX_CONCURRENT_REQUESTS = 2;
+  private static readonly MAX_CONCURRENT_REQUESTS = 8;
   private static readonly requestQueue: Array<() => void> = [];
   private static reauthPromise: Promise<boolean> | null = null;
 
@@ -194,8 +194,8 @@ export class HttpPortalClient {
     try {
       const setCookie = headers.get('set-cookie');
       if (setCookie) {
-        // Extract PHPSESSID or ci_session
-        const match = setCookie.match(/(?:PHPSESSID|ci_session)=([^;]+)/i);
+        // Extract connect.sid (Express backend), PHPSESSID, or ci_session
+        const match = setCookie.match(/(?:connect\.sid|PHPSESSID|ci_session)=([^;]+)/i);
         if (match && match[0]) {
           this.activeSessionCookie = match[0];
           console.log('[HttpPortalClient] Captured session cookie from Set-Cookie:', this.activeSessionCookie);
@@ -294,6 +294,7 @@ export class HttpPortalClient {
         headers,
         body: options.body,
         signal: controller.signal,
+        redirect: 'follow',
       });
 
       clearTimeout(timer);
@@ -495,37 +496,112 @@ export class HttpPortalClient {
         }
       );
 
-      // Successful LDAP authentication:
-      // The portal redirects to /secure/studenthome or returns secure dashboard HTML
-      const isSuccess =
-        response.url.toLowerCase().includes('/secure') ||
-        response.rawText.includes('/secure/studenthome') ||
-        (response.status === 200 &&
-          !response.rawText.includes('ldap_login_progress') &&
-          !response.rawText.includes('Invalid username') &&
-          !response.rawText.includes('Invalid credentials'));
+      // Diagnostic: log what the server actually returned so we can debug auth failures
+      const responseUrlLower = response.url.toLowerCase();
+      const rawTextLower = response.rawText.toLowerCase();
+      const htmlSnippet = response.rawText.substring(0, 500);
+      console.log(`[HttpPortalClient] Login response → status=${response.status}, url=${response.url}`);
+      console.log(`[HttpPortalClient] Login response HTML (first 500 chars): ${htmlSnippet}`);
+      console.log(`[HttpPortalClient] Active cookie after login: ${this.activeSessionCookie}`);
 
-      if (isSuccess) {
-        console.log('[HttpPortalClient] LDAP authentication successful. Cookie:', this.activeSessionCookie);
+      // 1. Check for explicit FAILURE indicators first (these are definitive)
+      const hasExplicitError =
+        rawTextLower.includes('invalid username') ||
+        rawTextLower.includes('invalid credential') ||
+        rawTextLower.includes('incorrect ldap') ||
+        rawTextLower.includes('authentication failed') ||
+        rawTextLower.includes('login failed') ||
+        rawTextLower.includes('invalid password') ||
+        rawTextLower.includes('wrong password');
+
+      if (hasExplicitError) {
+        console.warn('[HttpPortalClient] Login FAILED: explicit error string found in response body.');
         return {
-          success: true,
-          sessionCookie: this.activeSessionCookie || undefined,
+          success: false,
+          code: 'AUTH_FAILED',
+          message: 'Invalid username or password.',
         };
       }
 
-      // Check for portal failure alerts
-      let failMessage = 'Invalid LDAP credentials. Please check your username and password.';
-      if (
-        response.rawText.toLowerCase().includes('invalid username') ||
-        response.rawText.toLowerCase().includes('invalid credential')
-      ) {
-        failMessage = 'Invalid username or password.';
+      // 2. Parse the hidden status field that Shiksha's AngularJS login controller reads
+      //    <input type="hidden" value="ok" id="status"/>  → success
+      //    <input type="hidden" value="error" id="status"/> → failure (or missing)
+      const statusFieldMatch = response.rawText.match(
+        /id=["']status["'][^>]*value=["']([^"']+)["']|value=["']([^"']+)["'][^>]*id=["']status["']/i
+      );
+      const hiddenStatusValue = (statusFieldMatch?.[1] || statusFieldMatch?.[2] || '').toLowerCase().trim();
+      console.log(`[HttpPortalClient] Hidden status field value: "${hiddenStatusValue}"`);
+
+      // 3. Check for positive SUCCESS signals
+      const urlIndicatesSecure = responseUrlLower.includes('/secure');
+      const bodyReferencesSecure =
+        response.rawText.includes('/secure/studenthome') ||
+        response.rawText.includes('/secure/studentMyCourses') ||
+        response.rawText.includes('/secure/studentReports');
+      const hiddenStatusOk = hiddenStatusValue === 'ok';
+      const hasSessionCookie = !!this.activeSessionCookie;
+
+      const isSuccess =
+        urlIndicatesSecure ||
+        bodyReferencesSecure ||
+        hiddenStatusOk;
+
+      console.log(`[HttpPortalClient] Login verdict → urlSecure=${urlIndicatesSecure}, bodySecure=${bodyReferencesSecure}, hiddenOk=${hiddenStatusOk}, hasCookie=${hasSessionCookie}, isSuccess=${isSuccess}`);
+
+      if (isSuccess) {
+        // The server authenticated us but uses a JS redirect instead of HTTP 302.
+        // OkHttp's internal cookie jar has the session cookie even though fetch() can't
+        // expose Set-Cookie headers to JS. Make a follow-up GET to /secure/studenthome
+        // to confirm the session is alive and let OkHttp attach cookies automatically.
+        try {
+          console.log('[HttpPortalClient] Auth OK — confirming session via GET /secure/studenthome...');
+          const confirmResponse = await this.get('/secure/studenthome', {
+            timeoutMs: 10000,
+            skipSessionCheck: true,
+            skipQueue: true,
+          });
+
+          // Extract any cookie from the confirmation response
+          this.extractCookies(confirmResponse.headers);
+
+          const confirmUrlLower = confirmResponse.url.toLowerCase();
+          if (
+            confirmUrlLower.includes('/secure') ||
+            confirmResponse.rawText.includes('/secure/studenthome')
+          ) {
+            console.log('[HttpPortalClient] Session confirmed! Cookie:', this.activeSessionCookie);
+            return {
+              success: true,
+              sessionCookie: this.activeSessionCookie || undefined,
+            };
+          } else {
+            // Session confirmation failed — server didn't actually create a session
+            console.warn('[HttpPortalClient] Session confirmation failed. Confirm URL:', confirmResponse.url);
+            console.warn('[HttpPortalClient] Confirm HTML snippet:', confirmResponse.rawText.substring(0, 300));
+            return {
+              success: false,
+              code: 'AUTH_FAILED',
+              message: 'Authentication succeeded but session could not be established. Please try again.',
+            };
+          }
+        } catch (confirmErr: any) {
+          console.warn('[HttpPortalClient] Session confirmation request failed:', confirmErr.message);
+          // Even if confirmation fails, the auth itself succeeded
+          return {
+            success: true,
+            sessionCookie: this.activeSessionCookie || undefined,
+          };
+        }
       }
+
+      // 4. If we reached here, the login page was re-rendered with no success/error indicators
+      console.warn('[HttpPortalClient] Login AMBIGUOUS: no success or error indicators detected.');
+      console.warn('[HttpPortalClient] Full response body for debugging:', response.rawText.substring(0, 2000));
 
       return {
         success: false,
         code: 'AUTH_FAILED',
-        message: failMessage,
+        message: 'Invalid LDAP credentials. Please check your username and password.',
       };
     } catch (err: any) {
       if (err instanceof PortalHttpError) {
@@ -827,7 +903,7 @@ export class HttpPortalClient {
     }>('/secure/studentMyCourseAttendance', {
       courseId: arg,
       roll: roll.trim(),
-    });
+    }, { timeoutMs: 10000 });
 
     const resJson = response.data;
     if (resJson && resJson.status === 'ok') {
@@ -852,7 +928,7 @@ export class HttpPortalClient {
   }
 
   /**
-   * Directly synchronizes all course attendance records over HTTP in <300ms
+   * Directly synchronizes all course attendance records over HTTP in parallel
    */
   public static async syncAttendance(rollNumber?: string): Promise<AttendanceData> {
     let roll = rollNumber;

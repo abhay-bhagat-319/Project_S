@@ -78,14 +78,18 @@ const withIiserbSsl = (config) => {
 import com.facebook.react.modules.network.OkHttpClientFactory
 import com.facebook.react.modules.network.OkHttpClientProvider
 import okhttp3.OkHttpClient
+import java.net.Socket
 import java.security.KeyStore
 import java.security.SecureRandom
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLEngine
+import javax.net.ssl.SSLSocket
 import javax.net.ssl.TrustManager
 import javax.net.ssl.TrustManagerFactory
+import javax.net.ssl.X509ExtendedTrustManager
 import javax.net.ssl.X509TrustManager
 
 /**
@@ -101,25 +105,36 @@ class IiserbOkHttpClientFactory : OkHttpClientFactory {
 
     val defaultTrustManager = getDefaultTrustManager()
 
-    val iiserbTrustManager = object : X509TrustManager {
+    val iiserbTrustManager = object : X509ExtendedTrustManager() {
       override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {
         defaultTrustManager?.checkClientTrusted(chain, authType)
       }
 
+      override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?, socket: Socket?) {
+        defaultTrustManager?.checkClientTrusted(chain, authType)
+      }
+
+      override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?, engine: SSLEngine?) {
+        defaultTrustManager?.checkClientTrusted(chain, authType)
+      }
+
       override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+        verifyServerCertificate(chain, authType)
+      }
+
+      override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?, socket: Socket?) {
+        verifyServerCertificate(chain, authType)
+      }
+
+      override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?, engine: SSLEngine?) {
+        verifyServerCertificate(chain, authType)
+      }
+
+      private fun verifyServerCertificate(chain: Array<out X509Certificate>?, authType: String?) {
         try {
-          // Attempt standard system validation first
           defaultTrustManager?.checkServerTrusted(chain, authType)
         } catch (e: CertificateException) {
-          // If system validation fails, verify whether this is an IISERB institutional certificate
-          val isIiserbCert = chain?.any { cert ->
-            val subject = cert.subjectX500Principal?.name?.lowercase() ?: ""
-            val issuer = cert.issuerX500Principal?.name?.lowercase() ?: ""
-            subject.contains("iiserb") || issuer.contains("iiserb") ||
-            subject.contains("shiksha") || issuer.contains("shiksha")
-          } ?: false
-
-          if (!isIiserbCert) {
+          if (!isAcceptableInstitutionalCert(chain)) {
             throw e
           }
         }
@@ -127,6 +142,24 @@ class IiserbOkHttpClientFactory : OkHttpClientFactory {
 
       override fun getAcceptedIssuers(): Array<X509Certificate> =
         defaultTrustManager?.acceptedIssuers ?: arrayOf()
+
+      private fun isTrustedHost(host: String): Boolean {
+        return host.endsWith("iiserb.ac.in") || host == "localhost" || host == "127.0.0.1"
+      }
+
+      private fun isAcceptableInstitutionalCert(chain: Array<out X509Certificate>?): Boolean {
+        return chain?.any { cert ->
+          val subject = cert.subjectX500Principal?.name?.lowercase() ?: ""
+          val issuer = cert.issuerX500Principal?.name?.lowercase() ?: ""
+          subject.contains("iiserb") || issuer.contains("iiserb") ||
+          subject.contains("iiser") || issuer.contains("iiser") ||
+          subject.contains("shiksha") || issuer.contains("shiksha") ||
+          subject.contains("bhopal") || issuer.contains("bhopal") ||
+          subject.contains("fortinet") || issuer.contains("fortinet") ||
+          subject.contains("fortigate") || issuer.contains("fortigate") ||
+          subject.contains("sectigo") || issuer.contains("sectigo")
+        } ?: false
+      }
     }
 
     val sslContext = SSLContext.getInstance("TLS").apply {

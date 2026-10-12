@@ -35,6 +35,7 @@ export default function SettingsScreen({
   const [loading, setLoading] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [showUpdateForm, setShowUpdateForm] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [cacheSize, setCacheSize] = useState<string>('...');
   const [creditsModalVisible, setCreditsModalVisible] = useState(false);
 
@@ -231,17 +232,30 @@ export default function SettingsScreen({
               autoCorrect={false}
               editable={!loading}
             />
-            <TextInput 
-              style={styles.input}
-              placeholder="New LDAP Password"
-              placeholderTextColor={Theme.colors.textSecondary}
-              secureTextEntry
-              value={password}
-              onChangeText={setPassword}
-              autoCapitalize="none"
-              autoCorrect={false}
-              editable={!loading}
-            />
+            <View style={styles.passwordInputContainer}>
+              <TextInput 
+                style={[styles.input, styles.passwordInput]}
+                placeholder="New LDAP Password"
+                placeholderTextColor={Theme.colors.textSecondary}
+                secureTextEntry={!showPassword}
+                value={password}
+                onChangeText={setPassword}
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!loading}
+              />
+              <TouchableOpacity 
+                onPress={() => setShowPassword(!showPassword)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                style={styles.eyeBtn}
+              >
+                <Ionicons 
+                  name={showPassword ? 'eye-off-outline' : 'eye-outline'} 
+                  size={20} 
+                  color={Theme.colors.textSecondary} 
+                />
+              </TouchableOpacity>
+            </View>
             {loading ? (
               <ActivityIndicator size="small" color={Theme.colors.primary} style={styles.spinner} />
             ) : (
@@ -444,6 +458,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginBottom: 12,
     fontSize: 14,
+  },
+  passwordInputContainer: {
+    position: 'relative',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  passwordInput: {
+    marginBottom: 0,
+    paddingRight: 48,
+  },
+  eyeBtn: {
+    position: 'absolute',
+    right: 14,
+    top: 14,
+    padding: 2,
   },
   saveBtn: {
     backgroundColor: Theme.colors.primary,
