@@ -1,4 +1,5 @@
 import { NetworkReachabilityService } from './NetworkReachabilityService';
+import { SecureStorageService } from './SecureStorageService';
 import * as FileSystem from 'expo-file-system/legacy';
 import {
   CacheService,
@@ -19,6 +20,8 @@ export interface HttpRequestOptions {
   body?: string | URLSearchParams | FormData;
   timeoutMs?: number;
   skipSessionCheck?: boolean;
+  skipQueue?: boolean;
+  isRetry?: boolean;
 }
 
 export interface HttpResponse<T = any> {
@@ -77,6 +80,75 @@ export class HttpPortalClient {
     'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36';
 
   private static activeSessionCookie: string | null = null;
+  private static activeRequests = 0;
+  private static readonly MAX_CONCURRENT_REQUESTS = 2;
+  private static readonly requestQueue: Array<() => void> = [];
+  private static reauthPromise: Promise<boolean> | null = null;
+
+  /**
+   * Acquires a concurrency slot to prevent PHP session file lock contention
+   */
+  private static async acquireRequestSlot(): Promise<void> {
+    if (this.activeRequests < this.MAX_CONCURRENT_REQUESTS) {
+      this.activeRequests++;
+      return;
+    }
+
+    return new Promise<void>((resolve) => {
+      this.requestQueue.push(() => {
+        this.activeRequests++;
+        resolve();
+      });
+    });
+  }
+
+  /**
+   * Releases an active concurrency slot and unblocks the next queued request
+   */
+  private static releaseRequestSlot(): void {
+    this.activeRequests = Math.max(0, this.activeRequests - 1);
+    if (this.requestQueue.length > 0 && this.activeRequests < this.MAX_CONCURRENT_REQUESTS) {
+      const next = this.requestQueue.shift();
+      if (next) next();
+    }
+  }
+
+  /**
+   * Silently recovers an invalidated or expired session using stored credentials.
+   * Utilizes a single in-flight Promise mutex so concurrent requests share the exact same login attempt.
+   */
+  public static async recoverSession(): Promise<boolean> {
+    if (this.reauthPromise) {
+      return this.reauthPromise;
+    }
+
+    this.reauthPromise = (async () => {
+      try {
+        console.log('[HttpPortalClient] Attempting transparent session recovery via direct HTTP login...');
+        const creds = await SecureStorageService.getCredentials();
+        if (!creds || !creds.username || !creds.password) {
+          console.warn('[HttpPortalClient] Cannot auto-recover session: no credentials stored in SecureStore.');
+          return false;
+        }
+
+        const loginResult = await this.login(creds.username, creds.password, 15000);
+        if (loginResult.success) {
+          console.log('[HttpPortalClient] Transparent session recovery succeeded! New session established.');
+          return true;
+        } else {
+          console.warn('[HttpPortalClient] Transparent session recovery failed:', loginResult.message);
+          return false;
+        }
+      } catch (err) {
+        console.error('[HttpPortalClient] Error during session recovery:', err);
+        return false;
+      } finally {
+        this.reauthPromise = null;
+      }
+    })();
+
+    return this.reauthPromise;
+  }
 
   /**
    * Manually sets or overrides the active session cookie (e.g. PHPSESSID=...)
@@ -143,7 +215,10 @@ export class HttpPortalClient {
     }
 
     const lowerUrl = url.toLowerCase();
-    const isLoginPageUrl = lowerUrl.includes('/login') && !requestedPath.toLowerCase().includes('/login');
+    const isLoginPageUrl =
+      (lowerUrl.includes('/login') || lowerUrl.includes('ldap_login_progress')) &&
+      !requestedPath.toLowerCase().includes('/login') &&
+      !requestedPath.toLowerCase().includes('ldap_login_progress');
 
     if (isLoginPageUrl) {
       return true;
@@ -154,7 +229,9 @@ export class HttpPortalClient {
       if (
         rawText.includes('ldap_login_progress') ||
         rawText.includes('name="secret"') ||
-        (rawText.includes('id="ldap"') && rawText.includes('password'))
+        (rawText.includes('id="ldap"') && rawText.includes('password')) ||
+        rawText.includes('Please Login') ||
+        rawText.includes('User Login')
       ) {
         return true;
       }
@@ -164,9 +241,30 @@ export class HttpPortalClient {
   }
 
   /**
-   * Executes an HTTP request against Shiksha
+   * Executes an HTTP request against Shiksha with concurrency throttling and transparent session recovery
    */
   public static async request<T = any>(
+    path: string,
+    options: HttpRequestOptions = {}
+  ): Promise<HttpResponse<T>> {
+    const shouldThrottle = !options.skipQueue;
+    if (shouldThrottle) {
+      await this.acquireRequestSlot();
+    }
+
+    try {
+      return await this.executeRequest<T>(path, options);
+    } finally {
+      if (shouldThrottle) {
+        this.releaseRequestSlot();
+      }
+    }
+  }
+
+  /**
+   * Low-level fetch execution with session expiration detection and automatic retry
+   */
+  private static async executeRequest<T = any>(
     path: string,
     options: HttpRequestOptions = {}
   ): Promise<HttpResponse<T>> {
@@ -228,6 +326,18 @@ export class HttpPortalClient {
       };
 
       if (!options.skipSessionCheck && isSessionExpired) {
+        if (!options.isRetry) {
+          console.warn(`[HttpPortalClient] Session expired on ${path}. Initiating silent auto-recovery...`);
+          const recovered = await this.recoverSession();
+          if (recovered) {
+            console.log(`[HttpPortalClient] Silent session recovery succeeded! Retrying request to ${path}...`);
+            return await this.executeRequest<T>(path, {
+              ...options,
+              isRetry: true,
+            });
+          }
+        }
+
         throw new PortalHttpError(
           'Shiksha session expired or invalidated by another login.',
           'SESSION_EXPIRED',
@@ -281,7 +391,7 @@ export class HttpPortalClient {
       }
 
       throw new PortalHttpError(
-        errorMsg,
+        `Unable to reach Shiksha: ${errorMsg}`,
         'NETWORK_ERROR'
       );
     }
@@ -370,6 +480,7 @@ export class HttpPortalClient {
     // Reset current session state before fresh authentication
     this.clearSession();
 
+
     try {
       const response = await this.postForm(
         '/ldap_login_progress',
@@ -380,6 +491,7 @@ export class HttpPortalClient {
         {
           timeoutMs,
           skipSessionCheck: true, // We inspect authentication outcome manually
+          skipQueue: true,
         }
       );
 
@@ -525,9 +637,22 @@ export class HttpPortalClient {
       headers['Cookie'] = sessionCookie;
     }
 
-    const downloadRes = await FileSystem.downloadAsync(fullUrl, targetPath, {
+    let downloadRes = await FileSystem.downloadAsync(fullUrl, targetPath, {
       headers,
     });
+
+    if (downloadRes.status === 401 || downloadRes.status === 403 || downloadRes.status === 302) {
+      console.warn('[HttpPortalClient] PDF download unauthorized. Attempting silent session recovery...');
+      const recovered = await this.recoverSession();
+      if (recovered) {
+        if (this.activeSessionCookie) {
+          headers['Cookie'] = this.activeSessionCookie;
+        }
+        downloadRes = await FileSystem.downloadAsync(fullUrl, targetPath, {
+          headers,
+        });
+      }
+    }
 
     if (downloadRes.status !== 200) {
       throw new Error(`Server returned HTTP ${downloadRes.status} when downloading PDF`);

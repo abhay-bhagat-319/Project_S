@@ -298,16 +298,7 @@ export class SessionLifecycleManager {
    * Silently attempts to re-authenticate an expired session in the background
    */
   public static async silentReauthenticate(): Promise<boolean> {
-    try {
-      const creds = await SecureStorageService.getCredentials();
-      if (!creds || !creds.username || !creds.password) {
-        return false;
-      }
-      const res = await this.authenticate(creds.username, creds.password, 15000);
-      return res.success;
-    } catch {
-      return false;
-    }
+    return HttpPortalClient.recoverSession();
   }
 
   public static isAuthInProgress(): boolean {
