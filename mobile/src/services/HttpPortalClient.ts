@@ -1116,7 +1116,6 @@ export class HttpPortalClient {
     const html = response.rawText;
 
     const rawCourses = this.parseRegisteredCoursesFromHtml(html);
-    const submittedSrs = await CacheService.getSubmittedSrsCourses();
 
     const courses: Course[] = rawCourses.map((c) => ({
       courseCode: c.courseCode,
@@ -1127,7 +1126,6 @@ export class HttpPortalClient {
         midSemUrl: c.srsStatus.midSemUrl,
         endSemAvailable: c.srsStatus.endSemAvailable,
         endSemUrl: c.srsStatus.endSemUrl,
-        isSubmitted: submittedSrs.includes(c.courseCode),
       },
     }));
 

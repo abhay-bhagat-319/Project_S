@@ -1205,64 +1205,6 @@ export const ScraperService = {
 
 
   /**
-   * Injected script to submit SRS questionnaire directly within the authenticated portal context
-   * @deprecated Replaced by direct HTTP POST via HttpPortalClient.request().
-   */
-  getSrsSubmissionScript(payload: any, isMidSem: boolean = true): string {
-    return `
-      (async function() {
-        try {
-          var payload = ${JSON.stringify(payload)};
-          var isMid = ${isMidSem ? 'true' : 'false'};
-          
-          // Attempt AngularJS scope submission if active in DOM
-          var submitted = false;
-          try {
-            var el = document.querySelector('[ng-controller="studentMidSemSRSCtrl"]') || 
-                     document.querySelector('[ng-controller="studentSRSCtrl"]') || 
-                     document.body;
-            var scope = (typeof angular !== 'undefined' && angular.element) ? angular.element(el).scope() : null;
-            if (scope) {
-              scope.studentReviewJson = payload;
-              if (typeof scope.submit === 'function') {
-                scope.submit();
-                submitted = true;
-              }
-            }
-          } catch (eScope) {}
-
-          // Fallback to direct POST fetch to the SRS endpoint
-          if (!submitted) {
-            var url = isMid ? '/secure/studentMidSemSRS/submit' : '/secure/studentSRS/submit';
-            try {
-              await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-              });
-            } catch (fErr) {}
-          }
-
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'SRS_SUBMITTED',
-            status: 'success',
-            courseCode: payload.courseNumber || payload.courseCode,
-            message: 'Survey submitted successfully'
-          }));
-        } catch (err) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'SRS_SUBMITTED',
-            status: 'error',
-            courseCode: payload.courseNumber || payload.courseCode,
-            message: err.message || 'Submission failed'
-          }));
-        }
-      })();
-      true;
-    `;
-  },
-
-  /**
    * JS script to inject on the reports page (/secure/studentReports)
    * Extracts student grade reports and transcripts
    * @deprecated Replaced by direct HTTP sync via ReportsService.syncReports().
