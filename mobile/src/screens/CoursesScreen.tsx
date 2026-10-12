@@ -7,7 +7,6 @@ import { CourseDetail, CourseSRSStatus, Course } from '../services/CacheService'
 import { getCourseDetailFor } from '../utils/courseCatalog';
 import CourseDetailModal from './CourseDetailModal';
 import CourseMarksModal from './CourseMarksModal';
-import CourseSrsModal, { SrsFormData } from './CourseSrsModal';
 export { Course };
 
 interface CoursesScreenProps {
@@ -15,7 +14,6 @@ interface CoursesScreenProps {
   courseDetails?: Record<string, CourseDetail>;
   onNavigateToTab?: (tabName: string) => void;
   onOpenSrs?: (courseCode: string) => void;
-  onSubmitSrs?: (course: Course, data: SrsFormData) => Promise<boolean>;
   onRefresh?: () => Promise<void>;
   refreshing?: boolean;
   onRefreshMarks?: (courseCode: string) => Promise<any>;
@@ -26,7 +24,6 @@ export default function CoursesScreen({
   courseDetails = {},
   onNavigateToTab,
   onOpenSrs,
-  onSubmitSrs,
   onRefresh,
   refreshing = false,
   onRefreshMarks,
@@ -34,7 +31,6 @@ export default function CoursesScreen({
   const insets = useSafeAreaInsets();
   const [selectedDetail, setSelectedDetail] = useState<CourseDetail | null>(null);
   const [marksModalCourse, setMarksModalCourse] = useState<Course | null>(null);
-  const [srsModalCourse, setSrsModalCourse] = useState<Course | null>(null);
 
   // Determine card background color based on index
   const getCardColor = (index: number) => {
@@ -58,19 +54,23 @@ export default function CoursesScreen({
 
   const handleOpenSrs = (course: Course) => {
     const isAvailable = !!(course.srsStatus?.midSemAvailable || course.srsStatus?.endSemAvailable);
-    if (course.srsStatus?.isSubmitted) {
-      Alert.alert(
-        'SRS Already Submitted',
-        `You have already submitted the Student Reaction Survey for ${course.courseCode}.`
-      );
-      return;
-    }
     if (isAvailable) {
-      setSrsModalCourse(course);
+      if (onOpenSrs) {
+        onOpenSrs(course.courseCode);
+      }
     } else {
       Alert.alert(
         'SRS Unavailable',
-        `Student Reaction Survey submissions are currently closed for ${course.courseCode} (${course.courseTitle}).`
+        `Student Reaction Survey is currently closed on the portal for ${course.courseCode} (${course.courseTitle}).`,
+        [
+          { text: 'OK', style: 'cancel' },
+          {
+            text: 'Open Portal',
+            onPress: () => {
+              if (onOpenSrs) onOpenSrs(course.courseCode);
+            },
+          },
+        ]
       );
     }
   };
@@ -142,7 +142,6 @@ export default function CoursesScreen({
 
                 {/* SRS Action Button */}
                 {(() => {
-                  const isSubmitted = !!item.srsStatus?.isSubmitted;
                   const isMid = !!item.srsStatus?.midSemAvailable;
                   const isEnd = !!item.srsStatus?.endSemAvailable;
 
@@ -152,13 +151,7 @@ export default function CoursesScreen({
                   let iconColor = Theme.colors.textDark;
                   let label = "SRS";
 
-                  if (isSubmitted) {
-                    btnStyle = [styles.actionButton, styles.srsButtonSubmitted];
-                    textStyle = styles.srsTextSubmitted;
-                    iconName = "checkmark-circle";
-                    iconColor = Theme.colors.successGreen;
-                    label = "Submitted";
-                  } else if (isMid) {
+                  if (isMid) {
                     btnStyle = [styles.actionButton, styles.srsButtonMidActive];
                     textStyle = styles.srsTextMidActive;
                     iconName = "thumbs-up";
@@ -178,7 +171,7 @@ export default function CoursesScreen({
                       onPress={() => handleOpenSrs(item)}
                       activeOpacity={0.75}
                     >
-                      {(isMid || isEnd) && !isSubmitted && <View style={styles.activePulseDot} />}
+                      {(isMid || isEnd) && <View style={styles.activePulseDot} />}
                       <Ionicons name={iconName} size={15} color={iconColor} />
                       <Text style={textStyle}>{label}</Text>
                     </TouchableOpacity>
@@ -230,18 +223,6 @@ export default function CoursesScreen({
         onRefreshMarks={onRefreshMarks}
       />
 
-      {/* Course SRS Survey Modal */}
-      <CourseSrsModal
-        visible={!!srsModalCourse}
-        course={srsModalCourse}
-        onClose={() => setSrsModalCourse(null)}
-        onSubmit={async (data) => {
-          if (onSubmitSrs && srsModalCourse) {
-            return await onSubmitSrs(srsModalCourse, data);
-          }
-          return false;
-        }}
-      />
     </View>
   );
 }

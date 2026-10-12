@@ -22,7 +22,6 @@ export interface CourseSRSStatus {
   midSemUrl?: string;
   endSemAvailable: boolean;
   endSemUrl?: string;
-  isSubmitted?: boolean;
 }
 
 export interface Course {
@@ -71,7 +70,6 @@ const KEY_COURSE_DETAILS = 'shiksha_cache_course_details';
 const KEY_COURSE_MARKS_PREFIX = 'shiksha_cache_marks_';
 const KEY_REPORTS_DATA = 'shiksha_cache_reports';
 const KEY_LAST_SYNC_TIME = 'shiksha_last_sync_time';
-const KEY_SRS_SUBMITTED = 'shiksha_cache_srs_submitted';
 
 export interface ProfileData {
   name: string;
@@ -278,33 +276,6 @@ export const CacheService = {
   },
 
   /**
-   * Mark a course's SRS as submitted locally
-   */
-  async markCourseSrsSubmitted(courseCode: string): Promise<void> {
-    try {
-      const existing = await this.getSubmittedSrsCourses();
-      if (!existing.includes(courseCode)) {
-        existing.push(courseCode);
-        await AsyncStorage.setItem(KEY_SRS_SUBMITTED, JSON.stringify(existing));
-      }
-    } catch (e) {
-      console.error('Error marking SRS submitted:', e);
-    }
-  },
-
-  /**
-   * Get list of course codes where SRS has been submitted
-   */
-  async getSubmittedSrsCourses(): Promise<string[]> {
-    try {
-      const raw = await AsyncStorage.getItem(KEY_SRS_SUBMITTED);
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
-    }
-  },
-
-  /**
    * Clear all cache on logout or user reset (wipes AsyncStorage, update files, and report files)
    */
   async clearCache(): Promise<void> {
@@ -313,7 +284,6 @@ export const CacheService = {
     await AsyncStorage.removeItem(KEY_COURSE_DETAILS);
     await AsyncStorage.removeItem(KEY_REPORTS_DATA);
     await AsyncStorage.removeItem(KEY_LAST_SYNC_TIME);
-    await AsyncStorage.removeItem(KEY_SRS_SUBMITTED);
     await UpdateService.clearAllUpdateFiles();
     try {
       const { ReportsService } = require('./ReportsService');
