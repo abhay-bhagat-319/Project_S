@@ -8,6 +8,7 @@ import { ScraperService } from '../services/ScraperService';
 import { ReportsService } from '../services/ReportsService';
 import { NetworkReachabilityService, IISERB_VPN_CONFIG } from '../services/NetworkReachabilityService';
 import { CampusConnectionHelper } from '../utils/CampusConnectionHelper';
+import { SessionLifecycleManager } from '../services/SessionLifecycleManager';
 
 export interface PortalWebviewHandle {
   handleBackPress: () => boolean;
@@ -74,17 +75,27 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
     }
   }, [targetUrl]);
 
-  const handleNavigationStateChange = (navState: any) => {
+  const isReauthenticatingRef = useRef(false);
+
+  const handleNavigationStateChange = async (navState: any) => {
     setCanGoBack(navState.canGoBack);
     setCanGoForward(navState.canGoForward);
     setLoading(navState.loading);
     if (navState.url) {
       setCurrentUrl(navState.url);
-      // Auto-login injection if redirected to /login
-      if (navState.url.includes('/login') && credentials) {
-        webViewRef.current?.injectJavaScript(
-          ScraperService.getLoginInjectionScript(credentials.username, credentials.password)
-        );
+      // If portal redirected to /login, silently re-authenticate and reload with refreshed cookies
+      if (navState.url.includes('/login') && !isReauthenticatingRef.current) {
+        isReauthenticatingRef.current = true;
+        try {
+          const recovered = await SessionLifecycleManager.silentReauthenticate();
+          if (recovered) {
+            webViewRef.current?.reload();
+          }
+        } finally {
+          setTimeout(() => {
+            isReauthenticatingRef.current = false;
+          }, 4000);
+        }
       }
     }
   };
@@ -95,9 +106,6 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
       if (ReportsService.handlePdfMessage(data)) {
         return;
       }
-      if (data.type === 'LOGIN_SUBMITTED') {
-        console.log('PortalWebview: Auto-login submitted successfully.');
-      }
     } catch (e) {}
   };
 
@@ -106,11 +114,6 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
     setProgress(1);
     setIsCampusError(false);
     NetworkReachabilityService.recordSuccess();
-    if (currentUrl && currentUrl.includes('/login') && credentials) {
-      webViewRef.current?.injectJavaScript(
-        ScraperService.getLoginInjectionScript(credentials.username, credentials.password)
-      );
-    }
     // Inject desktop viewport and clean font smoothing
     webViewRef.current?.injectJavaScript(ScraperService.getDesktopViewportScript());
   };

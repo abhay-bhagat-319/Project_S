@@ -1,6 +1,7 @@
 export const ScraperService = {
   /**
    * Generates the JS string to wipe all cookies, sessionStorage, and localStorage in the WebView
+   * @deprecated Background WebViews retired. Use SessionLifecycleManager.purgeSession() instead.
    */
   getSessionPurgeScript(): string {
     return `
@@ -45,6 +46,7 @@ export const ScraperService = {
 
   /**
    * Generates the JS string to inject into the LDAP login form page
+   * @deprecated Replaced by direct HTTP auth via HttpPortalClient.login().
    */
   getLoginInjectionScript(username: string, password: string): string {
     const escapedUser = JSON.stringify(username);
@@ -182,6 +184,7 @@ export const ScraperService = {
    * Runs BEFORE page scripts via injectedJavaScriptBeforeContentLoaded.
    * Sets up XHR/fetch hooks so we capture the profile API response
    * the moment Angular's $http service fires, not after.
+   * @deprecated Replaced by direct HTTP sync via HttpPortalClient.syncProfile().
    */
   getEarlyInterceptScript(): string {
     return `
@@ -231,6 +234,7 @@ export const ScraperService = {
 
   /**
    * JS script to inject on the student profile page (/secure/studenthome)
+   * @deprecated Replaced by direct HTTP sync via HttpPortalClient.syncProfile().
    */
   getProfileScraperScript(): string {
     return `
@@ -488,6 +492,7 @@ export const ScraperService = {
   /**
    * Lean attendance scraper script (/secure/studentMyCourses)
    * Fetches only attendance statistics with a strict 4s per-endpoint timeout guard.
+   * @deprecated Replaced by direct HTTP sync via HttpPortalClient.syncAttendance().
    */
   getAttendanceScraperScript(knownRoll: string = ''): string {
     const escapedKnownRoll = JSON.stringify(knownRoll || '');
@@ -760,6 +765,7 @@ export const ScraperService = {
 
   /**
    * Scraper script specifically for Courses catalog metadata and SRS status (/secure/studentMyCourses)
+   * @deprecated Replaced by direct HTTP sync via HttpPortalClient.syncCourses().
    */
   getCoursesScraperScript(): string {
     return `
@@ -921,6 +927,7 @@ export const ScraperService = {
    * Priority Marks Streamer script:
    * Immediately scrapes marks for priorityCourseCode with a 4s timeout and sends COURSE_MARKS_STREAMED,
    * then fetches the remaining courses in the background.
+   * @deprecated Replaced by direct HTTP fetch via HttpPortalClient.fetchCourseDetail().
    */
   getCourseMarksScraperScript(priorityCourseCode: string = '', allCourseCodes: string[] = [], knownRoll: string = ''): string {
     const escapedPriority = JSON.stringify(priorityCourseCode || '');
@@ -1199,6 +1206,7 @@ export const ScraperService = {
 
   /**
    * Injected script to submit SRS questionnaire directly within the authenticated portal context
+   * @deprecated Replaced by direct HTTP POST via HttpPortalClient.request().
    */
   getSrsSubmissionScript(payload: any, isMidSem: boolean = true): string {
     return `
@@ -1257,6 +1265,7 @@ export const ScraperService = {
   /**
    * JS script to inject on the reports page (/secure/studentReports)
    * Extracts student grade reports and transcripts
+   * @deprecated Replaced by direct HTTP sync via ReportsService.syncReports().
    */
   getReportsScraperScript(): string {
     return `

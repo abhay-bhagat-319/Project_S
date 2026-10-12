@@ -1,13 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { StyleSheet, Text, View, Switch, TextInput, TouchableOpacity, ActivityIndicator, Alert, ScrollView, Linking } from 'react-native';
-import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { SecureStorageService } from '../services/SecureStorageService';
 import { CacheService } from '../services/CacheService';
 import { SessionLifecycleManager } from '../services/SessionLifecycleManager';
-import { ScraperService } from '../services/ScraperService';
 import { UpdateService, UpdateInfo } from '../services/UpdateService';
 import { AppConfig } from '../constants/Config';
 import CreditsModal from './CreditsModal';
@@ -36,13 +34,9 @@ export default function SettingsScreen({
   
   const [loading, setLoading] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
-  const [triggerVerify, setTriggerVerify] = useState(false);
   const [showUpdateForm, setShowUpdateForm] = useState(false);
   const [cacheSize, setCacheSize] = useState<string>('...');
   const [creditsModalVisible, setCreditsModalVisible] = useState(false);
-
-  const webViewRef = useRef<WebView>(null);
-  const loginUrl = 'https://shiksha.iiserb.ac.in/login/';
 
   useEffect(() => {
     loadSettings();
@@ -74,44 +68,27 @@ export default function SettingsScreen({
     Alert.alert('Biometrics Updated', `Biometric unlock has been ${val ? 'enabled' : 'disabled'}.`);
   };
 
-  const handleUpdateCredentials = () => {
+  const handleUpdateCredentials = async () => {
     if (!username.trim() || !password.trim()) {
       Alert.alert('Required Fields', 'Please fill in both LDAP username and password.');
       return;
     }
     setLoading(true);
-    setTriggerVerify(true);
-  };
-
-  const handleWebViewMessage = (event: any) => {
     try {
-      const data = JSON.parse(event.nativeEvent.data);
-      if (data.type === 'ERROR') {
-        setLoading(false);
-        setTriggerVerify(false);
-        Alert.alert('Update Failed', data.message || 'An error occurred during verification.');
+      const authResult = await SessionLifecycleManager.authenticate(username.trim(), password.trim());
+      if (authResult.success) {
+        await SecureStorageService.saveCredentials(username.trim(), password.trim());
+        setPassword('');
+        setShowUpdateForm(false);
+        Alert.alert('Success', 'LDAP credentials updated successfully.');
+        onCredentialsUpdated(); // Trigger refetch of profile details
+      } else {
+        Alert.alert('Authentication Failed', authResult.message || 'Invalid username or password. Credentials not updated.');
       }
-    } catch (e) {
-      console.log('Error parsing WebView message:', e);
-    }
-  };
-
-  const handleNavigationStateChange = async (navState: any) => {
-    const { url } = navState;
-
-    if (url.includes('/secure/studenthome') || url.includes('/secure/studentMyCourses')) {
-      // Valid credentials! Save them
-      await SecureStorageService.saveCredentials(username.trim(), password.trim());
+    } catch (e: any) {
+      Alert.alert('Update Failed', e?.message || 'An error occurred during verification.');
+    } finally {
       setLoading(false);
-      setTriggerVerify(false);
-      setPassword('');
-      setShowUpdateForm(false);
-      Alert.alert('Success', 'LDAP credentials updated successfully.');
-      onCredentialsUpdated(); // Trigger refetch of profile details
-    } else if (url.includes('/login') && !loading && triggerVerify) {
-      setLoading(false);
-      setTriggerVerify(false);
-      Alert.alert('Authentication Failed', 'Invalid username or password. Credentials not updated.');
     }
   };
 
@@ -393,29 +370,7 @@ export default function SettingsScreen({
         <Text style={styles.logoutText}>Log Out from Application</Text>
       </TouchableOpacity>
 
-      {/* Background WebView for verifying updated credentials */}
-      {triggerVerify && (
-        <View 
-          style={{ position: 'absolute', bottom: 0, right: 0, width: 1, height: 1, opacity: 0.01 }} 
-          pointerEvents="none"
-        >
-          <WebView
-            ref={webViewRef}
-            source={{ uri: loginUrl }}
-            javaScriptEnabled={true}
-            domStorageEnabled={true}
-            sharedCookiesEnabled={true}
-            thirdPartyCookiesEnabled={true}
-            mixedContentMode="always"
-            setSupportMultipleWindows={false}
-            originWhitelist={['*']}
-            onMessage={handleWebViewMessage}
-            onNavigationStateChange={handleNavigationStateChange}
-            injectedJavaScript={ScraperService.getLoginInjectionScript(username.trim(), password.trim())}
-            userAgent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36"
-          />
-        </View>
-      )}
+
 
       {/* Credits & Contributors Modal */}
       <CreditsModal 
