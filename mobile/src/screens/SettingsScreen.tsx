@@ -9,6 +9,7 @@ import { SessionLifecycleManager } from '../services/SessionLifecycleManager';
 import { UpdateService, UpdateInfo } from '../services/UpdateService';
 import { AppConfig } from '../constants/Config';
 import CreditsModal from './CreditsModal';
+import DownloadV2Icon from '../components/icons/DownloadV2Icon';
 
 interface SettingsScreenProps {
   onLogout: () => void;
@@ -310,23 +311,22 @@ export default function SettingsScreen({
               </Text>
               {hasUpdate && (
                 <View style={styles.updateAvailablePill}>
-                  <Ionicons name="sparkles" size={11} color="#fef08a" style={{ marginRight: 3 }} />
+                  {/*<Ionicons name="sparkles" size={11} color="#fef08a" style={{ marginRight: 3 }} />*/}
                   <Text style={styles.updateAvailablePillText}>
                     {updateInfo?.latestVersion ? `v${updateInfo.latestVersion} Ready` : 'Update Ready'}
                   </Text>
                 </View>
               )}
             </View>
-            <Text style={[styles.settingDescription, hasUpdate && { color: '#fef08a' }]}>
+            <Text style={[styles.settingDescription, hasUpdate && { color: '#ded278ff' }]}>
               {hasUpdate ? 'Tap to view details and install the latest update' : 'Fetch latest release notes & APK from GitHub'}
             </Text>
           </View>
           {checkingUpdate ? (
             <ActivityIndicator size="small" color={hasUpdate ? '#eab308' : Theme.colors.primary} />
           ) : (
-            <Ionicons 
-              name={hasUpdate ? "arrow-forward-circle" : "cloud-download-outline"} 
-              size={hasUpdate ? 22 : 20} 
+            <DownloadV2Icon 
+              size={22} 
               color={hasUpdate ? "#eab308" : Theme.colors.primary} 
             />
           )}

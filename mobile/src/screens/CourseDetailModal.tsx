@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { CourseDetail } from '../services/CacheService';
+import { TimetableIcon } from '../components/icons/TimetableIcon';
 
 interface CourseDetailModalProps {
   visible: boolean;
@@ -65,7 +66,7 @@ export default function CourseDetailModal({
                 ) : null}
                 {courseDetail.slot && courseDetail.slot !== 'N/A' ? (
                   <View style={styles.metaBadge}>
-                    <Ionicons name="time-outline" size={12} color={Theme.colors.lavender} />
+                    <TimetableIcon size={14} color={Theme.colors.lavender} />
                     <Text style={styles.metaBadgeText}>Slot {courseDetail.slot}</Text>
                   </View>
                 ) : null}
