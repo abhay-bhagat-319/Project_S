@@ -40,3 +40,11 @@ _Avoid_: Background scraper, WebView driver
 The authentication and session subsystem that coordinates credential verification, cookie jar sanitization, server-side session termination, and background session recovery.
 _Avoid_: Auth helper, login service, cookie manager
 
+**SyncProgressIndicator**:
+The corner animated micro-interaction in the top header displaying active background portal synchronization, cycling through brand palette colors upon completion of each animation loop.
+_Avoid_: Loading circle, refresh spinner, top spinner
+
+**InteractiveTabIcon**:
+The one-shot vector micro-interaction rendered inside the floating bottom navigation bar that triggers forward animation upon tab selection and resets to resting frame upon blur.
+_Avoid_: Animated GIF, bottom icon, tab gif
+

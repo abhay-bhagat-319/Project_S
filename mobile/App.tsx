@@ -28,6 +28,14 @@ import UpdateModal from './src/screens/UpdateModal';
 import BackgroundDownloadPill from './src/components/BackgroundDownloadPill';
 import { UpdateService, UpdateInfo } from './src/services/UpdateService';
 import { NotificationService } from './src/services/NotificationService';
+import InteractiveTabIcon from './src/components/InteractiveTabIcon';
+import SyncProgressIndicator from './src/components/SyncProgressIndicator';
+
+const profileLottie = require('./assets/lottie/profile.json');
+const attendanceLottie = require('./assets/lottie/attendance.json');
+const coursesLottie = require('./assets/lottie/book_courses.json');
+const portalLottie = require('./assets/lottie/globe.json');
+const settingsLottie = require('./assets/lottie/settings.json');
 
 type AppState = 'INITIALIZING' | 'NEEDS_LOGIN' | 'LOCKED' | 'LOGGED_IN';
 type TabName = 'Profile' | 'Attendance' | 'Courses' | 'Portal' | 'Settings';
@@ -50,15 +58,22 @@ function AppContent() {
   const insets = useSafeAreaInsets();
   const [appState, setAppState] = useState<AppState>('INITIALIZING');
   const [activeTab, setActiveTab] = useState<TabName>('Profile');
+  const [tabNonce, setTabNonce] = useState<Record<TabName, number>>({
+    Profile: 0,
+    Attendance: 0,
+    Courses: 0,
+    Portal: 0,
+    Settings: 0,
+  });
   const [subScreen, setSubScreen] = useState<'academic_schedules' | 'reports' | null>(null);
   const pagerRef = useRef<PagerView>(null);
-  
+
   // Scraped Data
   const [profileData, setProfileData] = useState<ProfileData | null>(null);
   const [attendanceData, setAttendanceData] = useState<AttendanceData | null>(null);
   const [courses, setCourses] = useState<Course[]>([]);
   const [courseDetails, setCourseDetails] = useState<Record<string, CourseDetail>>({});
-  
+
   // Sync States
   const [syncActive, setSyncActive] = useState(false);
   const [syncScope, setSyncScope] = useState<SyncScope>('ALL');
@@ -68,7 +83,7 @@ function AppContent() {
   const syncResolverRef = useRef<(() => void) | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
-  
+
   // Portal Navigation Target
   const [portalTargetUrl, setPortalTargetUrl] = useState<string | null>(null);
 
@@ -165,7 +180,7 @@ function AppContent() {
 
   useEffect(() => {
     bootstrapApp();
-    NotificationService.init().catch(() => {});
+    NotificationService.init().catch(() => { });
 
     // Listen for notification tap responses
     const unsubscribeNotification = NotificationService.registerResponseListener((action, version) => {
@@ -181,9 +196,9 @@ function AppContent() {
     // Handle cold launch from tapped notification
     NotificationService.checkColdLaunchResponse((action, version) => {
       if (action === 'INSTALL_UPDATE' && version) {
-        UpdateService.installCachedApk(version).catch(() => {});
+        UpdateService.installCachedApk(version).catch(() => { });
       }
-    }).catch(() => {});
+    }).catch(() => { });
 
     // Subscribe to unified background download progress
     const unsubscribeProgress = UpdateService.addProgressListener((fraction) => {
@@ -222,7 +237,7 @@ function AppContent() {
         }
       } else {
         setUpdateInfo(null);
-        NotificationService.clearUpdateNotification().catch(() => {});
+        NotificationService.clearUpdateNotification().catch(() => { });
       }
     } catch (err) {
       console.log('Startup update check error:', err);
@@ -266,7 +281,7 @@ function AppContent() {
     const cachedAttendance = await CacheService.getCachedAttendanceData();
     const cachedCourses = await CacheService.getCachedCoursesData();
     const cachedDetails = await CacheService.getCachedCourseDetails();
-    
+
     if (cachedProfile) {
       setProfileData(cachedProfile);
     }
@@ -425,15 +440,15 @@ function AppContent() {
   const handleLoginSuccess = async () => {
     const creds = await SecureStorageService.getCredentials();
     setCredentials(creds);
-    
+
     // Automatically prompt to enable biometrics
     Alert.alert(
       'Biometric Login',
       'Would you like to enable fingerprint/face authentication for faster secure unlock?',
       [
         { text: 'No', style: 'cancel', onPress: () => completeLogin() },
-        { 
-          text: 'Yes', 
+        {
+          text: 'Yes',
           onPress: async () => {
             await SecureStorageService.setBiometricsEnabled(true);
             completeLogin();
@@ -474,9 +489,13 @@ function AppContent() {
 
   const handleTabPress = (tab: TabName) => {
     setSubScreen(null);
-    setActiveTab(tab);
-    const targetIndex = getTabIndex(tab);
-    pagerRef.current?.setPageWithoutAnimation(targetIndex);
+    if (activeTab === tab) {
+      setTabNonce((prev) => ({ ...prev, [tab]: (prev[tab] || 0) + 1 }));
+    } else {
+      setActiveTab(tab);
+      const targetIndex = getTabIndex(tab);
+      pagerRef.current?.setPageWithoutAnimation(targetIndex);
+    }
   };
 
   const isPagerScrollEnabled = activeTab !== 'Portal' && subScreen === null;
@@ -504,7 +523,7 @@ function AppContent() {
       ) : (
         <View style={[styles.container, { paddingTop: insets.top }]}>
           <StatusBar barStyle="light-content" backgroundColor={Theme.colors.background} />
-          
+
           {/* Top Header */}
           {!subScreen && (
             <View style={styles.header}>
@@ -513,217 +532,240 @@ function AppContent() {
               </Text>
               {syncActive && (
                 <View style={styles.syncSpinner}>
-                  <ActivityIndicator size="small" color={Theme.colors.primary} />
+                  <SyncProgressIndicator size={24} />
                 </View>
               )}
             </View>
           )}
 
-      {/* Screen Content Area with Native Gesture PagerView */}
-      <View style={styles.content}>
-        {/*
+          {/* Screen Content Area with Native Gesture PagerView */}
+          <View style={styles.content}>
+            {/*
           Native hardware-accelerated horizontal swipe pager.
           - offscreenPageLimit: 4 keeps all tab views mounted to eliminate pop-in and preserve scroll positions
           - scrollEnabled: dynamically locked on the Portal tab (so WebView captures touches) and during subscreen navigation
           - overScrollMode: enables native Android edge stretch and iOS spring bounce
         */}
-        <PagerView
-          ref={pagerRef}
-          style={styles.pagerView}
-          initialPage={getTabIndex(activeTab)}
-          onPageSelected={handlePageSelected}
-          scrollEnabled={isPagerScrollEnabled}
-          offscreenPageLimit={4}
-          overScrollMode="always"
-        >
-          {/* Tab 0: Profile / Dashboard */}
-          <View key="profile_page" style={styles.pageContainer}>
-            {subScreen === 'academic_schedules' ? (
-              <AcademicSchedulesScreen onBack={() => setSubScreen(null)} />
-            ) : subScreen === 'reports' ? (
-              <ReportsScreen 
-                onBack={() => setSubScreen(null)} 
-                onRefreshPortal={() => startSync('REPORTS', undefined, true)}
-                isSyncing={syncActive && syncScope === 'REPORTS'}
-              />
-            ) : (
-              <DashboardScreen 
-                profileData={profileData} 
-                onNavigateToTab={(tab) => handleTabPress(tab as TabName)}
-                onOpenAcademicSchedules={() => setSubScreen('academic_schedules')}
-                onOpenReports={() => setSubScreen('reports')}
-                onRefresh={() => handleManualRefresh('PROFILE')}
-                refreshing={refreshing && syncScope === 'PROFILE'}
-              />
-            )}
+            <PagerView
+              ref={pagerRef}
+              style={styles.pagerView}
+              initialPage={getTabIndex(activeTab)}
+              onPageSelected={handlePageSelected}
+              scrollEnabled={isPagerScrollEnabled}
+              offscreenPageLimit={4}
+              overScrollMode="always"
+            >
+              {/* Tab 0: Profile / Dashboard */}
+              <View key="profile_page" style={styles.pageContainer}>
+                {subScreen === 'academic_schedules' ? (
+                  <AcademicSchedulesScreen onBack={() => setSubScreen(null)} />
+                ) : subScreen === 'reports' ? (
+                  <ReportsScreen
+                    onBack={() => setSubScreen(null)}
+                    onRefreshPortal={() => startSync('REPORTS', undefined, true)}
+                    isSyncing={syncActive && syncScope === 'REPORTS'}
+                  />
+                ) : (
+                  <DashboardScreen
+                    profileData={profileData}
+                    onNavigateToTab={(tab) => handleTabPress(tab as TabName)}
+                    onOpenAcademicSchedules={() => setSubScreen('academic_schedules')}
+                    onOpenReports={() => setSubScreen('reports')}
+                    onRefresh={() => handleManualRefresh('PROFILE')}
+                    refreshing={refreshing && syncScope === 'PROFILE'}
+                  />
+                )}
+              </View>
+
+              {/* Tab 1: Attendance */}
+              <View key="attendance_page" style={styles.pageContainer}>
+                <AttendanceScreen
+                  attendanceData={attendanceData}
+                  onRefresh={() => handleManualRefresh('ATTENDANCE')}
+                  refreshing={refreshing && syncScope === 'ATTENDANCE'}
+                  isOffline={isOffline}
+                />
+              </View>
+
+              {/* Tab 2: Courses */}
+              <View key="courses_page" style={styles.pageContainer}>
+                <CoursesScreen
+                  courses={courses}
+                  courseDetails={courseDetails}
+                  onNavigateToTab={(tab) => handleTabPress(tab as TabName)}
+                  onOpenSrs={handleOpenSrs}
+                  onRefresh={() => handleManualRefresh('COURSES')}
+                  refreshing={refreshing && syncScope === 'COURSES'}
+                  onRefreshMarks={handleRefreshMarks}
+                />
+              </View>
+
+              {/* Tab 3: Portal */}
+              <View key="portal_page" style={styles.pageContainer}>
+                <PortalWebviewScreen
+                  ref={portalWebviewRef}
+                  credentials={credentials}
+                  targetUrl={portalTargetUrl}
+                  onClearTargetUrl={() => setPortalTargetUrl(null)}
+                />
+              </View>
+
+              {/* Tab 4: Settings */}
+              <View key="settings_page" style={styles.pageContainer}>
+                <SettingsScreen
+                  onLogout={handleLogoutSuccess}
+                  onCredentialsUpdated={bootstrapApp}
+                  hasUpdate={!!updateInfo?.hasUpdate}
+                  updateInfo={updateInfo}
+                  onUpdateStatusChecked={(info) => {
+                    if (info.hasUpdate) {
+                      setUpdateInfo(info);
+                    } else {
+                      setUpdateInfo(null);
+                    }
+                  }}
+                  onOpenUpdateModal={(info) => {
+                    setUpdateInfo(info);
+                    setUpdateModalVisible(true);
+                  }}
+                />
+              </View>
+            </PagerView>
           </View>
 
-          {/* Tab 1: Attendance */}
-          <View key="attendance_page" style={styles.pageContainer}>
-            <AttendanceScreen 
-              attendanceData={attendanceData} 
-              onRefresh={() => handleManualRefresh('ATTENDANCE')} 
-              refreshing={refreshing && syncScope === 'ATTENDANCE'}
-              isOffline={isOffline}
-            />
+          {/* Bottom Black Gradient Scrim (Underneath Navigation Bar) */}
+          <View
+            style={[
+              styles.bottomGradientWrapper,
+              { height: insets.bottom + 96 }
+            ]}
+            pointerEvents="none"
+          >
+            <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
+              <Defs>
+                <SvgLinearGradient id="bottomNavScrim" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <Stop offset="0%" stopColor="#000000" stopOpacity="0" />
+                  <Stop offset="30%" stopColor="#000000" stopOpacity="0.25" />
+                  <Stop offset="65%" stopColor="#000000" stopOpacity="0.70" />
+                  <Stop offset="100%" stopColor="#000000" stopOpacity="0.95" />
+                </SvgLinearGradient>
+              </Defs>
+              <Rect width="100%" height="100%" fill="url(#bottomNavScrim)" />
+            </Svg>
           </View>
 
-          {/* Tab 2: Courses */}
-          <View key="courses_page" style={styles.pageContainer}>
-            <CoursesScreen 
-              courses={courses} 
-              courseDetails={courseDetails}
-              onNavigateToTab={(tab) => handleTabPress(tab as TabName)}
-              onOpenSrs={handleOpenSrs}
-              onRefresh={() => handleManualRefresh('COURSES')}
-              refreshing={refreshing && syncScope === 'COURSES'}
-              onRefreshMarks={handleRefreshMarks}
-            />
-          </View>
+          {/* Custom Floating Pill 5-Item Bottom Navigation Bar */}
+          <View style={[styles.navBarWrapper, { bottom: Math.max(16, insets.bottom + Theme.layout.navBarBaseBottom) }]}>
+            <View style={styles.navBar}>
 
-          {/* Tab 3: Portal */}
-          <View key="portal_page" style={styles.pageContainer}>
-            <PortalWebviewScreen 
-              ref={portalWebviewRef}
-              credentials={credentials} 
-              targetUrl={portalTargetUrl}
-              onClearTargetUrl={() => setPortalTargetUrl(null)}
-            />
-          </View>
+              <TouchableOpacity
+                style={[styles.navItem, activeTab === 'Profile' && styles.activeNavItem]}
+                onPress={() => handleTabPress('Profile')}
+                activeOpacity={0.7}
+              >
+                <InteractiveTabIcon
+                  source={profileLottie}
+                  cacheKey="profile"
+                  isActive={activeTab === 'Profile'}
+                  size={26}
+                  activeColor="#FFFFFF"
+                  inactiveColor="#FFFFFF"
+                  triggerNonce={tabNonce.Profile}
+                />
+              </TouchableOpacity>
 
-          {/* Tab 4: Settings */}
-          <View key="settings_page" style={styles.pageContainer}>
-            <SettingsScreen 
-              onLogout={handleLogoutSuccess} 
-              onCredentialsUpdated={bootstrapApp}
-              hasUpdate={!!updateInfo?.hasUpdate}
-              updateInfo={updateInfo}
-              onUpdateStatusChecked={(info) => {
-                if (info.hasUpdate) {
-                  setUpdateInfo(info);
-                } else {
-                  setUpdateInfo(null);
-                }
-              }}
-              onOpenUpdateModal={(info) => {
-                setUpdateInfo(info);
-                setUpdateModalVisible(true);
-              }}
-            />
-          </View>
-        </PagerView>
-      </View>
+              <TouchableOpacity
+                style={[styles.navItem, activeTab === 'Attendance' && styles.activeNavItem]}
+                onPress={() => handleTabPress('Attendance')}
+                activeOpacity={0.7}
+              >
+                <InteractiveTabIcon
+                  source={attendanceLottie}
+                  cacheKey="attendance"
+                  isActive={activeTab === 'Attendance'}
+                  size={26}
+                  activeColor="#FFFFFF"
+                  inactiveColor="#FFFFFF"
+                  triggerNonce={tabNonce.Attendance}
+                />
+              </TouchableOpacity>
 
-      {/* Bottom Black Gradient Scrim (Underneath Navigation Bar) */}
-      <View 
-        style={[
-          styles.bottomGradientWrapper, 
-          { height: insets.bottom + 96 }
-        ]} 
-        pointerEvents="none"
-      >
-        <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
-          <Defs>
-            <SvgLinearGradient id="bottomNavScrim" x1="0%" y1="0%" x2="0%" y2="100%">
-              <Stop offset="0%" stopColor="#000000" stopOpacity="0" />
-              <Stop offset="30%" stopColor="#000000" stopOpacity="0.25" />
-              <Stop offset="65%" stopColor="#000000" stopOpacity="0.70" />
-              <Stop offset="100%" stopColor="#000000" stopOpacity="0.95" />
-            </SvgLinearGradient>
-          </Defs>
-          <Rect width="100%" height="100%" fill="url(#bottomNavScrim)" />
-        </Svg>
-      </View>
+              <TouchableOpacity
+                style={[styles.navItem, activeTab === 'Courses' && styles.activeNavItem]}
+                onPress={() => handleTabPress('Courses')}
+                activeOpacity={0.7}
+              >
+                <InteractiveTabIcon
+                  source={coursesLottie}
+                  cacheKey="courses"
+                  isActive={activeTab === 'Courses'}
+                  size={26}
+                  speed={2.0}
+                  activeColor="#FFFFFF"
+                  inactiveColor="#FFFFFF"
+                  triggerNonce={tabNonce.Courses}
+                />
+              </TouchableOpacity>
 
-      {/* Custom Floating Pill 5-Item Bottom Navigation Bar */}
-      <View style={[styles.navBarWrapper, { bottom: Math.max(16, insets.bottom + Theme.layout.navBarBaseBottom) }]}>
-        <View style={styles.navBar}>
-          
-          <TouchableOpacity 
-            style={[styles.navItem, activeTab === 'Profile' && styles.activeNavItem]}
-            onPress={() => handleTabPress('Profile')}
-            activeOpacity={0.7}
-          >
-            <Ionicons 
-              name={activeTab === 'Profile' ? 'person' : 'person-outline'} 
-              size={20} 
-              color={activeTab === 'Profile' ? '#FFFFFF' : Theme.colors.textSecondary} 
-            />
-          </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.navItem, activeTab === 'Portal' && styles.activeNavItem]}
+                onPress={() => handleTabPress('Portal')}
+                activeOpacity={0.7}
+              >
+                <InteractiveTabIcon
+                  source={portalLottie}
+                  cacheKey="globe_lock"
+                  isActive={activeTab === 'Portal'}
+                  size={26}
+                  speed={2.0}
+                  activeColor="#FFFFFF"
+                  inactiveColor="#FFFFFF"
+                  triggerNonce={tabNonce.Portal}
+                />
+              </TouchableOpacity>
 
-          <TouchableOpacity 
-            style={[styles.navItem, activeTab === 'Attendance' && styles.activeNavItem]}
-            onPress={() => handleTabPress('Attendance')}
-            activeOpacity={0.7}
-          >
-            <Ionicons 
-              name={activeTab === 'Attendance' ? 'calendar' : 'calendar-outline'} 
-              size={20} 
-              color={activeTab === 'Attendance' ? '#FFFFFF' : Theme.colors.textSecondary} 
-            />
-          </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.navItem, activeTab === 'Settings' && styles.activeNavItem]}
+                onPress={() => handleTabPress('Settings')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.iconContainer}>
+                  <InteractiveTabIcon
+                    source={settingsLottie}
+                    cacheKey="settings"
+                    isActive={activeTab === 'Settings'}
+                    size={26}
+                    speed={1.0}
+                    activeColor="#FFFFFF"
+                    inactiveColor="#FFFFFF"
+                    triggerNonce={tabNonce.Settings}
+                  />
+                  {updateInfo?.hasUpdate && (
+                    <View style={styles.badgeDot} />
+                  )}
+                </View>
+              </TouchableOpacity>
 
-          <TouchableOpacity 
-            style={[styles.navItem, activeTab === 'Courses' && styles.activeNavItem]}
-            onPress={() => handleTabPress('Courses')}
-            activeOpacity={0.7}
-          >
-            <Ionicons 
-              name={activeTab === 'Courses' ? 'book' : 'book-outline'} 
-              size={20} 
-              color={activeTab === 'Courses' ? '#FFFFFF' : Theme.colors.textSecondary} 
-            />
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={[styles.navItem, activeTab === 'Portal' && styles.activeNavItem]}
-            onPress={() => handleTabPress('Portal')}
-            activeOpacity={0.7}
-          >
-            <Ionicons 
-              name={activeTab === 'Portal' ? 'globe' : 'globe-outline'} 
-              size={20} 
-              color={activeTab === 'Portal' ? '#FFFFFF' : Theme.colors.textSecondary} 
-            />
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={[styles.navItem, activeTab === 'Settings' && styles.activeNavItem]}
-            onPress={() => handleTabPress('Settings')}
-            activeOpacity={0.7}
-          >
-            <View style={styles.iconContainer}>
-              <Ionicons 
-                name={activeTab === 'Settings' ? 'settings' : 'settings-outline'} 
-                size={20} 
-                color={activeTab === 'Settings' ? '#FFFFFF' : Theme.colors.textSecondary} 
-              />
-              {updateInfo?.hasUpdate && (
-                <View style={styles.badgeDot} />
-              )}
             </View>
-          </TouchableOpacity>
+          </View>
 
-        </View>
-      </View>
+          {/* Background Download Floating Pill */}
+          <BackgroundDownloadPill
+            isDownloading={bgDownload.isDownloading}
+            progress={bgDownload.progress}
+            isComplete={bgDownload.isComplete}
+            versionTag={bgDownload.versionTag}
+            onPressInstall={handleInstallCachedFromPill}
+            onDismiss={() => setBgDownload((prev) => ({ ...prev, isComplete: false }))}
+          />
 
-      {/* Background Download Floating Pill */}
-      <BackgroundDownloadPill
-        isDownloading={bgDownload.isDownloading}
-        progress={bgDownload.progress}
-        isComplete={bgDownload.isComplete}
-        versionTag={bgDownload.versionTag}
-        onPressInstall={handleInstallCachedFromPill}
-        onDismiss={() => setBgDownload((prev) => ({ ...prev, isComplete: false }))}
-      />
-
-      {/* In-App Update Bottom Sheet Modal */}
-      <UpdateModal
-        visible={updateModalVisible}
-        updateInfo={updateInfo}
-        onClose={() => setUpdateModalVisible(false)}
-        onSnooze={() => {}}
-      />
+          {/* In-App Update Bottom Sheet Modal */}
+          <UpdateModal
+            visible={updateModalVisible}
+            updateInfo={updateInfo}
+            onClose={() => setUpdateModalVisible(false)}
+            onSnooze={() => { }}
+          />
         </View>
       )}
 
@@ -819,13 +861,13 @@ const styles = StyleSheet.create({
   },
   badgeDot: {
     position: 'absolute',
-    top: -2,
-    right: -4,
-    width: 9,
-    height: 9,
+    top: -1,
+    right: -2,
+    width: 6,
+    height: 6,
     borderRadius: 4.5,
-    backgroundColor: '#eab308', // Vibrant yellow notification dot
-    borderWidth: 1.5,
+    backgroundColor: '#ffbf00ff', // Vibrant yellow notification dot
+    borderWidth: 0,
     borderColor: Theme.colors.surface,
   },
   pagerView: {

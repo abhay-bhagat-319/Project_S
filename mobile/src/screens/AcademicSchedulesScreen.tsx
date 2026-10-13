@@ -18,6 +18,7 @@ import {
   AcademicDoc,
   DocCategory,
 } from '../services/AcademicDocsService';
+import { TimetableIcon } from '../components/icons/TimetableIcon';
 
 interface AcademicSchedulesScreenProps {
   onBack: () => void;
@@ -161,9 +162,13 @@ export default function AcademicSchedulesScreen({ onBack }: AcademicSchedulesScr
         disabled={isOpeningThis}
       >
         <View style={styles.cardContent}>
-          {/* Left Icon Pill */}
-          <View style={[styles.iconContainer, { backgroundColor: `${catColor}25` }]}>
-            <Ionicons name={catIcon} size={22} color={catColor} />
+          {/* Left Icon */}
+          <View style={styles.iconContainer}>
+            {item.category === 'TIMETABLE' ? (
+              <TimetableIcon size={26} color={catColor} />
+            ) : (
+              <Ionicons name={catIcon} size={24} color={catColor} />
+            )}
           </View>
 
           {/* Minimal Title & Meta */}
@@ -248,12 +253,20 @@ export default function AcademicSchedulesScreen({ onBack }: AcademicSchedulesScr
                 ]}
                 onPress={() => setSelectedCategory(item.key)}
               >
-                <Ionicons
-                  name={item.icon}
-                  size={15}
-                  color={isSelected ? Theme.colors.textDark : Theme.colors.textSecondary}
-                  style={styles.tabIcon}
-                />
+                {item.key === 'TIMETABLE' ? (
+                  <TimetableIcon
+                    size={17}
+                    color={isSelected ? Theme.colors.textDark : Theme.colors.textSecondary}
+                    style={styles.tabIcon}
+                  />
+                ) : (
+                  <Ionicons
+                    name={item.icon}
+                    size={15}
+                    color={isSelected ? Theme.colors.textDark : Theme.colors.textSecondary}
+                    style={styles.tabIcon}
+                  />
+                )}
                 <Text
                   style={[
                     styles.tabChipText,
@@ -384,9 +397,8 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   iconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 36,
+    height: 36,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 14,

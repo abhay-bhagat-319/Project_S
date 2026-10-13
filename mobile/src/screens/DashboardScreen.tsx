@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text, View, Image, ScrollView, TouchableOpacity, Modal, FlatList, Dimensions, Alert, RefreshControl } from 'react-native';
-import Svg, { Line, Circle, Polyline, Text as SvgText, Rect, Path, Defs, LinearGradient, Stop, G } from 'react-native-svg';
-import { Ionicons } from '@expo/vector-icons';
+import Svg, { Line, Circle, Polyline, Text as SvgText, Rect, Path, Defs, LinearGradient as SvgLinearGradient, Stop, G } from 'react-native-svg';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { ProfileData } from '../services/CacheService';
@@ -141,10 +142,19 @@ export default function DashboardScreen({
           activeOpacity={0.75}
           onPress={() => onOpenAcademicSchedules && onOpenAcademicSchedules()}
         >
-          <View style={[styles.quickActionIconCircle, { backgroundColor: 'rgba(139, 120, 255, 0.18)' }]}>
-            <Ionicons name="calendar" size={22} color={Theme.colors.primary} />
+          <View style={styles.quickActionIconContainer}>
+            <Ionicons name="calendar" size={30} color={Theme.colors.primary} />
           </View>
-          <Text style={styles.quickActionLabel} numberOfLines={2}>DOAA Sched</Text>
+          <View style={styles.quickActionLabelContainer}>
+            <Text
+              style={styles.quickActionLabel}
+              numberOfLines={2}
+              adjustsFontSizeToFit
+              minimumFontScale={0.75}
+            >
+              DOAA{'\n'}Schedule
+            </Text>
+          </View>
         </TouchableOpacity>
 
         {/* Timetable (Placeholder) */}
@@ -153,10 +163,19 @@ export default function DashboardScreen({
           activeOpacity={0.7}
           onPress={() => Alert.alert('Timetable', 'My Timetable slot view will be available in the upcoming update!')}
         >
-          <View style={[styles.quickActionIconCircle, { backgroundColor: 'rgba(255, 255, 255, 0.06)' }]}>
-            <Ionicons name="time-outline" size={22} color={Theme.colors.textSecondary} />
+          <View style={styles.quickActionIconContainer}>
+            <MaterialCommunityIcons name="timetable" size={30} color={Theme.colors.textSecondary} />
           </View>
-          <Text style={styles.quickActionLabel} numberOfLines={1}>Timetable</Text>
+          <View style={styles.quickActionLabelContainer}>
+            <Text
+              style={styles.quickActionLabel}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.8}
+            >
+              Timetable
+            </Text>
+          </View>
           <View style={styles.soonPill}>
             <Text style={styles.soonPillText}>Soon</Text>
           </View>
@@ -168,10 +187,19 @@ export default function DashboardScreen({
           activeOpacity={0.75}
           onPress={() => onOpenReports && onOpenReports()}
         >
-          <View style={[styles.quickActionIconCircle, { backgroundColor: 'rgba(255, 214, 232, 0.18)' }]}>
-            <Ionicons name="document-text" size={22} color={Theme.colors.pink} />
+          <View style={styles.quickActionIconContainer}>
+            <Ionicons name="document-text" size={30} color={Theme.colors.pink} />
           </View>
-          <Text style={styles.quickActionLabel} numberOfLines={1}>Reports</Text>
+          <View style={styles.quickActionLabelContainer}>
+            <Text
+              style={styles.quickActionLabel}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.8}
+            >
+              Reports
+            </Text>
+          </View>
         </TouchableOpacity>
 
         {/* Attendance Tab Switcher */}
@@ -180,10 +208,19 @@ export default function DashboardScreen({
           activeOpacity={0.75}
           onPress={() => onNavigateToTab && onNavigateToTab('Attendance')}
         >
-          <View style={[styles.quickActionIconCircle, { backgroundColor: 'rgba(208, 240, 228, 0.18)' }]}>
-            <Ionicons name="clipboard" size={22} color={Theme.colors.mint} />
+          <View style={styles.quickActionIconContainer}>
+            <Ionicons name="file-tray-full" size={30} color={Theme.colors.mint} />
           </View>
-          <Text style={styles.quickActionLabel} numberOfLines={1}>Attendance</Text>
+          <View style={styles.quickActionLabelContainer}>
+            <Text
+              style={styles.quickActionLabel}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.8}
+            >
+              Attendance
+            </Text>
+          </View>
         </TouchableOpacity>
       </View>
 
@@ -193,26 +230,46 @@ export default function DashboardScreen({
         
         {/* Passed Courses Badge */}
         <TouchableOpacity 
-          style={[styles.progressBadge, { backgroundColor: Theme.colors.mint }]} 
+          style={styles.badgeWrapper} 
           onPress={() => showModal('passed')}
+          activeOpacity={0.8}
         >
-          <View style={styles.badgeIconContainer}>
-            <Ionicons name="checkmark-circle" size={24} color={Theme.colors.textDark} />
-          </View>
-          <Text style={styles.badgeLabel}>Passed Courses</Text>
-          <Text style={styles.badgeCount}>{passedCourses.length}</Text>
+          <LinearGradient
+            colors={['#10B981', '#059669']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.progressBadge}
+          >
+            <View style={styles.badgeTopRow}>
+              <Text style={styles.badgeCount}>{passedCourses.length}</Text>
+              <View style={styles.badgeIconContainer}>
+                <Ionicons name="checkmark-circle" size={18} color="#FFFFFF" />
+              </View>
+            </View>
+            <Text style={styles.badgeLabel} numberOfLines={1}>Passed Courses</Text>
+          </LinearGradient>
         </TouchableOpacity>
 
         {/* Failed Courses Badge */}
         <TouchableOpacity 
-          style={[styles.progressBadge, { backgroundColor: Theme.colors.pink }]} 
+          style={styles.badgeWrapper} 
           onPress={() => showModal('failed')}
+          activeOpacity={0.8}
         >
-          <View style={styles.badgeIconContainer}>
-            <Ionicons name="close-circle" size={24} color={Theme.colors.textDark} />
-          </View>
-          <Text style={styles.badgeLabel}>Failed Courses</Text>
-          <Text style={styles.badgeCount}>{failedCourses.length}</Text>
+          <LinearGradient
+            colors={['#F43F5E', '#E11D48']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.progressBadge}
+          >
+            <View style={styles.badgeTopRow}>
+              <Text style={styles.badgeCount}>{failedCourses.length}</Text>
+              <View style={styles.badgeIconContainer}>
+                <Ionicons name="close-circle" size={18} color="#FFFFFF" />
+              </View>
+            </View>
+            <Text style={styles.badgeLabel} numberOfLines={1}>Failed Courses</Text>
+          </LinearGradient>
         </TouchableOpacity>
       </View>
 
@@ -233,10 +290,10 @@ export default function DashboardScreen({
         <View style={styles.svgWrapper}>
           <Svg width={screenWidth} height={chartHeight}>
             <Defs>
-              <LinearGradient id="cpiGrad" x1="0" y1="0" x2="0" y2="1">
+              <SvgLinearGradient id="cpiGrad" x1="0" y1="0" x2="0" y2="1">
                 <Stop offset="0%" stopColor={Theme.colors.primary} stopOpacity={0.2} />
                 <Stop offset="100%" stopColor={Theme.colors.primary} stopOpacity={0.0} />
-              </LinearGradient>
+              </SvgLinearGradient>
             </Defs>
 
             {/* Grid Lines and Y-Axis labels */}
@@ -486,80 +543,110 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: Theme.spacing.gap * 1.5,
+    paddingTop: 4,
     gap: 8,
   },
   quickActionTile: {
     flex: 1,
     backgroundColor: Theme.colors.surface,
     borderRadius: Theme.radii.widget,
-    paddingVertical: 12,
+    paddingTop: 12,
+    paddingBottom: 10,
     paddingHorizontal: 4,
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     borderWidth: 1,
     borderColor: Theme.colors.border,
-    minHeight: 84,
+    minHeight: 88,
     position: 'relative',
   },
-  quickActionIconCircle: {
+  quickActionIconContainer: {
     width: 38,
     height: 38,
-    borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 6,
+  },
+  quickActionLabelContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: '100%',
   },
   quickActionLabel: {
     color: Theme.colors.textPrimary,
     fontSize: 11,
     fontWeight: '600',
     textAlign: 'center',
+    lineHeight: 13,
   },
   soonPill: {
     position: 'absolute',
-    top: 4,
-    right: 4,
-    backgroundColor: 'rgba(255, 255, 255, 0.12)',
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-    borderRadius: 6,
+    top: -5,
+    right: -3,
+    backgroundColor: '#282A35',
+    borderWidth: 1,
+    borderColor: '#3F4252',
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+    borderRadius: 7,
+    zIndex: 10,
+    elevation: 3,
   },
   soonPillText: {
-    color: Theme.colors.textSecondary,
+    color: '#FFFFFF',
     fontSize: 8,
     fontWeight: '700',
     textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   badgesRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: Theme.spacing.gap * 1.5,
   },
-  progressBadge: {
+  badgeWrapper: {
     width: '48%',
     borderRadius: Theme.radii.widget,
-    padding: Theme.spacing.padding,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  progressBadge: {
+    width: '100%',
+    borderRadius: Theme.radii.widget,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    justifyContent: 'space-between',
+  },
+  badgeTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 6,
   },
   badgeIconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(26, 28, 35, 0.08)',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 10,
-  },
-  badgeLabel: {
-    color: Theme.colors.textDark,
-    fontSize: 12,
-    fontWeight: '600',
   },
   badgeCount: {
-    color: Theme.colors.textDark,
-    fontSize: 26,
-    fontWeight: 'bold',
-    marginTop: 4,
+    color: '#FFFFFF',
+    fontSize: 24,
+    fontWeight: '800',
+    letterSpacing: -0.5,
+  },
+  badgeLabel: {
+    color: 'rgba(255, 255, 255, 0.95)',
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.2,
   },
   chartCard: {
     backgroundColor: Theme.colors.surface,

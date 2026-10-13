@@ -112,14 +112,11 @@ export default function ReportsScreen({
         disabled={isOpeningThis}
       >
         <View style={styles.cardContent}>
-          {/* Left Icon Pill */}
-          <View style={[
-            styles.iconContainer,
-            { backgroundColor: isCumulative ? 'rgba(255, 214, 232, 0.18)' : 'rgba(139, 120, 255, 0.15)' }
-          ]}>
+          {/* Left Icon */}
+          <View style={styles.iconContainer}>
             <Ionicons
               name={isCumulative ? 'ribbon' : 'document-text'}
-              size={22}
+              size={24}
               color={isCumulative ? Theme.colors.pink : Theme.colors.primary}
             />
           </View>
@@ -293,9 +290,8 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   iconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 36,
+    height: 36,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 14,
