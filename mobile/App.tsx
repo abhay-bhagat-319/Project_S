@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
+import { BlurView, BlurTargetView } from 'expo-blur';
 
 import PagerView from 'react-native-pager-view';
 
@@ -67,6 +68,7 @@ function AppContent() {
   });
   const [subScreen, setSubScreen] = useState<'academic_schedules' | 'reports' | null>(null);
   const pagerRef = useRef<PagerView>(null);
+  const blurTargetRef = useRef<View>(null);
 
   // Scraped Data
   const [profileData, setProfileData] = useState<ProfileData | null>(null);
@@ -500,6 +502,16 @@ function AppContent() {
 
   const isPagerScrollEnabled = activeTab !== 'Portal' && subScreen === null;
 
+  const handlePageScroll = (e: any) => {
+    const { position, offset } = e.nativeEvent;
+    // Fast responsive switch: flip tab as soon as swipe gesture crosses threshold
+    const targetIndex = Math.round(position + offset);
+    const nextTab = getTabFromIndex(targetIndex);
+    if (nextTab !== activeTab) {
+      setActiveTab(nextTab);
+    }
+  };
+
   const handlePageSelected = (e: any) => {
     const pageIndex = e.nativeEvent.position;
     const nextTab = getTabFromIndex(pageIndex);
@@ -538,8 +550,8 @@ function AppContent() {
             </View>
           )}
 
-          {/* Screen Content Area with Native Gesture PagerView */}
-          <View style={styles.content}>
+          {/* Screen Content Area with Native Gesture PagerView & Blur Target */}
+          <BlurTargetView ref={blurTargetRef} style={styles.content}>
             {/*
           Native hardware-accelerated horizontal swipe pager.
           - offscreenPageLimit: 4 keeps all tab views mounted to eliminate pop-in and preserve scroll positions
@@ -550,6 +562,7 @@ function AppContent() {
               ref={pagerRef}
               style={styles.pagerView}
               initialPage={getTabIndex(activeTab)}
+              onPageScroll={handlePageScroll}
               onPageSelected={handlePageSelected}
               scrollEnabled={isPagerScrollEnabled}
               offscreenPageLimit={4}
@@ -631,7 +644,7 @@ function AppContent() {
                 />
               </View>
             </PagerView>
-          </View>
+          </BlurTargetView>
 
           {/* Bottom Black Gradient Scrim (Underneath Navigation Bar) */}
           <View
@@ -654,98 +667,105 @@ function AppContent() {
             </Svg>
           </View>
 
-          {/* Custom Floating Pill 5-Item Bottom Navigation Bar */}
+          {/* Custom Floating Glassmorphic Pill 5-Item Bottom Navigation Bar */}
           <View style={[styles.navBarWrapper, { bottom: Math.max(16, insets.bottom + Theme.layout.navBarBaseBottom) }]}>
-            <View style={styles.navBar}>
-
-              <TouchableOpacity
-                style={[styles.navItem, activeTab === 'Profile' && styles.activeNavItem]}
-                onPress={() => handleTabPress('Profile')}
-                activeOpacity={0.7}
+            <View style={styles.navBarContainer}>
+              <BlurView
+                intensity={50}
+                tint={Platform.OS === 'ios' ? 'systemThickMaterialDark' : 'dark'}
+                blurMethod="dimezisBlurView"
+                blurTarget={blurTargetRef}
+                blurReductionFactor={1.5}
+                style={styles.navBar}
               >
-                <InteractiveTabIcon
-                  source={profileLottie}
-                  cacheKey="profile"
-                  isActive={activeTab === 'Profile'}
-                  size={26}
-                  activeColor="#FFFFFF"
-                  inactiveColor="#FFFFFF"
-                  triggerNonce={tabNonce.Profile}
-                />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.navItem, activeTab === 'Attendance' && styles.activeNavItem]}
-                onPress={() => handleTabPress('Attendance')}
-                activeOpacity={0.7}
-              >
-                <InteractiveTabIcon
-                  source={attendanceLottie}
-                  cacheKey="attendance"
-                  isActive={activeTab === 'Attendance'}
-                  size={26}
-                  activeColor="#FFFFFF"
-                  inactiveColor="#FFFFFF"
-                  triggerNonce={tabNonce.Attendance}
-                />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.navItem, activeTab === 'Courses' && styles.activeNavItem]}
-                onPress={() => handleTabPress('Courses')}
-                activeOpacity={0.7}
-              >
-                <InteractiveTabIcon
-                  source={coursesLottie}
-                  cacheKey="courses"
-                  isActive={activeTab === 'Courses'}
-                  size={26}
-                  speed={2.0}
-                  activeColor="#FFFFFF"
-                  inactiveColor="#FFFFFF"
-                  triggerNonce={tabNonce.Courses}
-                />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.navItem, activeTab === 'Portal' && styles.activeNavItem]}
-                onPress={() => handleTabPress('Portal')}
-                activeOpacity={0.7}
-              >
-                <InteractiveTabIcon
-                  source={portalLottie}
-                  cacheKey="globe_lock"
-                  isActive={activeTab === 'Portal'}
-                  size={26}
-                  speed={2.0}
-                  activeColor="#FFFFFF"
-                  inactiveColor="#FFFFFF"
-                  triggerNonce={tabNonce.Portal}
-                />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.navItem, activeTab === 'Settings' && styles.activeNavItem]}
-                onPress={() => handleTabPress('Settings')}
-                activeOpacity={0.7}
-              >
-                <View style={styles.iconContainer}>
+                <TouchableOpacity
+                  style={[styles.navItem, activeTab === 'Profile' && styles.activeNavItem]}
+                  onPress={() => handleTabPress('Profile')}
+                  activeOpacity={0.7}
+                >
                   <InteractiveTabIcon
-                    source={settingsLottie}
-                    cacheKey="settings"
-                    isActive={activeTab === 'Settings'}
+                    source={profileLottie}
+                    cacheKey="profile"
+                    isActive={activeTab === 'Profile'}
                     size={26}
-                    speed={1.0}
                     activeColor="#FFFFFF"
                     inactiveColor="#FFFFFF"
-                    triggerNonce={tabNonce.Settings}
+                    triggerNonce={tabNonce.Profile}
                   />
-                  {updateInfo?.hasUpdate && (
-                    <View style={styles.badgeDot} />
-                  )}
-                </View>
-              </TouchableOpacity>
+                </TouchableOpacity>
 
+                <TouchableOpacity
+                  style={[styles.navItem, activeTab === 'Attendance' && styles.activeNavItem]}
+                  onPress={() => handleTabPress('Attendance')}
+                  activeOpacity={0.7}
+                >
+                  <InteractiveTabIcon
+                    source={attendanceLottie}
+                    cacheKey="attendance"
+                    isActive={activeTab === 'Attendance'}
+                    size={26}
+                    activeColor="#FFFFFF"
+                    inactiveColor="#FFFFFF"
+                    triggerNonce={tabNonce.Attendance}
+                  />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.navItem, activeTab === 'Courses' && styles.activeNavItem]}
+                  onPress={() => handleTabPress('Courses')}
+                  activeOpacity={0.7}
+                >
+                  <InteractiveTabIcon
+                    source={coursesLottie}
+                    cacheKey="courses"
+                    isActive={activeTab === 'Courses'}
+                    size={26}
+                    speed={2.0}
+                    activeColor="#FFFFFF"
+                    inactiveColor="#FFFFFF"
+                    triggerNonce={tabNonce.Courses}
+                  />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.navItem, activeTab === 'Portal' && styles.activeNavItem]}
+                  onPress={() => handleTabPress('Portal')}
+                  activeOpacity={0.7}
+                >
+                  <InteractiveTabIcon
+                    source={portalLottie}
+                    cacheKey="globe_lock"
+                    isActive={activeTab === 'Portal'}
+                    size={26}
+                    speed={2.0}
+                    activeColor="#FFFFFF"
+                    inactiveColor="#FFFFFF"
+                    triggerNonce={tabNonce.Portal}
+                  />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.navItem, activeTab === 'Settings' && styles.activeNavItem]}
+                  onPress={() => handleTabPress('Settings')}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.iconContainer}>
+                    <InteractiveTabIcon
+                      source={settingsLottie}
+                      cacheKey="settings"
+                      isActive={activeTab === 'Settings'}
+                      size={26}
+                      speed={1.0}
+                      activeColor="#FFFFFF"
+                      inactiveColor="#FFFFFF"
+                      triggerNonce={tabNonce.Settings}
+                    />
+                    {updateInfo?.hasUpdate && (
+                      <View style={styles.badgeDot} />
+                    )}
+                  </View>
+                </TouchableOpacity>
+              </BlurView>
             </View>
           </View>
 
@@ -827,22 +847,27 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     zIndex: 50,
   },
+  navBarContainer: {
+    width: '100%',
+    borderRadius: Theme.radii.pill,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.45,
+    shadowRadius: 20,
+    elevation: 12,
+  },
   navBar: {
     flexDirection: 'row',
-    backgroundColor: Theme.colors.surface,
+    backgroundColor: Platform.OS === 'ios' ? 'rgba(40, 44, 58, 0.42)' : 'rgba(26, 29, 40, 0.55)',
     borderRadius: Theme.radii.pill,
     height: 60,
     width: '100%',
     alignItems: 'center',
     justifyContent: 'space-around',
     paddingHorizontal: 6,
-    borderWidth: 1,
-    borderColor: Theme.colors.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.3,
-    shadowRadius: 20,
-    elevation: 10,
+    borderWidth: 1.2,
+    borderColor: 'rgba(255, 255, 255, 0.20)',
+    overflow: 'hidden',
   },
   navItem: {
     width: 44,
@@ -853,6 +878,13 @@ const styles = StyleSheet.create({
   },
   activeNavItem: {
     backgroundColor: Theme.colors.primary,
+    shadowColor: Theme.colors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.45,
+    shadowRadius: 8,
+    elevation: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.22)',
   },
   iconContainer: {
     position: 'relative',
