@@ -20,18 +20,18 @@ interface CoursesScreenProps {
   onRefreshMarks?: (courseCode: string) => Promise<any>;
 }
 
-// 10 distinct vibrant gradient pairings for the card's framing header
+// 10 subtle, high-legibility pastel gradient pairings for course code badges
 const COURSE_GRADIENTS: [string, string][] = [
-  ['#B4F857', '#F6FC62'], // Lime Lemon (exact match to reference)
-  ['#38EF7D', '#11998E'], // Electric Emerald
-  ['#00F2FE', '#4FACFE'], // Cyan Aqua
-  ['#C084FC', '#818CF8'], // Neon Violet & Indigo
-  ['#FF9966', '#FF5E62'], // Sunset Coral
-  ['#FBBF24', '#F472B6'], // Golden Amber to Pink
-  ['#6EE7B7', '#3B82F6'], // Mint Seafoam to Electric Blue
-  ['#FDA4AF', '#F43F5E'], // Flamingo Rose
-  ['#93C5FD', '#C4B5FD'], // Ice Sky to Periwinkle
-  ['#5EEAD4', '#60A5FA'], // Turquoise to Ocean
+  ['#D9F99D', '#FDE047'], // Soft Lime & Lemon
+  ['#A7F3D0', '#6EE7B7'], // Soft Sage & Mint
+  ['#BAE6FD', '#7DD3FC'], // Soft Ice & Sky
+  ['#DDD6FE', '#C4B5FD'], // Soft Iris & Lavender
+  ['#FED7AA', '#FDBA74'], // Soft Apricot & Peach
+  ['#FDE68A', '#FCA5A5'], // Soft Warm Amber & Coral
+  ['#A7F3D0', '#93C5FD'], // Soft Seafoam & Periwinkle
+  ['#FECDD3', '#FBCFE8'], // Soft Rose & Blush
+  ['#C7D2FE', '#E0E7FF'], // Soft Periwinkle & Cloud
+  ['#99F6E4', '#BAE6FD'], // Soft Aqua & Sky
 ];
 
 export default function CoursesScreen({
@@ -121,7 +121,7 @@ export default function CoursesScreen({
                   onPress={() => handleOpenInfo(item)}
                   activeOpacity={0.75}
                 >
-                  <Info weight="duotone" size={14} color="#FFFFFF" />
+                  <Info weight="duotone" size={15} color="#FFFFFF" />
                   <Text style={styles.actionButtonText} numberOfLines={1}>Course Info</Text>
                 </TouchableOpacity>
 
@@ -130,7 +130,7 @@ export default function CoursesScreen({
                   onPress={() => handleOpenMarks(item)}
                   activeOpacity={0.75}
                 >
-                  <ChartBar weight="duotone" size={14} color="#FFFFFF" />
+                  <ChartBar weight="duotone" size={15} color="#FFFFFF" />
                   <Text style={styles.actionButtonText} numberOfLines={1}>Marks</Text>
                 </TouchableOpacity>
 
@@ -145,7 +145,7 @@ export default function CoursesScreen({
                   disabled={!onOpenSrs}
                   activeOpacity={0.75}
                 >
-                  <ThumbsUp weight="duotone" size={14} color="#FFFFFF" />
+                  <ThumbsUp weight="duotone" size={15} color="#FFFFFF" />
                   <Text style={styles.actionButtonText} numberOfLines={1}>SRS</Text>
                 </TouchableOpacity>
               </View>
@@ -230,11 +230,13 @@ const styles = StyleSheet.create({
     paddingVertical: 5.5,
     borderRadius: Theme.radii.pill,
     alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.06)',
   },
   courseCode: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#111827',
+    color: '#0F172A',
     letterSpacing: 0.5,
   },
   headerRightBadges: {
@@ -278,26 +280,33 @@ const styles = StyleSheet.create({
   actionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 7,
+    gap: 8,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.08)',
-    paddingTop: 14,
+    borderTopColor: 'rgba(255, 255, 255, 0.09)',
+    paddingTop: 15,
   },
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(26, 28, 35, 0.55)',
+    backgroundColor: 'rgba(255, 255, 255, 0.09)', // Prominent elevated glass surface
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    paddingVertical: 9, // Increased vertical breathing room
-    paddingLeft: 6, // Optical alignment: 2px less padding on leading icon side
-    paddingRight: 8, // Full padding on trailing text side
+    borderColor: 'rgba(255, 255, 255, 0.18)', // Crisp structural border
+    paddingVertical: 10,
+    paddingLeft: 8, // Optical alignment: 2px less padding on leading icon side
+    paddingRight: 10, // Full padding on trailing text side
     borderRadius: Theme.radii.pill,
-    gap: 5,
+    gap: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 2,
   },
   actionButtonDisabled: {
-    opacity: 0.45,
+    opacity: 0.4,
+    elevation: 0,
+    shadowOpacity: 0,
   },
   infoButton: {
     flex: 1.3,
@@ -309,10 +318,10 @@ const styles = StyleSheet.create({
     flex: 0.78,
   },
   actionButtonText: {
-    fontSize: 11.5,
-    fontWeight: '600',
+    fontSize: 12,
+    fontWeight: '700',
     color: '#FFFFFF',
-    letterSpacing: 0.1,
+    letterSpacing: 0.2,
   },
   emptyContainer: {
     alignItems: 'center',
