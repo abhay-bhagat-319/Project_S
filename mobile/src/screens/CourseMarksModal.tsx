@@ -8,7 +8,7 @@ import {
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { ChartBar, X, Wrench, ChartPieSlice } from 'phosphor-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { CacheService, CourseMarksData } from '../services/CacheService';
@@ -61,7 +61,7 @@ export default function CourseMarksModal({
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <View style={styles.iconBadge}>
-                <Ionicons name="bar-chart" size={20} color={Theme.colors.primary} />
+                <ChartBar weight="duotone" size={20} color={Theme.colors.primary} />
               </View>
               <View>
                 <Text style={styles.courseCodeText}>{courseCode}</Text>
@@ -71,7 +71,7 @@ export default function CourseMarksModal({
               </View>
             </View>
             <TouchableOpacity style={styles.closeBtn} onPress={onClose} activeOpacity={0.7}>
-              <Ionicons name="close" size={18} color={Theme.colors.textPrimary} />
+              <X weight="bold" size={18} color={Theme.colors.textPrimary} />
             </TouchableOpacity>
           </View>
 
@@ -81,11 +81,11 @@ export default function CourseMarksModal({
           {/* Work in Progress Card */}
           <View style={styles.placeholderCard}>
             <View style={styles.wipBadge}>
-              <Ionicons name="construct" size={14} color="#fef08a" style={{ marginRight: 5 }} />
+              <Wrench weight="duotone" size={14} color="#fef08a" style={{ marginRight: 5 }} />
               <Text style={styles.wipBadgeText}>Work in Progress</Text>
             </View>
             
-            <Ionicons name="pie-chart-outline" size={44} color={Theme.colors.primary} style={{ marginVertical: 12 }} />
+            <ChartPieSlice weight="duotone" size={44} color={Theme.colors.primary} style={{ marginVertical: 12 }} />
             
             <Text style={styles.placeholderTitle}>Assessment Breakdown</Text>
             <Text style={styles.placeholderSubtitle}>
