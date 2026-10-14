@@ -79,77 +79,77 @@ export default function CoursesScreen({
           );
 
           return (
-            <LinearGradient
-              colors={getCardGradient(index)}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.courseCard}
-            >
-              {/* Outer Card Header on Gradient: Code, Slot, Credits */}
+            <View style={styles.courseCard}>
+              {/* Bento Card Header: Vibrant Code Badge on Left, Glass Chips on Right */}
               <View style={styles.cardHeader}>
-                <Text style={styles.courseCode}>{item.courseCode}</Text>
+                <LinearGradient
+                  colors={getCardGradient(index)}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.codeBadge}
+                >
+                  <Text style={styles.courseCode}>{item.courseCode}</Text>
+                </LinearGradient>
+
                 <View style={styles.headerRightBadges}>
                   {detail.slot && detail.slot !== 'N/A' ? (
-                    <View style={styles.slotBadge}>
-                      <Text style={styles.slotBadgeText}>Slot {detail.slot}</Text>
+                    <View style={styles.metaChip}>
+                      <Text style={styles.metaChipText}>Slot {detail.slot}</Text>
                     </View>
                   ) : null}
                   {detail.credits ? (
-                    <View style={styles.creditsBadge}>
-                      <Text style={styles.creditsBadgeText}>{detail.credits} Cr</Text>
+                    <View style={styles.metaChip}>
+                      <Text style={styles.metaChipText}>{detail.credits} Cr</Text>
                     </View>
                   ) : null}
                 </View>
               </View>
 
-              {/* Inner Dark Card Body */}
-              <View style={styles.innerCard}>
-                {/* Title & Instructor */}
-                <Text style={styles.courseTitle}>{item.courseTitle}</Text>
-                <View style={styles.instructorRow}>
-                  <UserCircle weight="duotone" size={15} color="rgba(255, 255, 255, 0.65)" />
-                  <Text style={styles.instructorText} numberOfLines={1}>
-                    {item.instructor || 'Instructor Not Assigned'}
-                  </Text>
-                </View>
-
-                {/* Action Buttons Row - Single Line */}
-                <View style={styles.actionsRow}>
-                  <TouchableOpacity
-                    style={[styles.actionButton, styles.infoButton]}
-                    onPress={() => handleOpenInfo(item)}
-                    activeOpacity={0.75}
-                  >
-                    <Info weight="duotone" size={14} color="#FFFFFF" />
-                    <Text style={styles.actionButtonText} numberOfLines={1}>Course Info</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.actionButton, styles.marksButton]}
-                    onPress={() => handleOpenMarks(item)}
-                    activeOpacity={0.75}
-                  >
-                    <ChartBar weight="duotone" size={14} color="#FFFFFF" />
-                    <Text style={styles.actionButtonText} numberOfLines={1}>Marks</Text>
-                  </TouchableOpacity>
-
-                  {/* SRS Action Button */}
-                  <TouchableOpacity
-                    style={[
-                      styles.actionButton,
-                      styles.srsButton,
-                      !onOpenSrs && styles.actionButtonDisabled,
-                    ]}
-                    onPress={onOpenSrs ? () => onOpenSrs(item.courseCode) : undefined}
-                    disabled={!onOpenSrs}
-                    activeOpacity={0.75}
-                  >
-                    <ThumbsUp weight="duotone" size={14} color="#FFFFFF" />
-                    <Text style={styles.actionButtonText} numberOfLines={1}>SRS</Text>
-                  </TouchableOpacity>
-                </View>
+              {/* Title & Instructor */}
+              <Text style={styles.courseTitle}>{item.courseTitle}</Text>
+              <View style={styles.instructorRow}>
+                <UserCircle weight="duotone" size={15} color="rgba(255, 255, 255, 0.65)" />
+                <Text style={styles.instructorText} numberOfLines={1}>
+                  {item.instructor || 'Instructor Not Assigned'}
+                </Text>
               </View>
-            </LinearGradient>
+
+              {/* Action Buttons Row - Single Line */}
+              <View style={styles.actionsRow}>
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.infoButton]}
+                  onPress={() => handleOpenInfo(item)}
+                  activeOpacity={0.75}
+                >
+                  <Info weight="duotone" size={14} color="#FFFFFF" />
+                  <Text style={styles.actionButtonText} numberOfLines={1}>Course Info</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.marksButton]}
+                  onPress={() => handleOpenMarks(item)}
+                  activeOpacity={0.75}
+                >
+                  <ChartBar weight="duotone" size={14} color="#FFFFFF" />
+                  <Text style={styles.actionButtonText} numberOfLines={1}>Marks</Text>
+                </TouchableOpacity>
+
+                {/* SRS Action Button */}
+                <TouchableOpacity
+                  style={[
+                    styles.actionButton,
+                    styles.srsButton,
+                    !onOpenSrs && styles.actionButtonDisabled,
+                  ]}
+                  onPress={onOpenSrs ? () => onOpenSrs(item.courseCode) : undefined}
+                  disabled={!onOpenSrs}
+                  activeOpacity={0.75}
+                >
+                  <ThumbsUp weight="duotone" size={14} color="#FFFFFF" />
+                  <Text style={styles.actionButtonText} numberOfLines={1}>SRS</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           );
         }}
         ListEmptyComponent={
@@ -207,15 +207,15 @@ const styles = StyleSheet.create({
     paddingBottom: 96,
   },
   courseCard: {
+    backgroundColor: '#23252E',
     borderRadius: 24,
-    paddingTop: 10,
-    paddingHorizontal: 4,
-    paddingBottom: 4,
+    padding: 16,
     marginBottom: Theme.spacing.gap,
-    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.25,
+    shadowOpacity: 0.28,
     shadowRadius: 10,
     elevation: 4,
   },
@@ -223,12 +223,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 2,
-    paddingBottom: 10,
+    marginBottom: 12,
+  },
+  codeBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 5.5,
+    borderRadius: Theme.radii.pill,
+    alignSelf: 'flex-start',
   },
   courseCode: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '800',
     color: '#111827',
     letterSpacing: 0.5,
@@ -238,46 +242,31 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
-  slotBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2.5,
+  metaChip: {
+    paddingHorizontal: 9,
+    paddingVertical: 4.5,
     borderRadius: Theme.radii.pill,
-    backgroundColor: 'rgba(0, 0, 0, 0.08)',
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
-  slotBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  creditsBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2.5,
-    borderRadius: Theme.radii.pill,
-    backgroundColor: 'rgba(0, 0, 0, 0.08)',
-  },
-  creditsBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  innerCard: {
-    backgroundColor: '#23252E', // Slightly lighter than #1A1C23 for depth & elevation
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 16,
+  metaChipText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: 'rgba(255, 255, 255, 0.82)',
+    letterSpacing: 0.2,
   },
   courseTitle: {
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: '700',
     color: '#FFFFFF',
-    marginBottom: 4, // Tighter grouping with instructor
-    lineHeight: 23,
+    marginBottom: 5,
+    lineHeight: 24,
   },
   instructorRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16, // Generous whitespace separating info from action buttons
+    marginBottom: 16,
   },
   instructorText: {
     fontSize: 13,
