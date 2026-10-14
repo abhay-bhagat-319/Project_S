@@ -133,10 +133,15 @@ export default function CoursesScreen({
                     <Text style={styles.actionButtonText} numberOfLines={1}>Marks</Text>
                   </TouchableOpacity>
 
-                  {/* SRS Action Button (Placeholder) */}
+                  {/* SRS Action Button */}
                   <TouchableOpacity
-                    style={[styles.actionButton, styles.srsButton]}
-                    onPress={() => {}}
+                    style={[
+                      styles.actionButton,
+                      styles.srsButton,
+                      !onOpenSrs && styles.actionButtonDisabled,
+                    ]}
+                    onPress={onOpenSrs ? () => onOpenSrs(item.courseCode) : undefined}
+                    disabled={!onOpenSrs}
                     activeOpacity={0.75}
                   >
                     <ThumbsUp weight="duotone" size={14} color="#FFFFFF" />
@@ -212,6 +217,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.25,
     shadowRadius: 10,
+    elevation: 4,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -296,9 +302,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.08)',
     paddingVertical: 9, // Increased vertical breathing room
-    paddingHorizontal: 8, // Increased horizontal padding
+    paddingLeft: 6, // Optical alignment: 2px less padding on leading icon side
+    paddingRight: 8, // Full padding on trailing text side
     borderRadius: Theme.radii.pill,
     gap: 5,
+  },
+  actionButtonDisabled: {
+    opacity: 0.45,
   },
   infoButton: {
     flex: 1.3,
