@@ -9,12 +9,9 @@
 
   <!-- Badges -->
   <p>
-    <a href="https://github.com/abhay-bhagat-319/Project_S/releases/latest"><img src="https://shields.io" alt="Latest Release" /></a>
     <a href="https://github.com/abhay-bhagat-319/Project_S/releases/latest"><img src="https://img.shields.io/badge/Android-ARM64%20%7C%20Universal-6366f1?style=flat" alt="Android Platform" /></a>
-    <a href="https://expo.dev"><img src="https://shields.io" alt="Expo SDK 57" /></a>
     <a href="https://github.com/abhay-bhagat-319/Project_S"><img src="https://img.shields.io/badge/%E2%96%B2%20Backend-Zero%20(100%25%20Local)-111827?style=flat" alt="Zero Backend" /></a>
     <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-d29922?style=flat" alt="License: MIT" /></a>
-    <a href="https://chat.whatsapp.com/De2Im4U8G6W7spo3YZfZ6B"><img src="https://shields.io" alt="WhatsApp Community" /></a>
   </p>
 
   <br />
