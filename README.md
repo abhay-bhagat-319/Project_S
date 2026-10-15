@@ -41,11 +41,11 @@
 <br />
 
 
-**Project_S** is a free, open-source Android app built for **IISER Bhopal** students. It turns the web-only [Shiksha Portal](https://www.google.com/search?q=https%3A%2F%2Fshiksha.iiserb.ac.in) and DOAA schedule pages into a clean mobile app—so you can check your attendance, CPI/SPI, course syllabi, grade reports, and exam schedules in seconds, **even without internet**.
+**Project_S** is a free, open-source Android app built for **IISER Bhopal** students. It turns the web-only [Shiksha Portal](shiksha.iiserb.ac.in) and DOAA schedule pages into a clean mobile app—so you can check your attendance, CPI/SPI, course syllabi, grade reports, and exam schedules in seconds, **even without internet**.
 
 ## Quick Install (For Students)
 
-1. **Download the APK** from [GitHub Releases](https://www.google.com/search?q=https%3A%2F%2Fgithub.com%2Fabhay-bhagat-319%2FProject_S%2Freleases%2Flatest):
+1. **Download the APK** from [GitHub Releases](https://github.com/abhay-bhagat-319/Project_S/releases):
    - **Recommended (99% of phones)**: `Project_S-v*-arm64-v8a.apk` (~20 MB)
    - **Older / Other phones**: `Project_S-v*-universal.apk` (~70 MB)
 2. **Connect to Campus Wi-Fi or IISERB VPN** and log in once with your LDAP username and password.
@@ -231,12 +231,12 @@ Project_S is built by students, for students. Contributions, bug reports, and UI
 - **Parser Resilience**: Expand `HttpPortalClient.ts` and `htmlParser.ts` test coverage for edge-case department syllabus formats.
 
 ### Contribution Workflow
-1. Fork the [Project\_S repository](https://www.google.com/search?q=https%3A%2F%2Fgithub.com%2Fabhay-bhagat-319%2FProject_S) and create a branch (`git checkout -b feat/your-feature`).
+1. Fork the [Project\_S repository](https://github.com/abhay-bhagat-319) and create a branch (`git checkout -b feat/your-feature`).
 2. Run `npm run typecheck` inside `mobile/` to verify TypeScript compilation.
 3. Open a Pull Request with a concise summary and screenshots of any UI changes.
 
 ### Community & Links
-- **Creator & Lead Maintainer**: [Abhay Bhagat (@abhay-bhagat-319)](https://www.google.com/search?q=https%3A%2F%2Fgithub.com%2Fabhay-bhagat-319)
-- **Issues & Feature Requests**: [GitHub Issues](https://www.google.com/search?q=https%3A%2F%2Fgithub.com%2Fabhay-bhagat-319%2FProject_S%2Fissues)
-- **Student Feedback & Dev Group**: [Join the WhatsApp Community](https://www.google.com/search?q=https%3A%2F%2Fchat.whatsapp.com%2FDe2Im4U8G6W7spo3YZfZ6B)
-- **License**: Released under the [MIT License](https://www.google.com/search?q=.%2FLICENSE).
+- **Creator & Lead Maintainer**: [Abhay Bhagat (@abhay-bhagat-319)](https://github.com/abhay-bhagat-319)
+- **Issues & Feature Requests**: [GitHub Issues](https://github.com/abhay-bhagat-319/Project_S/issues)
+- **Student Feedback & Dev Group**: [Join the WhatsApp Community](https://chat.whatsapp.com/De2Im4U8G6W7spo3YZfZ6B?s=cl&p=a&mlu=4&ilr=4&iam=2)
+- **License**: Released under the [MIT License](.%2FLICENSE).
