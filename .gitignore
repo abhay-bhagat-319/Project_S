@@ -2,10 +2,14 @@
 .agents/
 skills-lock.json
 AGENTS.md
-docs/agents/
 .scratch/
-docs/portal_pages/
 *.code-workspace
 .idea/
-docs/contributor_setup_and_security.md
-docs/releasing_apks.md
+
+# Claude files
+.claude/
+CLAUDE.md
+claude.md
+
+# Documentation
+docs/
