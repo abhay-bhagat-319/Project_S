@@ -157,7 +157,7 @@ export default function CreditsModal({ visible, onClose }: CreditsModalProps) {
                 <Image
                   source={{ uri: CREATOR_PROFILE.avatar_url }}
                   style={styles.creatorAvatar}
-                  defaultSource={require('../../assets/icon.png')}
+                  defaultSource={require('../../assets/icon_purple.png')}
                 />
                 <View style={styles.creatorInfo}>
                   <View style={styles.creatorBadge}>

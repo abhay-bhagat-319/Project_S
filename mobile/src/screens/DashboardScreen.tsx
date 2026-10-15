@@ -38,10 +38,10 @@ export default function DashboardScreen({
     return (
       <View style={styles.loadingContainer}>
         <Image
-          source={require('../../assets/icon.png')}
+          source={require('../../assets/icon_purple.png')}
           style={styles.loadingLogo}
         />
-        <Text style={styles.loadingText}>No profile cache found. Swipe down on the attendance screen to sync.</Text>
+        <Text style={styles.loadingText}>No profile cache found. Swipe down to sync.</Text>
       </View>
     );
   }
@@ -152,7 +152,7 @@ export default function DashboardScreen({
             <Image
               source={{ uri: avatarUri }}
               style={styles.avatar}
-              defaultSource={require('../../assets/icon.png')}
+              defaultSource={require('../../assets/icon_purple.png')}
             />
           ) : (
             <Ionicons name="person" size={44} color={Theme.colors.primary} />
