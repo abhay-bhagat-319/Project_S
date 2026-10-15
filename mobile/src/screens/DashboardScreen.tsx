@@ -3,7 +3,7 @@ import { StyleSheet, Text, View, Image, ScrollView, TouchableOpacity, Modal, Fla
 import Svg, { Line, Circle, Polyline, Text as SvgText, Rect, Path, Defs, LinearGradient as SvgLinearGradient, Stop, G } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { CalendarBlank, Table, FileText, CheckSquareOffset } from 'phosphor-react-native';
+import { CalendarBlank, Table, FileText, ClipboardText } from 'phosphor-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { ProfileData } from '../services/CacheService';
@@ -144,14 +144,14 @@ export default function DashboardScreen({
           onPress={() => onOpenAcademicSchedules && onOpenAcademicSchedules()}
         >
           <View style={styles.quickActionIconContainer}>
-            <CalendarBlank weight="duotone" size={24} color={Theme.colors.primary} />
+            <CalendarBlank weight="duotone" size={26} color={Theme.colors.primary} />
           </View>
           <View style={styles.quickActionLabelContainer}>
             <Text
               style={styles.quickActionLabel}
               numberOfLines={2}
               adjustsFontSizeToFit
-              minimumFontScale={0.75}
+              minimumFontScale={0.8}
             >
               DOAA{'\n'}Schedule
             </Text>
@@ -164,11 +164,8 @@ export default function DashboardScreen({
           activeOpacity={0.7}
           onPress={() => Alert.alert('Timetable', 'My Timetable slot view will be available in the upcoming update!')}
         >
-          <View style={styles.soonPill}>
-            <Text style={styles.soonPillText}>Soon</Text>
-          </View>
           <View style={styles.quickActionIconContainer}>
-            <Table weight="duotone" size={24} color={Theme.colors.primary} />
+            <Table weight="duotone" size={26} color={Theme.colors.textSecondary} />
           </View>
           <View style={styles.quickActionLabelContainer}>
             <Text
@@ -180,6 +177,9 @@ export default function DashboardScreen({
               Timetable
             </Text>
           </View>
+          <View style={styles.soonPill}>
+            <Text style={styles.soonPillText}>Soon</Text>
+          </View>
         </TouchableOpacity>
 
         {/* Grade Reports */}
@@ -189,7 +189,7 @@ export default function DashboardScreen({
           onPress={() => onOpenReports && onOpenReports()}
         >
           <View style={styles.quickActionIconContainer}>
-            <FileText weight="duotone" size={24} color={Theme.colors.primary} />
+            <FileText weight="duotone" size={26} color={Theme.colors.pink} />
           </View>
           <View style={styles.quickActionLabelContainer}>
             <Text
@@ -210,7 +210,7 @@ export default function DashboardScreen({
           onPress={() => onNavigateToTab && onNavigateToTab('Attendance')}
         >
           <View style={styles.quickActionIconContainer}>
-            <CheckSquareOffset weight="duotone" size={24} color={Theme.colors.primary} />
+            <ClipboardText weight="duotone" size={26} color={Theme.colors.mint} />
           </View>
           <View style={styles.quickActionLabelContainer}>
             <Text
@@ -549,67 +549,61 @@ const styles = StyleSheet.create({
   },
   quickActionTile: {
     flex: 1,
-    backgroundColor: '#23252E', // High-contrast elevated dark surface
-    borderRadius: 20, // Concentric with inner 14px icon radius (14 + 6 = 20)
-    paddingTop: 14,
-    paddingBottom: 12,
+    backgroundColor: Theme.colors.surface,
+    borderRadius: Theme.radii.widget,
+    paddingTop: 9,
+    paddingBottom: 8,
     paddingHorizontal: 4,
     alignItems: 'center',
-    justifyContent: 'flex-start',
+    justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    minHeight: 96,
+    borderColor: Theme.colors.border,
+    minHeight: 68,
     position: 'relative',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.22,
-    shadowRadius: 6,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    elevation: 2,
   },
   quickActionIconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: 'rgba(139, 120, 255, 0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(139, 120, 255, 0.24)',
+    width: 30,
+    height: 30,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 3,
   },
   quickActionLabelContainer: {
-    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     width: '100%',
-    minHeight: 28,
   },
   quickActionLabel: {
-    color: '#FFFFFF',
-    fontSize: 11.5,
+    color: Theme.colors.textPrimary,
+    fontSize: 11,
     fontWeight: '600',
     textAlign: 'center',
     lineHeight: 14,
-    letterSpacing: 0.1,
   },
   soonPill: {
     position: 'absolute',
-    top: 6,
-    right: 6,
-    backgroundColor: 'rgba(139, 120, 255, 0.18)',
+    top: -5,
+    right: -3,
+    backgroundColor: '#282A35',
     borderWidth: 1,
-    borderColor: 'rgba(139, 120, 255, 0.35)',
+    borderColor: '#3F4252',
     paddingHorizontal: 5,
     paddingVertical: 1.5,
-    borderRadius: 6,
+    borderRadius: 7,
     zIndex: 10,
+    elevation: 3,
   },
   soonPillText: {
-    color: Theme.colors.lavender,
+    color: '#FFFFFF',
     fontSize: 8,
     fontWeight: '700',
     textTransform: 'uppercase',
-    letterSpacing: 0.4,
+    letterSpacing: 0.5,
   },
   badgesRow: {
     flexDirection: 'row',
