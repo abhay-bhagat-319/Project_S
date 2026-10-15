@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, Alert, Image } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, Alert } from 'react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
+import { MortarboardLogo } from '../components/MortarboardLogo';
 
 interface LockScreenProps {
   onUnlock: () => void;
@@ -62,11 +63,7 @@ export default function LockScreen({ onUnlock }: LockScreenProps) {
     >
       <View style={styles.logoContainer}>
         <View style={styles.iconCircle}>
-          <Image 
-            source={require('../../assets/icon_purple.png')} 
-            style={styles.logoImage} 
-            resizeMode="contain" 
-          />
+          <MortarboardLogo size={68} color={Theme.colors.primary} />
         </View>
         <Text style={styles.title}>Shiksha Portal</Text>
         <Text style={styles.subtitle}>Secure Mobile Access</Text>
@@ -110,11 +107,6 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     borderWidth: 1,
     borderColor: Theme.colors.border,
-  },
-  logoImage: {
-    width: 70,
-    height: 70,
-    borderRadius: 14,
   },
   title: {
     fontSize: 28,

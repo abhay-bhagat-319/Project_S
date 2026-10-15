@@ -7,6 +7,7 @@ import { CalendarDots, Table, FileText, ClipboardText } from 'phosphor-react-nat
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { ProfileData } from '../services/CacheService';
+import { MortarboardLogo } from '../components/MortarboardLogo';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -37,10 +38,7 @@ export default function DashboardScreen({
   if (!profileData) {
     return (
       <View style={styles.loadingContainer}>
-        <Image
-          source={require('../../assets/icon_purple.png')}
-          style={styles.loadingLogo}
-        />
+        <MortarboardLogo size={72} color={Theme.colors.primary} style={{ marginBottom: 16 }} />
         <Text style={styles.loadingText}>No profile cache found. Swipe down to sync.</Text>
       </View>
     );
