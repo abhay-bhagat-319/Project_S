@@ -22,16 +22,16 @@ interface CoursesScreenProps {
 
 // 10 subtle, high-legibility pastel gradient pairings for course code badges
 const COURSE_GRADIENTS: [string, string][] = [
-  ['#D9F99D', '#FDE047'], // Soft Lime & Lemon
+  ['#D9F99D', '#ffd818ff'], // Soft Lime & Lemon
   ['#A7F3D0', '#6EE7B7'], // Soft Sage & Mint
   ['#BAE6FD', '#7DD3FC'], // Soft Ice & Sky
   ['#DDD6FE', '#C4B5FD'], // Soft Iris & Lavender
-  ['#FED7AA', '#FDBA74'], // Soft Apricot & Peach
-  ['#FDE68A', '#FCA5A5'], // Soft Warm Amber & Coral
+  ['#ffc583ff', '#ff8502ff'], // Soft Apricot & Peach
+  ['#ffacacff', '#ff6a6aff'], // Soft Warm Amber & Coral
   ['#A7F3D0', '#93C5FD'], // Soft Seafoam & Periwinkle
   ['#FECDD3', '#FBCFE8'], // Soft Rose & Blush
-  ['#C7D2FE', '#E0E7FF'], // Soft Periwinkle & Cloud
-  ['#99F6E4', '#BAE6FD'], // Soft Aqua & Sky
+  ['#C7D2FE', '#4d76ffff'], // Soft Periwinkle & Cloud
+  ['#99F6E4', '#79d0ffff'], // Soft Aqua & Sky
 ];
 
 export default function CoursesScreen({

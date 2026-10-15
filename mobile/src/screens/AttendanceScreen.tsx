@@ -107,18 +107,8 @@ export default function AttendanceScreen({
   };
 
   const renderAttendanceCard = ({ item }: { item: AttendanceItem }) => {
-    const { percentage, isAbove, value } = calculateAttendance(item.present, item.totalClasses);
+    const { percentage, isAbove, message, value } = calculateAttendance(item.present, item.totalClasses);
     const recordsCount = item.records ? item.records.length : 0;
-
-    // Concise, actionable status chip text
-    let statusText = '';
-    if (item.totalClasses === 0) {
-      statusText = 'No classes yet';
-    } else if (isAbove) {
-      statusText = value > 0 ? `Can miss ${value}` : 'Cannot miss any';
-    } else {
-      statusText = `Need ${value} to reach 75%`;
-    }
 
     return (
       <TouchableOpacity
@@ -129,85 +119,84 @@ export default function AttendanceScreen({
         }}
         style={[styles.card, !isAbove && styles.warningCard]}
       >
-        {/* Card Header: Code & Title on Left, Percentage & Status Badge on Right */}
         <View style={styles.cardHeader}>
           <View style={styles.titleColumn}>
             <View style={styles.codeRow}>
-              <View style={styles.codeBadge}>
-                <Text style={styles.courseCode}>{item.courseCode}</Text>
-              </View>
+              <Text style={styles.courseCode}>{item.courseCode}</Text>
               {item.instructor ? (
-                <Text style={styles.instructorText} numberOfLines={1}>
-                  {item.instructor}
-                </Text>
+                <Text style={styles.instructorText} numberOfLines={1}>• {item.instructor}</Text>
               ) : null}
             </View>
             <Text style={styles.courseTitle} numberOfLines={1}>{item.courseTitle}</Text>
           </View>
-
-          <View style={styles.percentColumn}>
+          <View style={[
+            styles.percentContainer,
+            { borderColor: isAbove ? 'rgba(76, 217, 100, 0.3)' : 'rgba(255, 94, 94, 0.3)' }
+          ]}>
             <Text style={[
               styles.percentageText,
               { color: isAbove ? Theme.colors.success : Theme.colors.error }
             ]}>
               {percentage.toFixed(1)}%
             </Text>
-            <View style={[
-              styles.statusChip,
-              {
-                backgroundColor: isAbove 
-                  ? 'rgba(76, 217, 100, 0.12)' 
-                  : 'rgba(255, 94, 94, 0.12)',
-                borderColor: isAbove 
-                  ? 'rgba(76, 217, 100, 0.25)' 
-                  : 'rgba(255, 94, 94, 0.25)',
-              }
-            ]}>
-              <Text style={[
-                styles.statusChipText,
-                { color: isAbove ? Theme.colors.success : Theme.colors.error }
-              ]}>
-                {statusText}
-              </Text>
-            </View>
           </View>
         </View>
 
-        {/* Slim Progress Bar */}
+        {/* Progress Bar */}
         <View style={styles.progressBarBg}>
           <View style={[
             styles.progressBarFill,
             {
-              width: `${Math.min(100, Math.max(0, percentage))}%`,
-              backgroundColor: isAbove ? Theme.colors.success : Theme.colors.error
+              width: `${Math.min(100, percentage)}%`,
+              backgroundColor: isAbove ? Theme.colors.primary : Theme.colors.error
             }
           ]} />
         </View>
 
-        {/* Clean Meta Footer Row: Counts on Left, Log Affordance on Right */}
-        <View style={styles.cardFooterRow}>
-          <View style={styles.countsRow}>
-            <Text style={styles.countText}>
-              <Text style={styles.countVal}>{item.present}</Text> Present
-            </Text>
-            <Text style={styles.countSeparator}>•</Text>
-            <Text style={styles.countText}>
-              <Text style={[styles.countVal, item.absent > 0 && { color: Theme.colors.error }]}>
-                {item.absent}
-              </Text> Missed
-            </Text>
-            <Text style={styles.countSeparator}>•</Text>
-            <Text style={styles.countText}>
-              <Text style={styles.countVal}>{item.totalClasses}</Text> Total
+        {/* Stats Row */}
+        <View style={styles.statsRow}>
+          <View style={styles.statBox}>
+            <Text style={styles.statLabel}>Total</Text>
+            <Text style={styles.statVal}>{item.totalClasses}</Text>
+          </View>
+          <View style={styles.statBox}>
+            <Text style={styles.statLabel}>Present</Text>
+            <Text style={[styles.statVal, { color: Theme.colors.success }]}>{item.present}</Text>
+          </View>
+          <View style={styles.statBox}>
+            <Text style={styles.statLabel}>Absent</Text>
+            <Text style={[styles.statVal, { color: Theme.colors.error }]}>{item.absent}</Text>
+          </View>
+          <View style={styles.statBox}>
+            <Text style={styles.statLabel}>{isAbove ? 'Can Miss' : 'Need'}</Text>
+            <Text style={[styles.statVal, { color: isAbove ? Theme.colors.lavender : Theme.colors.error }]}>
+              {value} {value === 1 ? 'class' : 'classes'}
             </Text>
           </View>
+        </View>
 
-          <View style={styles.historyLink}>
-            <Text style={styles.historyLinkText}>
-              {recordsCount > 0 ? `${recordsCount} logs` : 'Logs'}
-            </Text>
-            <Ionicons name="chevron-forward" size={13} color={Theme.colors.primary} />
-          </View>
+        {/* Alert Recommendation Banner 
+        <View style={[
+          styles.alertContainer,
+          { backgroundColor: isAbove ? 'rgba(139, 120, 255, 0.08)' : 'rgba(255, 94, 94, 0.08)' }
+        ]}>
+          <Ionicons
+            name={isAbove ? 'checkmark-circle-outline' : 'alert-circle-outline'}
+            size={18}
+            color={isAbove ? Theme.colors.primary : Theme.colors.error}
+            style={styles.alertIcon}
+          />
+          <Text style={[styles.alertText, { color: isAbove ? Theme.colors.textPrimary : Theme.colors.error }]}>
+            {message}
+          </Text>
+        </View>*/}
+
+        {/* View Details Footer */}
+        <View style={styles.cardFooter}>
+          <Text style={styles.cardFooterText}>
+            {recordsCount > 0 ? `View ${recordsCount} class logs & history` : 'View detailed attendance metrics'}
+          </Text>
+          <Ionicons name="chevron-forward" size={14} color={Theme.colors.primary} />
         </View>
       </TouchableOpacity>
     );
@@ -431,128 +420,69 @@ const styles = StyleSheet.create({
   // Cards
   card: {
     backgroundColor: '#23252E',
-    borderRadius: 22,
-    padding: 16,
+    borderRadius: Theme.radii.card,
+    padding: Theme.spacing.padding,
     marginBottom: Theme.spacing.gap,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: Theme.colors.border,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 8,
     elevation: 4,
   },
-  warningCard: {
-    borderColor: 'rgba(255, 94, 94, 0.45)',
-    borderWidth: 1,
-    backgroundColor: '#262227', // Subtle warm charcoal tint
+  warningCard: { borderColor: Theme.colors.error, borderWidth: 1.5 },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  titleColumn: { flex: 1, marginRight: 10 },
+  codeRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  courseCode: { fontSize: 14, fontWeight: 'bold', color: Theme.colors.primary },
+  instructorText: { fontSize: 12, color: Theme.colors.textSecondary, flex: 1 },
+  courseTitle: { fontSize: 16, fontWeight: '700', color: Theme.colors.textPrimary, marginTop: 4 },
+
+  percentContainer: {
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: Theme.radii.widget,
+    backgroundColor: Theme.colors.background, borderWidth: 1, borderColor: Theme.colors.border,
   },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12,
-  },
-  titleColumn: {
-    flex: 1,
-    marginRight: 12,
-  },
-  codeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 4,
-  },
-  codeBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2.5,
-    borderRadius: 6,
-    backgroundColor: 'rgba(139, 120, 255, 0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(139, 120, 255, 0.3)',
-  },
-  courseCode: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: Theme.colors.lavender,
-    letterSpacing: 0.4,
-  },
-  instructorText: {
-    fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.6)',
-    flex: 1,
-  },
-  courseTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    lineHeight: 22,
-  },
-  percentColumn: {
-    alignItems: 'flex-end',
-    gap: 4,
-  },
-  percentageText: {
-    fontSize: 20,
-    fontWeight: '800',
-    letterSpacing: -0.5,
-  },
-  statusChip: {
-    paddingHorizontal: 7,
-    paddingVertical: 2.5,
-    borderRadius: Theme.radii.pill,
-    borderWidth: 1,
-  },
-  statusChipText: {
-    fontSize: 10.5,
-    fontWeight: '700',
-    letterSpacing: 0.1,
-  },
+  percentageText: { fontSize: 16, fontWeight: 'bold' },
+
   progressBarBg: {
-    height: 6,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderRadius: Theme.radii.pill,
+    height: 8, backgroundColor: Theme.colors.background,
+    borderRadius: Theme.radii.pill, marginBottom: 16, overflow: 'hidden',
+  },
+  progressBarFill: { height: '100%', borderRadius: Theme.radii.pill },
+
+  statsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    borderRadius: Theme.radii.widget,
+    padding: 12,
     marginBottom: 12,
-    overflow: 'hidden',
   },
-  progressBarFill: {
-    height: '100%',
-    borderRadius: Theme.radii.pill,
+  statBox: { alignItems: 'center' },
+  statLabel: { color: Theme.colors.textSecondary, fontSize: 11, marginBottom: 2 },
+  statVal: { color: Theme.colors.textPrimary, fontWeight: 'bold', fontSize: 14 },
+
+  alertContainer: {
+    flexDirection: 'row', alignItems: 'center',
+    borderRadius: Theme.radii.widget, padding: 12,
   },
-  cardFooterRow: {
+  alertIcon: { marginRight: 8 },
+  alertText: { flex: 1, fontSize: 12, lineHeight: 16, fontWeight: '500' },
+
+  cardFooter: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingTop: 4,
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.1)',
   },
-  countsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  countText: {
+  cardFooterText: {
     fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.65)',
-    fontWeight: '500',
-  },
-  countVal: {
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  countSeparator: {
-    fontSize: 10,
-    color: 'rgba(255, 255, 255, 0.25)',
-  },
-  historyLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-    paddingVertical: 2,
-  },
-  historyLinkText: {
-    fontSize: 11.5,
-    fontWeight: '600',
     color: Theme.colors.primary,
+    fontWeight: '600',
   },
 
   // Empty State
