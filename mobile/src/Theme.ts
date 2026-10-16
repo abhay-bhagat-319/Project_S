@@ -1,7 +1,7 @@
 export const Theme = {
   colors: {
-    background: '#1A1C23',      // Deep Charcoal/Black
-    surface: '#2A2B32',         // Lighter Charcoal
+    background: '#161616ff',      // Deep Obsidian Black
+    surface: '#1f1f23ff',         // Elevated Charcoal Surface
     surfaceLight: '#FFFFFF',    // High-contrast primary focus
 
     primary: '#8B78FF',         // Primary Purple
@@ -11,14 +11,14 @@ export const Theme = {
 
     textPrimary: '#FFFFFF',     // Main headings & emphasis
     textSecondary: '#A0A0A8',   // Subtitles, captions, inactive icons
-    textDark: '#1A1C23',        // Dark text for high-contrast pastel cards
+    textDark: '#121318',        // Dark text for high-contrast pastel cards
 
     error: '#FF5E5E',           // Soft alert red
     success: '#4CD964',         // Soft success green
     successGreen: '#4CD964',    // Success green alias
     dangerRed: '#FF5E5E',       // Danger red alias
     accentOrange: '#FF7A00',    // Vibrant SRS accent orange
-    border: '#3A3B43'           // Subtle divider borders
+    border: 'rgba(255, 255, 255, 0.08)' // Subtle structural divider borders
   },
 
   radii: {

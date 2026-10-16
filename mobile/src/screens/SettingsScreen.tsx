@@ -420,6 +420,11 @@ const styles = StyleSheet.create({
     borderColor: Theme.colors.border,
     paddingHorizontal: Theme.spacing.padding,
     marginBottom: Theme.spacing.gap * 1.5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
   },
   settingItem: {
     flexDirection: 'row',
