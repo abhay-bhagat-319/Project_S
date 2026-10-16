@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text, View, FlatList, TouchableOpacity, RefreshControl } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { UserCircle, Info, ChartBar, ThumbsUp, BookOpen } from 'phosphor-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
@@ -20,18 +19,17 @@ interface CoursesScreenProps {
   onRefreshMarks?: (courseCode: string) => Promise<any>;
 }
 
-// 10 subtle, high-legibility pastel gradient pairings for course code badges
-const COURSE_GRADIENTS: [string, string][] = [
-  ['#D9F99D', '#ffd818ff'], // Soft Lime & Lemon
-  ['#A7F3D0', '#6EE7B7'], // Soft Sage & Mint
-  ['#BAE6FD', '#7DD3FC'], // Soft Ice & Sky
-  ['#DDD6FE', '#C4B5FD'], // Soft Iris & Lavender
-  ['#ffc583ff', '#ff8502ff'], // Soft Apricot & Peach
-  ['#ffacacff', '#ff6a6aff'], // Soft Warm Amber & Coral
-  ['#A7F3D0', '#93C5FD'], // Soft Seafoam & Periwinkle
-  ['#FECDD3', '#FBCFE8'], // Soft Rose & Blush
-  ['#C7D2FE', '#4d76ffff'], // Soft Periwinkle & Cloud
-  ['#99F6E4', '#79d0ffff'], // Soft Aqua & Sky
+// 10 subtle, high-legibility solid pastel colors for course code badges
+const COURSE_PASTEL_COLORS: string[] = [
+  '#97f5c9ff', // Soft Sage & Mint
+  '#96daffff', // Soft Ice & Sky
+  '#c6baffff', // Soft Iris & Lavender
+  '#FFC583', // Soft Apricot & Peach
+  '#ffe477ff', // Soft Amber
+  '#ff8b99ff', // Soft Rose & Blush
+  '#C7D2FE', // Soft Periwinkle
+  '#99F6E4', // Soft Aqua & Teal
+  '#c7fa69ff', // Soft Lime
 ];
 
 export default function CoursesScreen({
@@ -47,8 +45,8 @@ export default function CoursesScreen({
   const [selectedDetail, setSelectedDetail] = useState<CourseDetail | null>(null);
   const [marksModalCourse, setMarksModalCourse] = useState<Course | null>(null);
 
-  const getCardGradient = (index: number): [string, string] => {
-    return COURSE_GRADIENTS[index % COURSE_GRADIENTS.length];
+  const getCardColor = (index: number): string => {
+    return COURSE_PASTEL_COLORS[index % COURSE_PASTEL_COLORS.length];
   };
 
   const handleOpenInfo = (course: Course) => {
@@ -82,14 +80,9 @@ export default function CoursesScreen({
             <View style={styles.courseCard}>
               {/* Bento Card Header: Vibrant Code Badge on Left, Glass Chips on Right */}
               <View style={styles.cardHeader}>
-                <LinearGradient
-                  colors={getCardGradient(index)}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.codeBadge}
-                >
+                <View style={[styles.codeBadge, { backgroundColor: getCardColor(index) }]}>
                   <Text style={styles.courseCode}>{item.courseCode}</Text>
-                </LinearGradient>
+                </View>
 
                 <View style={styles.headerRightBadges}>
                   {detail.slot && detail.slot !== 'N/A' ? (
