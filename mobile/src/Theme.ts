@@ -1,6 +1,6 @@
 export const Theme = {
   colors: {
-    background: '#161616ff',      // Deep Obsidian Black
+    background: '#15151562',      // Deep Obsidian Black
     surface: '#1f1f23ff',         // Elevated Charcoal Surface
     surfaceLight: '#FFFFFF',    // High-contrast primary focus
 
