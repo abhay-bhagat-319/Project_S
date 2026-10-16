@@ -419,7 +419,7 @@ const styles = StyleSheet.create({
 
   // Cards
   card: {
-    backgroundColor: '#23252E',
+    backgroundColor: Theme.colors.surface,
     borderRadius: Theme.radii.card,
     padding: Theme.spacing.padding,
     marginBottom: Theme.spacing.gap,
@@ -427,7 +427,7 @@ const styles = StyleSheet.create({
     borderColor: Theme.colors.border,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.25,
     shadowRadius: 8,
     elevation: 4,
   },
