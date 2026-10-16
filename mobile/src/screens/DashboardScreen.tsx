@@ -3,7 +3,7 @@ import { StyleSheet, Text, View, Image, ScrollView, TouchableOpacity, Modal, Fla
 import Svg, { Line, Circle, Polyline, Text as SvgText, Rect, Path, Defs, LinearGradient as SvgLinearGradient, Stop, G } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { CalendarBlank, Table, FileText, ClipboardText } from 'phosphor-react-native';
+import { CalendarDots, Table, FileText, ClipboardText } from 'phosphor-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { ProfileData } from '../services/CacheService';
@@ -32,7 +32,7 @@ export default function DashboardScreen({
   if (!profileData) {
     return (
       <View style={styles.loadingContainer}>
-        <Image 
+        <Image
           source={require('../../assets/icon.png')}
           style={styles.loadingLogo}
         />
@@ -88,10 +88,10 @@ export default function DashboardScreen({
   const cpiPolylineString = pointsCPI.map(p => `${p.x},${p.y}`).join(' ');
 
   return (
-    <ScrollView 
-      style={styles.container} 
+    <ScrollView
+      style={styles.container}
       contentContainerStyle={[
-        styles.scrollContent, 
+        styles.scrollContent,
         { paddingBottom: Theme.layout.baseScrollBottomPadding + insets.bottom }
       ]}
       refreshControl={
@@ -106,12 +106,12 @@ export default function DashboardScreen({
         ) : undefined
       }
     >
-      
+
       {/* Profile Header Card */}
       <View style={styles.profileCard}>
         <View style={styles.avatarContainer}>
           {avatarUri ? (
-            <Image 
+            <Image
               source={{ uri: avatarUri }}
               style={styles.avatar}
               defaultSource={require('../../assets/icon.png')}
@@ -144,7 +144,7 @@ export default function DashboardScreen({
           onPress={() => onOpenAcademicSchedules && onOpenAcademicSchedules()}
         >
           <View style={styles.quickActionIconContainer}>
-            <CalendarBlank weight="duotone" size={26} color={Theme.colors.primary} />
+            <CalendarDots weight="duotone" size={26} color={Theme.colors.primary} />
           </View>
           <View style={styles.quickActionLabelContainer}>
             <Text
@@ -228,10 +228,10 @@ export default function DashboardScreen({
       {/* Academic Progress Badges */}
       <Text style={styles.sectionTitle}>Academic Progress</Text>
       <View style={styles.badgesRow}>
-        
+
         {/* Passed Courses Badge */}
-        <TouchableOpacity 
-          style={styles.badgeWrapper} 
+        <TouchableOpacity
+          style={styles.badgeWrapper}
           onPress={() => showModal('passed')}
           activeOpacity={0.8}
         >
@@ -252,8 +252,8 @@ export default function DashboardScreen({
         </TouchableOpacity>
 
         {/* Failed Courses Badge */}
-        <TouchableOpacity 
-          style={styles.badgeWrapper} 
+        <TouchableOpacity
+          style={styles.badgeWrapper}
           onPress={() => showModal('failed')}
           activeOpacity={0.8}
         >
@@ -300,20 +300,20 @@ export default function DashboardScreen({
             {/* Grid Lines and Y-Axis labels */}
             {gridLines.map(val => (
               <G key={val}>
-                <Line 
-                  x1={paddingLeft} 
-                  y1={getY(val)} 
-                  x2={screenWidth - paddingRight} 
-                  y2={getY(val)} 
-                  stroke={Theme.colors.border} 
+                <Line
+                  x1={paddingLeft}
+                  y1={getY(val)}
+                  x2={screenWidth - paddingRight}
+                  y2={getY(val)}
+                  stroke={Theme.colors.border}
                   strokeWidth="1"
                   strokeDasharray="4 4"
                 />
-                <SvgText 
-                  x={paddingLeft - 8} 
-                  y={getY(val) + 4} 
-                  fill={Theme.colors.textSecondary} 
-                  fontSize="10" 
+                <SvgText
+                  x={paddingLeft - 8}
+                  y={getY(val) + 4}
+                  fill={Theme.colors.textSecondary}
+                  fontSize="10"
                   textAnchor="end"
                 >
                   {val.toFixed(1)}
@@ -323,8 +323,8 @@ export default function DashboardScreen({
 
             {/* Area under CPI line */}
             {performance.length > 1 && (
-              <Path 
-                d={`M ${pointsCPI[0].x} ${getY(minY)} L ${pointsCPI.map(p => `${p.x} ${p.y}`).join(' L ')} L ${pointsCPI[pointsCPI.length - 1].x} ${getY(minY)} Z`} 
+              <Path
+                d={`M ${pointsCPI[0].x} ${getY(minY)} L ${pointsCPI.map(p => `${p.x} ${p.y}`).join(' L ')} L ${pointsCPI[pointsCPI.length - 1].x} ${getY(minY)} Z`}
                 fill="url(#cpiGrad)"
               />
             )}
@@ -332,17 +332,17 @@ export default function DashboardScreen({
             {/* SPI and CPI Polylines */}
             {performance.length > 1 && (
               <>
-                <Polyline 
-                  points={spiPolylineString} 
-                  fill="none" 
-                  stroke={Theme.colors.pink} 
-                  strokeWidth="2.5" 
+                <Polyline
+                  points={spiPolylineString}
+                  fill="none"
+                  stroke={Theme.colors.pink}
+                  strokeWidth="2.5"
                   strokeDasharray="2 2"
                 />
-                <Polyline 
-                  points={cpiPolylineString} 
-                  fill="none" 
-                  stroke={Theme.colors.primary} 
+                <Polyline
+                  points={cpiPolylineString}
+                  fill="none"
+                  stroke={Theme.colors.primary}
                   strokeWidth="3.5"
                 />
               </>
@@ -350,21 +350,21 @@ export default function DashboardScreen({
 
             {/* Data point markers */}
             {pointsSPI.map((p, i) => (
-              <Circle 
-                key={`spi-dot-${i}`} 
-                cx={p.x} 
-                cy={p.y} 
-                r="4" 
-                fill={Theme.colors.pink} 
+              <Circle
+                key={`spi-dot-${i}`}
+                cx={p.x}
+                cy={p.y}
+                r="4"
+                fill={Theme.colors.pink}
               />
             ))}
             {pointsCPI.map((p, i) => (
-              <Circle 
-                key={`cpi-dot-${i}`} 
-                cx={p.x} 
-                cy={p.y} 
-                r="5" 
-                fill={Theme.colors.primary} 
+              <Circle
+                key={`cpi-dot-${i}`}
+                cx={p.x}
+                cy={p.y}
+                r="5"
+                fill={Theme.colors.primary}
                 stroke={Theme.colors.background}
                 strokeWidth="1.5"
               />
@@ -377,21 +377,21 @@ export default function DashboardScreen({
               const yearLabel = p.sem.split('-')[0].slice(2) + '-' + p.sem.split('-')[1].slice(2);
               return (
                 <G key={`x-lbl-${i}`}>
-                  <SvgText 
-                    x={getX(i, performance.length)} 
-                    y={chartHeight - 14} 
-                    fill={Theme.colors.textPrimary} 
-                    fontSize="10" 
+                  <SvgText
+                    x={getX(i, performance.length)}
+                    y={chartHeight - 14}
+                    fill={Theme.colors.textPrimary}
+                    fontSize="10"
                     textAnchor="middle"
                     fontWeight="500"
                   >
                     {semLabel}
                   </SvgText>
-                  <SvgText 
-                    x={getX(i, performance.length)} 
-                    y={chartHeight - 2} 
-                    fill={Theme.colors.textSecondary} 
-                    fontSize="8" 
+                  <SvgText
+                    x={getX(i, performance.length)}
+                    y={chartHeight - 2}
+                    fill={Theme.colors.textSecondary}
+                    fontSize="8"
                     textAnchor="middle"
                   >
                     {yearLabel}
@@ -412,10 +412,10 @@ export default function DashboardScreen({
         statusBarTranslucent={true}
       >
         <View style={styles.modalBackdrop}>
-          <TouchableOpacity 
-            style={styles.modalDismiss} 
-            activeOpacity={1} 
-            onPress={() => setModalVisible(false)} 
+          <TouchableOpacity
+            style={styles.modalDismiss}
+            activeOpacity={1}
+            onPress={() => setModalVisible(false)}
           />
           <View style={styles.modalContent}>
             <View style={styles.sheetHandle} />
@@ -427,16 +427,16 @@ export default function DashboardScreen({
                 <Ionicons name="close" size={24} color={Theme.colors.textPrimary} />
               </TouchableOpacity>
             </View>
-            
+
             <FlatList
               data={modalType === 'passed' ? passedCourses : failedCourses}
               keyExtractor={(item) => item}
               renderItem={({ item }) => (
                 <View style={styles.courseItem}>
-                  <Ionicons 
-                    name={modalType === 'passed' ? 'checkmark-circle' : 'alert-circle'} 
-                    size={20} 
-                    color={modalType === 'passed' ? Theme.colors.success : Theme.colors.error} 
+                  <Ionicons
+                    name={modalType === 'passed' ? 'checkmark-circle' : 'alert-circle'}
+                    size={20}
+                    color={modalType === 'passed' ? Theme.colors.success : Theme.colors.error}
                   />
                   <Text style={styles.courseText}>{item}</Text>
                 </View>
