@@ -888,7 +888,7 @@ export const ScraperService = {
                     detailsMap[cCode] = {
                       courseCode: cCode,
                       courseTitle: cleanHtmlText(d["Course Title"] || d.courseTitle || course.courseTitle),
-                      credits: (d["Credits"] || d.credits || '4').toString(),
+                      credits: (d["Credits"] || d.credits || '3').toString(),
                       slot: (d["Slot"] || d.slot || 'N/A').toString(),
                       instructors: cleanHtmlText(d["Instructors"] || d.instructors || course.instructor),
                       tutors: cleanHtmlText(d["Tutors"] || d.tutors || ''),

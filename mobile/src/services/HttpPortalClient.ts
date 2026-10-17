@@ -1176,6 +1176,65 @@ export class HttpPortalClient {
   }
 
   /**
+   * Fetches official course details & syllabus metadata from /secure/courseMoreDetails
+   */
+  public static async getCourseDetail(courseCode: string): Promise<CourseDetail | null> {
+    const code = (courseCode || '').trim().toUpperCase();
+    if (!code) return null;
+
+    try {
+      const response = await this.postJson<{
+        value?: number;
+        moreDetails?: Record<string, any>;
+      }>('/secure/courseMoreDetails', {
+        courseId: code,
+      }, { timeoutMs: 8000 });
+
+      const resData = response.data;
+      if (resData && resData.value !== 0 && resData.moreDetails) {
+        const d = resData.moreDetails;
+        const cleanText = (t: any): string => {
+          if (!t) return '';
+          return String(t).replace(/<[^>]*>/g, '').trim();
+        };
+
+        const parseList = (html: any): string[] => {
+          if (!html) return [];
+          const str = String(html);
+          const liMatches = Array.from(str.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)).map((m) => cleanText(m[1]));
+          if (liMatches.length > 0) return liMatches.filter(Boolean);
+          const cleaned = cleanText(str);
+          return cleaned ? [cleaned] : [];
+        };
+
+        const rawCredits = d['Credits'] ?? d['credits'] ?? d['Credit'] ?? d['credit'];
+        const credits = rawCredits !== undefined && rawCredits !== null ? String(rawCredits).trim() : '';
+
+        return {
+          courseCode: code,
+          courseTitle: cleanText(d['Course Title'] || d['courseTitle']),
+          credits: credits,
+          slot: (d['Slot'] || d['slot'] || 'N/A').toString().trim(),
+          instructors: cleanText(d['Instructors'] || d['instructors']),
+          tutors: cleanText(d['Tutors'] || d['tutors']),
+          teachingAssistants: cleanText(d['Teaching Assistants'] || d['teachingAssistants']),
+          prerequisites: cleanText(d['Prerequisites'] || d['prerequisites']),
+          otherPrerequisites: cleanText(d['Other Prerequisites'] || d['otherPrerequisites']),
+          learningObjectives: parseList(d['Learning Objectives'] || d['learningObjectives']),
+          textBooks: parseList(d['Text Books'] || d['textBooks']),
+          referenceBooks: parseList(d['Reference Books'] || d['referenceBooks']),
+          content: cleanText(d['Content'] || d['content']),
+          remark: cleanText(d['Remark'] || d['remark']),
+        };
+      }
+    } catch (e) {
+      console.warn(`[HttpPortalClient] Error fetching courseMoreDetails for ${code}:`, e);
+    }
+
+    return null;
+  }
+
+  /**
    * Fetches registered courses list and course details from /secure/studentMyCourses
    */
   public static async getCourses(): Promise<{
@@ -1201,6 +1260,25 @@ export class HttpPortalClient {
 
     const cachedDetails = (await CacheService.getCachedCourseDetails()) || {};
     const courseDetails: Record<string, CourseDetail> = { ...cachedDetails };
+
+    // Concurrently fetch real course details (credits, slots, syllabus) from /secure/courseMoreDetails
+    await Promise.all(
+      rawCourses.map(async (c) => {
+        const code = c.courseCode.trim().toUpperCase();
+        try {
+          const detail = await this.getCourseDetail(code);
+          if (detail) {
+            courseDetails[code] = {
+              ...detail,
+              courseTitle: detail.courseTitle || c.courseTitle,
+              instructors: detail.instructors || c.instructor,
+            };
+          }
+        } catch (e) {
+          console.warn(`[HttpPortalClient] Failed to fetch details for ${code}:`, e);
+        }
+      })
+    );
 
     return { courses, courseDetails };
   }

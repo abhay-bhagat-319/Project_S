@@ -121,7 +121,7 @@ export const DefaultCourseCatalog: Record<string, CourseDetail> = {
   DSE351: {
     courseCode: 'DSE351',
     courseTitle: 'Engineering Mathematics',
-    credits: '4',
+    credits: '3',
     slot: 'D',
     instructors: 'Priyadarshi Mukherjee',
     tutors: '',
@@ -147,7 +147,7 @@ export const DefaultCourseCatalog: Record<string, CourseDetail> = {
   DSE353: {
     courseCode: 'DSE353',
     courseTitle: 'Probability and Random Processes',
-    credits: '4',
+    credits: '3',
     slot: 'E',
     instructors: 'Vivek Deulkar',
     tutors: '',
@@ -174,7 +174,7 @@ export const DefaultCourseCatalog: Record<string, CourseDetail> = {
   DSE355: {
     courseCode: 'DSE355',
     courseTitle: 'Computer Organisation',
-    credits: '4',
+    credits: '3',
     slot: 'F',
     instructors: 'Sukarn Agarwal',
     tutors: '',
@@ -212,9 +212,14 @@ export function getCourseDetailFor(
 ): CourseDetail {
   const code = (courseCode || '').trim().toUpperCase();
 
-  // 1. Check cached details from portal scraper
-  if (cachedMap && cachedMap[code] && cachedMap[code].content) {
-    return cachedMap[code];
+  // 1. Check cached details from portal scraper / HTTP client
+  if (cachedMap && cachedMap[code]) {
+    const cached = cachedMap[code];
+    return {
+      ...cached,
+      courseTitle: courseTitle || cached.courseTitle,
+      instructors: instructor || cached.instructors,
+    };
   }
 
   // 2. Check built-in course catalog
@@ -228,10 +233,11 @@ export function getCourseDetailFor(
   }
 
   // 3. Fallback structure
+  const isLab = /lab|practical|workshop/i.test(courseTitle || '') || /lab/i.test(code);
   return {
     courseCode: code,
     courseTitle: courseTitle || code,
-    credits: '4',
+    credits: isLab ? '2' : '3',
     slot: 'N/A',
     instructors: instructor || 'Instructor Not Assigned',
     tutors: '',
