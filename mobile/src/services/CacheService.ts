@@ -288,7 +288,7 @@ export const CacheService = {
     try {
       const { ReportsService } = require('./ReportsService');
       await ReportsService.clearAllReportFiles();
-    } catch {}
+    } catch { }
   },
 };
 
