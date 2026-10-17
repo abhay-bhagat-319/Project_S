@@ -212,7 +212,7 @@ export default function CourseDetailModal({
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    backgroundColor: 'rgba(0, 0, 0, 1)',
     justifyContent: 'flex-end',
   },
   backdropPressable: {
