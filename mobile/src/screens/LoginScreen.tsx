@@ -93,9 +93,9 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
             <Ionicons name="key-outline" size={20} color={Theme.colors.textSecondary} style={styles.inputIcon} />
             <TextInput 
               style={styles.input}
+              secureTextEntry={!showPassword}
               placeholder="••••••••"
               placeholderTextColor={Theme.colors.textSecondary}
-              secureTextEntry={!showPassword}
               value={password}
               onChangeText={setPassword}
               autoCapitalize="none"
