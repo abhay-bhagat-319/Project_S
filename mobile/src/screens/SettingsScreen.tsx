@@ -32,7 +32,7 @@ export default function SettingsScreen({
   const [biometricsEnabled, setBiometricsEnabled] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  
+
   const [loading, setLoading] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [showUpdateForm, setShowUpdateForm] = useState(false);
@@ -100,9 +100,9 @@ export default function SettingsScreen({
       `Are you sure you want to clear your offline student dashboard, course cache, and downloaded update packages? (${cacheSize})`,
       [
         { text: "Cancel", style: "cancel" },
-        { 
-          text: "Clear", 
-          style: "destructive", 
+        {
+          text: "Clear",
+          style: "destructive",
           onPress: async () => {
             await CacheService.clearCache();
             await loadCacheSize();
@@ -166,14 +166,14 @@ export default function SettingsScreen({
       'Are you sure you want to log out? This will clear all secure credentials and local cached data.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Log Out', 
+        {
+          text: 'Log Out',
           style: 'destructive',
           onPress: async () => {
             await SecureStorageService.clearCredentials();
             await CacheService.clearCache();
             // Fire session purge asynchronously
-            SessionLifecycleManager.purgeSession().catch(() => {});
+            SessionLifecycleManager.purgeSession().catch(() => { });
             onLogout();
           }
         }
@@ -182,14 +182,14 @@ export default function SettingsScreen({
   };
 
   return (
-    <ScrollView 
-      style={styles.container} 
+    <ScrollView
+      style={styles.container}
       contentContainerStyle={[
-        styles.scrollContent, 
+        styles.scrollContent,
         { paddingBottom: Theme.layout.baseScrollBottomPadding + insets.bottom }
       ]}
     >
-      
+
       {/* Security Section */}
       <Text style={styles.sectionTitle}>Security Settings</Text>
       <View style={styles.sectionCard}>
@@ -198,7 +198,7 @@ export default function SettingsScreen({
             <Text style={styles.settingLabel}>Enable Biometric Lock</Text>
             <Text style={styles.settingDescription}>Prompt FaceID/Fingerprint on startup</Text>
           </View>
-          <Switch 
+          <Switch
             value={biometricsEnabled}
             onValueChange={handleToggleBiometrics}
             trackColor={{ false: '#767577', true: Theme.colors.primary }}
@@ -206,24 +206,24 @@ export default function SettingsScreen({
           />
         </View>
 
-        <TouchableOpacity 
-          style={[styles.settingItem, styles.borderTop]} 
+        <TouchableOpacity
+          style={[styles.settingItem, styles.borderTop]}
           onPress={() => setShowUpdateForm(!showUpdateForm)}
         >
           <View style={styles.settingTextContainer}>
             <Text style={styles.settingLabel}>Update LDAP Credentials</Text>
             <Text style={styles.settingDescription}>Change stored student portal password</Text>
           </View>
-          <Ionicons 
-            name={showUpdateForm ? "chevron-up" : "chevron-down"} 
-            size={20} 
-            color={Theme.colors.textSecondary} 
+          <Ionicons
+            name={showUpdateForm ? "chevron-up" : "chevron-down"}
+            size={20}
+            color={Theme.colors.textSecondary}
           />
         </TouchableOpacity>
 
         {showUpdateForm && (
           <View style={styles.formContainer}>
-            <TextInput 
+            <TextInput
               style={styles.input}
               placeholder="LDAP Username"
               placeholderTextColor={Theme.colors.textSecondary}
@@ -234,7 +234,7 @@ export default function SettingsScreen({
               editable={!loading}
             />
             <View style={styles.passwordInputContainer}>
-              <TextInput 
+              <TextInput
                 style={[styles.input, styles.passwordInput]}
                 placeholder="New LDAP Password"
                 placeholderTextColor={Theme.colors.textSecondary}
@@ -245,15 +245,15 @@ export default function SettingsScreen({
                 autoCorrect={false}
                 editable={!loading}
               />
-              <TouchableOpacity 
+              <TouchableOpacity
                 onPress={() => setShowPassword(!showPassword)}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 style={styles.eyeBtn}
               >
-                <Ionicons 
-                  name={showPassword ? 'eye-off-outline' : 'eye-outline'} 
-                  size={20} 
-                  color={Theme.colors.textSecondary} 
+                <Ionicons
+                  name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                  size={20}
+                  color={Theme.colors.textSecondary}
                 />
               </TouchableOpacity>
             </View>
@@ -298,8 +298,8 @@ export default function SettingsScreen({
           </View>
         </View>
 
-        <TouchableOpacity 
-          style={[styles.settingItem, styles.borderTop]} 
+        <TouchableOpacity
+          style={[styles.settingItem, styles.borderTop]}
           onPress={handleCheckForUpdates}
           disabled={checkingUpdate}
           activeOpacity={0.7}
@@ -325,15 +325,15 @@ export default function SettingsScreen({
           {checkingUpdate ? (
             <ActivityIndicator size="small" color={hasUpdate ? '#eab308' : Theme.colors.primary} />
           ) : (
-            <DownloadV2Icon 
-              size={22} 
-              color={hasUpdate ? "#eab308" : Theme.colors.primary} 
+            <DownloadV2Icon
+              size={22}
+              color={hasUpdate ? "#eab308" : Theme.colors.primary}
             />
           )}
         </TouchableOpacity>
 
-        <TouchableOpacity 
-          style={[styles.settingItem, styles.borderTop]} 
+        <TouchableOpacity
+          style={[styles.settingItem, styles.borderTop]}
           onPress={handleOpenWhatsApp}
           activeOpacity={0.7}
         >
@@ -344,8 +344,8 @@ export default function SettingsScreen({
           <Ionicons name="logo-whatsapp" size={20} color="#25D366" />
         </TouchableOpacity>
 
-        <TouchableOpacity 
-          style={[styles.settingItem, styles.borderTop]} 
+        <TouchableOpacity
+          style={[styles.settingItem, styles.borderTop]}
           onPress={() => Linking.openURL(UpdateService.RELEASES_WEB_URL)}
           activeOpacity={0.7}
         >
@@ -360,8 +360,8 @@ export default function SettingsScreen({
       {/* About & Community Section */}
       <Text style={styles.sectionTitle}>About & Credits</Text>
       <View style={styles.sectionCard}>
-        <TouchableOpacity 
-          style={styles.settingItem} 
+        <TouchableOpacity
+          style={styles.settingItem}
           onPress={() => setCreditsModalVisible(true)}
           activeOpacity={0.7}
         >
@@ -387,9 +387,9 @@ export default function SettingsScreen({
 
 
       {/* Credits & Contributors Modal */}
-      <CreditsModal 
-        visible={creditsModalVisible} 
-        onClose={() => setCreditsModalVisible(false)} 
+      <CreditsModal
+        visible={creditsModalVisible}
+        onClose={() => setCreditsModalVisible(false)}
       />
 
     </ScrollView>

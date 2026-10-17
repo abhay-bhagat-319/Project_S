@@ -50,18 +50,18 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
   const [showPassword, setShowPassword] = useState(false);
 
   return (
-    <KeyboardAvoidingView 
+    <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
     >
-      <ScrollView 
+      <ScrollView
         contentContainerStyle={[
-          styles.scrollContainer, 
-          { 
+          styles.scrollContainer,
+          {
             paddingTop: Math.max(Theme.spacing.padding, insets.top + 20),
-            paddingBottom: Math.max(Theme.spacing.padding, insets.bottom + 20) 
+            paddingBottom: Math.max(Theme.spacing.padding, insets.bottom + 20)
           }
-        ]} 
+        ]}
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.header}>
@@ -76,7 +76,7 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
           <Text style={styles.label}>LDAP Username</Text>
           <View style={styles.inputContainer}>
             <Ionicons name="person-outline" size={20} color={Theme.colors.textSecondary} style={styles.inputIcon} />
-            <TextInput 
+            <TextInput
               style={styles.input}
               placeholder="e.g. abhay24"
               placeholderTextColor={Theme.colors.textSecondary}
@@ -91,7 +91,7 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
           <Text style={styles.label}>Password</Text>
           <View style={styles.inputContainer}>
             <Ionicons name="key-outline" size={20} color={Theme.colors.textSecondary} style={styles.inputIcon} />
-            <TextInput 
+            <TextInput
               style={styles.input}
               secureTextEntry={!showPassword}
               placeholder="••••••••"
@@ -102,15 +102,15 @@ export default function LoginScreen({ onSuccess }: LoginScreenProps) {
               autoCorrect={false}
               editable={!loading}
             />
-            <TouchableOpacity 
+            <TouchableOpacity
               onPress={() => setShowPassword(!showPassword)}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               style={{ padding: 4 }}
             >
-              <Ionicons 
-                name={showPassword ? 'eye-off-outline' : 'eye-outline'} 
-                size={20} 
-                color={Theme.colors.textSecondary} 
+              <Ionicons
+                name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                size={20}
+                color={Theme.colors.textSecondary}
               />
             </TouchableOpacity>
           </View>
