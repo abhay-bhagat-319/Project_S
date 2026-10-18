@@ -85,16 +85,16 @@ export default function CoursesScreen({
                 </View>
 
                 <View style={styles.headerRightBadges}>
-                  {detail.slot && detail.slot !== 'N/A' ? (
-                    <View style={styles.metaChip}>
-                      <Text style={styles.metaChipText}>Slot {detail.slot}</Text>
-                    </View>
-                  ) : null}
-                  {detail.credits ? (
-                    <View style={styles.metaChip}>
-                      <Text style={styles.metaChipText}>{detail.credits} Cr</Text>
-                    </View>
-                  ) : null}
+                  <View style={styles.metaChip}>
+                    <Text style={styles.metaChipText}>
+                      {detail.slot && detail.slot !== 'N/A' ? `Slot ${detail.slot}` : 'Slot N/A'}
+                    </Text>
+                  </View>
+                  <View style={styles.metaChip}>
+                    <Text style={styles.metaChipText}>
+                      {detail.credits ? `${detail.credits} Cr` : 'N/A Cr'}
+                    </Text>
+                  </View>
                 </View>
               </View>
 

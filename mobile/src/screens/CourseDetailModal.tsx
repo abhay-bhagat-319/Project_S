@@ -32,6 +32,16 @@ export default function CourseDetailModal({
   const insets = useSafeAreaInsets();
   if (!courseDetail) return null;
 
+  const hasAnySyllabusDetails = Boolean(
+    courseDetail.prerequisites ||
+    courseDetail.otherPrerequisites ||
+    (courseDetail.learningObjectives && courseDetail.learningObjectives.length > 0) ||
+    courseDetail.content ||
+    (courseDetail.textBooks && courseDetail.textBooks.length > 0) ||
+    (courseDetail.referenceBooks && courseDetail.referenceBooks.length > 0) ||
+    courseDetail.remark
+  );
+
   return (
     <Modal
       visible={visible}
@@ -58,18 +68,18 @@ export default function CourseDetailModal({
                 <View style={styles.codeBadge}>
                   <Text style={styles.codeBadgeText}>{courseDetail.courseCode}</Text>
                 </View>
-                {courseDetail.credits ? (
-                  <View style={styles.metaBadge}>
-                    <Ionicons name="ribbon-outline" size={12} color={Theme.colors.primary} />
-                    <Text style={styles.metaBadgeText}>{courseDetail.credits} Credits</Text>
-                  </View>
-                ) : null}
-                {courseDetail.slot && courseDetail.slot !== 'N/A' ? (
-                  <View style={styles.metaBadge}>
-                    <TimetableIcon size={14} color={Theme.colors.lavender} />
-                    <Text style={styles.metaBadgeText}>Slot {courseDetail.slot}</Text>
-                  </View>
-                ) : null}
+                <View style={styles.metaBadge}>
+                  <Ionicons name="ribbon-outline" size={12} color={Theme.colors.primary} />
+                  <Text style={styles.metaBadgeText}>
+                    {courseDetail.credits ? `${courseDetail.credits} Credits` : 'N/A Credits'}
+                  </Text>
+                </View>
+                <View style={styles.metaBadge}>
+                  <TimetableIcon size={14} color={Theme.colors.lavender} />
+                  <Text style={styles.metaBadgeText}>
+                    {courseDetail.slot && courseDetail.slot !== 'N/A' ? `Slot ${courseDetail.slot}` : 'Slot N/A'}
+                  </Text>
+                </View>
               </View>
               <Text style={styles.titleText}>{courseDetail.courseTitle}</Text>
             </View>
@@ -202,6 +212,22 @@ export default function CourseDetailModal({
                 <Text style={styles.bodyText}>{courseDetail.remark}</Text>
               </View>
             ) : null}
+
+            {/* Empty State Banner when no syllabus details are uploaded on portal */}
+            {!hasAnySyllabusDetails && (
+              <View style={styles.emptyStateCard}>
+                <Ionicons
+                  name="document-text-outline"
+                  size={28}
+                  color={Theme.colors.textSecondary}
+                  style={styles.emptyStateIcon}
+                />
+                <Text style={styles.emptyStateTitle}>No Syllabus Details</Text>
+                <Text style={styles.emptyStateText}>
+                  No additional syllabus, objectives, or textbooks were published on the Shiksha portal for this course.
+                </Text>
+              </View>
+            )}
           </ScrollView>
         </View>
       </View>
@@ -383,5 +409,32 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
     color: Theme.colors.textPrimary,
+  },
+  emptyStateCard: {
+    backgroundColor: Theme.colors.surface,
+    borderRadius: Theme.radii.widget,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+  },
+  emptyStateIcon: {
+    marginBottom: 10,
+    opacity: 0.7,
+  },
+  emptyStateTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Theme.colors.textPrimary,
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  emptyStateText: {
+    fontSize: 12.5,
+    lineHeight: 18,
+    color: Theme.colors.textSecondary,
+    textAlign: 'center',
   },
 });
