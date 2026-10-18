@@ -33,6 +33,8 @@
   },
   "scripts": {
     "postinstall": "patch-package",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test",
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
