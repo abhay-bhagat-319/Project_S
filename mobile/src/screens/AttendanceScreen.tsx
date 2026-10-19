@@ -260,7 +260,7 @@ export default function AttendanceScreen({
       {/* Date-wise Detailed Modal */}
       <Modal
         visible={!!selectedCourse}
-        animationType="slide"
+        animationType="fade"
         transparent
         onRequestClose={() => setSelectedCourse(null)}
         statusBarTranslucent={true}

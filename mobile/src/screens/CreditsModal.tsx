@@ -55,7 +55,7 @@ export default function CreditsModal({ visible, onClose }: CreditsModalProps) {
   return (
     <Modal
       visible={visible}
-      animationType="slide"
+      animationType="fade"
       transparent={true}
       onRequestClose={onClose}
       statusBarTranslucent={true}
