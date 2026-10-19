@@ -1,13 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet, Text, View, FlatList, RefreshControl, ScrollView,
-  TouchableOpacity, Modal, SafeAreaView, StatusBar,
+  TouchableOpacity, Modal, SafeAreaView, StatusBar, Animated, Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { AttendanceItem, AttendanceRecord, AttendanceData } from '../services/CacheService';
 import { calculateAttendance } from '../utils/AttendanceCalc';
+
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface AttendanceScreenProps {
   attendanceData: AttendanceData | null;
@@ -26,7 +28,51 @@ export default function AttendanceScreen({
 }: AttendanceScreenProps) {
   const insets = useSafeAreaInsets();
   const [selectedCourse, setSelectedCourse] = useState<AttendanceItem | null>(null);
+  const [modalCourse, setModalCourse] = useState<AttendanceItem | null>(null);
   const [filter, setFilter] = useState<Filter>('ALL');
+
+  const backdropAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+
+  useEffect(() => {
+    if (selectedCourse) {
+      setModalCourse(selectedCourse);
+      backdropAnim.setValue(0);
+      slideAnim.setValue(SCREEN_HEIGHT);
+      Animated.parallel([
+        Animated.timing(backdropAnim, {
+          toValue: 1,
+          duration: 240,
+          useNativeDriver: true,
+        }),
+        Animated.spring(slideAnim, {
+          toValue: 0,
+          damping: 28,
+          stiffness: 260,
+          mass: 0.8,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+  }, [selectedCourse]);
+
+  const handleCloseModal = () => {
+    Animated.parallel([
+      Animated.timing(backdropAnim, {
+        toValue: 0,
+        duration: 180,
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: SCREEN_HEIGHT,
+        duration: 220,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      setSelectedCourse(null);
+      setModalCourse(null);
+    });
+  };
 
   const formattedSyncTime = () => {
     if (!attendanceData) return '';
@@ -233,7 +279,7 @@ export default function AttendanceScreen({
         ListEmptyComponent={
           <ScrollView
             contentContainerStyle={[
-              styles.emptyContainer, 
+              styles.emptyContainer,
               { paddingBottom: Theme.layout.baseScrollBottomPadding + insets.bottom }
             ]}
             refreshControl={
@@ -252,26 +298,36 @@ export default function AttendanceScreen({
           </ScrollView>
         }
         contentContainerStyle={[
-          styles.listContent, 
+          styles.listContent,
           { paddingBottom: Theme.layout.baseScrollBottomPadding + insets.bottom }
         ]}
       />
 
       {/* Date-wise Detailed Modal */}
       <Modal
-        visible={!!selectedCourse}
-        animationType="fade"
+        visible={!!modalCourse}
+        animationType="none"
         transparent
-        onRequestClose={() => setSelectedCourse(null)}
+        onRequestClose={handleCloseModal}
         statusBarTranslucent={true}
       >
         <View style={styles.modalOverlay}>
-          <TouchableOpacity
-            style={styles.modalDismiss}
-            activeOpacity={1}
-            onPress={() => setSelectedCourse(null)}
-          />
-          <View style={styles.modalSheet}>
+          {/* Animated Backdrop: Fades In / Out smoothly on the spot */}
+          <Animated.View style={[styles.backdrop, { opacity: backdropAnim }]}>
+            <TouchableOpacity
+              style={styles.modalDismiss}
+              activeOpacity={1}
+              onPress={handleCloseModal}
+            />
+          </Animated.View>
+
+          {/* Animated Modal Sheet: Slides up from bottom */}
+          <Animated.View
+            style={[
+              styles.modalSheet,
+              { transform: [{ translateY: slideAnim }] },
+            ]}
+          >
             <StatusBar barStyle="light-content" />
 
             {/* Handle */}
@@ -286,7 +342,7 @@ export default function AttendanceScreen({
                   <Text style={styles.sheetInstructor}>Instructor: {selectedCourse.instructor}</Text>
                 ) : null}
               </View>
-              <TouchableOpacity onPress={() => setSelectedCourse(null)} style={styles.closeBtn}>
+              <TouchableOpacity onPress={handleCloseModal} style={styles.closeBtn}>
                 <Ionicons name="close-circle" size={26} color={Theme.colors.textSecondary} />
               </TouchableOpacity>
             </View>
@@ -366,7 +422,7 @@ export default function AttendanceScreen({
               keyExtractor={(_, index) => index.toString()}
               renderItem={renderRecordItem}
               contentContainerStyle={[
-                styles.recordsListContainer, 
+                styles.recordsListContainer,
                 { paddingBottom: Math.max(24, insets.bottom + 20) }
               ]}
               ListEmptyComponent={
@@ -381,7 +437,7 @@ export default function AttendanceScreen({
                 </View>
               }
             />
-          </View>
+          </Animated.View>
         </View>
       </Modal>
     </View>
@@ -491,7 +547,8 @@ const styles = StyleSheet.create({
   emptySub: { color: Theme.colors.textSecondary, fontSize: 13, marginTop: 6, textAlign: 'center' },
 
   // Bottom Sheet Modal
-  modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.65)' },
+  modalOverlay: { flex: 1, justifyContent: 'flex-end' },
+  backdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.65)' },
   modalDismiss: { flex: 1 },
   modalSheet: {
     backgroundColor: Theme.colors.surface,
