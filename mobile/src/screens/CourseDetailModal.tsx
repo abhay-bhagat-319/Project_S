@@ -45,7 +45,7 @@ export default function CourseDetailModal({
   return (
     <Modal
       visible={visible}
-      animationType="slide"
+      animationType="fade"
       transparent={true}
       onRequestClose={onClose}
       statusBarTranslucent={true}
@@ -238,7 +238,7 @@ export default function CourseDetailModal({
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 1)',
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
     justifyContent: 'flex-end',
   },
   backdropPressable: {
@@ -246,7 +246,7 @@ const styles = StyleSheet.create({
   },
   modalContainer: {
     width: '100%',
-    backgroundColor: Theme.colors.background,
+    backgroundColor: Theme.colors.surface,
     borderTopLeftRadius: Theme.radii.card,
     borderTopRightRadius: Theme.radii.card,
     borderBottomLeftRadius: 0,
