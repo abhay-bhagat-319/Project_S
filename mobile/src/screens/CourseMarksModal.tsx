@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -7,11 +7,15 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
+  Animated,
+  Dimensions,
 } from 'react-native';
 import { ChartBar, X, Wrench, ChartPieSlice } from 'phosphor-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { CacheService, CourseMarksData } from '../services/CacheService';
+
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface CourseMarksModalProps {
   visible: boolean;
@@ -28,30 +32,80 @@ export default function CourseMarksModal({
   onClose,
 }: CourseMarksModalProps) {
   const insets = useSafeAreaInsets();
+  const [internalVisible, setInternalVisible] = useState(visible);
+  const backdropAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
 
-  if (!courseCode) return null;
+  useEffect(() => {
+    if (visible && courseCode) {
+      setInternalVisible(true);
+      backdropAnim.setValue(0);
+      slideAnim.setValue(SCREEN_HEIGHT);
+      Animated.parallel([
+        Animated.timing(backdropAnim, {
+          toValue: 1,
+          duration: 240,
+          useNativeDriver: true,
+        }),
+        Animated.spring(slideAnim, {
+          toValue: 0,
+          damping: 28,
+          stiffness: 260,
+          mass: 0.8,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else if (!visible && internalVisible) {
+      handleDismiss();
+    }
+  }, [visible, courseCode]);
+
+  const handleDismiss = () => {
+    Animated.parallel([
+      Animated.timing(backdropAnim, {
+        toValue: 0,
+        duration: 180,
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: SCREEN_HEIGHT,
+        duration: 220,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      setInternalVisible(false);
+      onClose();
+    });
+  };
+
+  if (!courseCode || !internalVisible) return null;
 
   return (
     <Modal
-      visible={visible}
-      animationType="fade"
+      visible={internalVisible}
+      animationType="none"
       transparent={true}
-      onRequestClose={onClose}
+      onRequestClose={handleDismiss}
       statusBarTranslucent={true}
     >
       <View style={styles.modalOverlay}>
-        {/* Backdrop touch to dismiss */}
-        <TouchableOpacity
-          style={styles.modalDismiss}
-          activeOpacity={1}
-          onPress={onClose}
-        />
+        {/* Animated Backdrop: Fades In / Out smoothly on the spot */}
+        <Animated.View style={[styles.backdrop, { opacity: backdropAnim }]}>
+          <TouchableOpacity
+            style={styles.modalDismiss}
+            activeOpacity={1}
+            onPress={handleDismiss}
+          />
+        </Animated.View>
 
-        {/* Modal Sheet Container */}
-        <View
+        {/* Animated Modal Sheet: Slides up from bottom */}
+        <Animated.View
           style={[
             styles.modalContainer,
-            { paddingBottom: Math.max(24, insets.bottom + 16) }
+            {
+              paddingBottom: Math.max(24, insets.bottom + 16),
+              transform: [{ translateY: slideAnim }],
+            }
           ]}
         >
           {/* Top Drag Handle */}
@@ -70,7 +124,7 @@ export default function CourseMarksModal({
                 </Text>
               </View>
             </View>
-            <TouchableOpacity style={styles.closeBtn} onPress={onClose} activeOpacity={0.7}>
+            <TouchableOpacity style={styles.closeBtn} onPress={handleDismiss} activeOpacity={0.7}>
               <X weight="bold" size={18} color={Theme.colors.textPrimary} />
             </TouchableOpacity>
           </View>
@@ -84,9 +138,9 @@ export default function CourseMarksModal({
               <Wrench weight="duotone" size={14} color="#fef08a" style={{ marginRight: 5 }} />
               <Text style={styles.wipBadgeText}>Work in Progress</Text>
             </View>
-            
+
             <ChartPieSlice weight="duotone" size={44} color={Theme.colors.primary} style={{ marginVertical: 12 }} />
-            
+
             <Text style={styles.placeholderTitle}>Assessment Breakdown</Text>
             <Text style={styles.placeholderSubtitle}>
               Detailed test scores, mid-sem/end-sem evaluation components, and weightages for {courseCode} are actively being developed for a future release.
@@ -94,10 +148,10 @@ export default function CourseMarksModal({
           </View>
 
           {/* Dismiss Action Button */}
-          <TouchableOpacity style={styles.actionBtn} onPress={onClose} activeOpacity={0.8}>
+          <TouchableOpacity style={styles.actionBtn} onPress={handleDismiss} activeOpacity={0.8}>
             <Text style={styles.actionBtnText}>Got It</Text>
           </TouchableOpacity>
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
@@ -106,8 +160,11 @@ export default function CourseMarksModal({
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.65)',
     justifyContent: 'flex-end',
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
   },
   modalDismiss: {
     flex: 1,

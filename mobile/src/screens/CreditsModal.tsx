@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Pressable,
   Dimensions,
+  Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -27,14 +28,55 @@ const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function CreditsModal({ visible, onClose }: CreditsModalProps) {
   const insets = useSafeAreaInsets();
+  const [internalVisible, setInternalVisible] = useState(visible);
   const [contributors, setContributors] = useState<Contributor[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
+  const backdropAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+
   useEffect(() => {
     if (visible) {
+      setInternalVisible(true);
       loadContributors();
+      backdropAnim.setValue(0);
+      slideAnim.setValue(SCREEN_HEIGHT);
+      Animated.parallel([
+        Animated.timing(backdropAnim, {
+          toValue: 1,
+          duration: 240,
+          useNativeDriver: true,
+        }),
+        Animated.spring(slideAnim, {
+          toValue: 0,
+          damping: 28,
+          stiffness: 260,
+          mass: 0.8,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else if (!visible && internalVisible) {
+      handleDismiss();
     }
   }, [visible]);
+
+  const handleDismiss = () => {
+    Animated.parallel([
+      Animated.timing(backdropAnim, {
+        toValue: 0,
+        duration: 180,
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: SCREEN_HEIGHT,
+        duration: 220,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      setInternalVisible(false);
+      onClose();
+    });
+  };
 
   const loadContributors = async () => {
     setLoading(true);
@@ -52,18 +94,32 @@ export default function CreditsModal({ visible, onClose }: CreditsModalProps) {
     (c) => c.login.toLowerCase() !== CREATOR_PROFILE.login.toLowerCase()
   );
 
+  if (!internalVisible) return null;
+
   return (
     <Modal
-      visible={visible}
-      animationType="fade"
+      visible={internalVisible}
+      animationType="none"
       transparent={true}
-      onRequestClose={onClose}
+      onRequestClose={handleDismiss}
       statusBarTranslucent={true}
     >
       <View style={styles.modalOverlay}>
-        <Pressable style={styles.backdropPressable} onPress={onClose} />
+        {/* Animated Backdrop: Fades in on the spot */}
+        <Animated.View style={[styles.backdrop, { opacity: backdropAnim }]}>
+          <Pressable style={styles.backdropPressable} onPress={handleDismiss} />
+        </Animated.View>
 
-        <View style={[styles.modalContainer, { maxHeight: SCREEN_HEIGHT * 0.88, paddingBottom: Math.max(insets.bottom, 20) }]}>
+        <Animated.View
+          style={[
+            styles.modalContainer,
+            {
+              maxHeight: SCREEN_HEIGHT * 0.88,
+              paddingBottom: Math.max(insets.bottom, 20),
+              transform: [{ translateY: slideAnim }],
+            }
+          ]}
+        >
           {/* Top Drag Handle */}
           <View style={styles.dragHandleWrapper}>
             <View style={styles.dragIndicator} />
@@ -80,7 +136,7 @@ export default function CreditsModal({ visible, onClose }: CreditsModalProps) {
                 <Text style={styles.modalSubtitle}>Built by students, for students</Text>
               </View>
             </View>
-            <TouchableOpacity style={styles.closeBtn} onPress={onClose} activeOpacity={0.7}>
+            <TouchableOpacity style={styles.closeBtn} onPress={handleDismiss} activeOpacity={0.7}>
               <Ionicons name="close" size={22} color={Theme.colors.textSecondary} />
             </TouchableOpacity>
           </View>
@@ -186,7 +242,7 @@ export default function CreditsModal({ visible, onClose }: CreditsModalProps) {
               </Text>
             </View>
           </ScrollView>
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
@@ -195,8 +251,11 @@ export default function CreditsModal({ visible, onClose }: CreditsModalProps) {
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
     justifyContent: 'flex-end',
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
   },
   backdropPressable: {
     flex: 1,

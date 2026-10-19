@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   StyleSheet,
   Text,
@@ -9,6 +9,7 @@ import {
   Pressable,
   Dimensions,
   Platform,
+  Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,32 +31,91 @@ export default function CourseDetailModal({
   onClose,
 }: CourseDetailModalProps) {
   const insets = useSafeAreaInsets();
-  if (!courseDetail) return null;
+  const [internalVisible, setInternalVisible] = useState(visible);
+  const activeDetailRef = useRef(courseDetail);
+  if (courseDetail) {
+    activeDetailRef.current = courseDetail;
+  }
+  const detail = courseDetail || activeDetailRef.current;
+
+  const backdropAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+
+  useEffect(() => {
+    if (visible && courseDetail) {
+      setInternalVisible(true);
+      backdropAnim.setValue(0);
+      slideAnim.setValue(SCREEN_HEIGHT);
+      Animated.parallel([
+        Animated.timing(backdropAnim, {
+          toValue: 1,
+          duration: 240,
+          useNativeDriver: true,
+        }),
+        Animated.spring(slideAnim, {
+          toValue: 0,
+          damping: 28,
+          stiffness: 260,
+          mass: 0.8,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else if (!visible && internalVisible) {
+      handleDismiss();
+    }
+  }, [visible, !!courseDetail]);
+
+  const handleDismiss = () => {
+    Animated.parallel([
+      Animated.timing(backdropAnim, {
+        toValue: 0,
+        duration: 180,
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: SCREEN_HEIGHT,
+        duration: 220,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      setInternalVisible(false);
+      onClose();
+    });
+  };
+
+  if (!detail || !internalVisible) return null;
 
   const hasAnySyllabusDetails = Boolean(
-    courseDetail.prerequisites ||
-    courseDetail.otherPrerequisites ||
-    (courseDetail.learningObjectives && courseDetail.learningObjectives.length > 0) ||
-    courseDetail.content ||
-    (courseDetail.textBooks && courseDetail.textBooks.length > 0) ||
-    (courseDetail.referenceBooks && courseDetail.referenceBooks.length > 0) ||
-    courseDetail.remark
+    detail.prerequisites ||
+    detail.otherPrerequisites ||
+    (detail.learningObjectives && detail.learningObjectives.length > 0) ||
+    detail.content ||
+    (detail.textBooks && detail.textBooks.length > 0) ||
+    (detail.referenceBooks && detail.referenceBooks.length > 0) ||
+    detail.remark
   );
 
   return (
     <Modal
-      visible={visible}
-      animationType="fade"
+      visible={internalVisible}
+      animationType="none"
       transparent={true}
-      onRequestClose={onClose}
+      onRequestClose={handleDismiss}
       statusBarTranslucent={true}
     >
       <View style={styles.modalOverlay}>
-        {/* Backdrop touch to dismiss */}
-        <Pressable style={styles.backdropPressable} onPress={onClose} />
+        {/* Animated Backdrop: Fades In / Out smoothly on the spot */}
+        <Animated.View style={[styles.backdrop, { opacity: backdropAnim }]}>
+          <Pressable style={styles.backdropPressable} onPress={handleDismiss} />
+        </Animated.View>
 
-        {/* Modal Sheet Container */}
-        <View style={styles.modalContainer}>
+        {/* Animated Modal Sheet: Slides up from bottom */}
+        <Animated.View
+          style={[
+            styles.modalContainer,
+            { transform: [{ translateY: slideAnim }] },
+          ]}
+        >
           {/* Top Drag Handle */}
           <View style={styles.dragHandleWrapper}>
             <View style={styles.dragIndicator} />
@@ -66,25 +126,25 @@ export default function CourseDetailModal({
             <View style={styles.headerTitleContainer}>
               <View style={styles.badgeRow}>
                 <View style={styles.codeBadge}>
-                  <Text style={styles.codeBadgeText}>{courseDetail.courseCode}</Text>
+                  <Text style={styles.codeBadgeText}>{detail.courseCode}</Text>
                 </View>
                 <View style={styles.metaBadge}>
                   <Ionicons name="ribbon-outline" size={12} color={Theme.colors.primary} />
                   <Text style={styles.metaBadgeText}>
-                    {courseDetail.credits ? `${courseDetail.credits} Credits` : 'N/A Credits'}
+                    {detail.credits ? `${detail.credits} Credits` : 'N/A Credits'}
                   </Text>
                 </View>
                 <View style={styles.metaBadge}>
                   <TimetableIcon size={14} color={Theme.colors.lavender} />
                   <Text style={styles.metaBadgeText}>
-                    {courseDetail.slot && courseDetail.slot !== 'N/A' ? `Slot ${courseDetail.slot}` : 'Slot N/A'}
+                    {detail.slot && detail.slot !== 'N/A' ? `Slot ${detail.slot}` : 'Slot N/A'}
                   </Text>
                 </View>
               </View>
-              <Text style={styles.titleText}>{courseDetail.courseTitle}</Text>
+              <Text style={styles.titleText}>{detail.courseTitle}</Text>
             </View>
 
-            <TouchableOpacity style={styles.closeBtn} onPress={onClose} activeOpacity={0.7}>
+            <TouchableOpacity style={styles.closeBtn} onPress={handleDismiss} activeOpacity={0.7}>
               <Ionicons name="close" size={20} color={Theme.colors.textPrimary} />
             </TouchableOpacity>
           </View>
@@ -93,7 +153,7 @@ export default function CourseDetailModal({
           <ScrollView
             style={styles.scrollArea}
             contentContainerStyle={[
-              styles.scrollContent, 
+              styles.scrollContent,
               { paddingBottom: Math.max(32, insets.bottom + 24) }
             ]}
             showsVerticalScrollIndicator={true}
@@ -108,50 +168,50 @@ export default function CourseDetailModal({
 
               <View style={styles.staffRow}>
                 <Text style={styles.staffLabel}>Instructor(s):</Text>
-                <Text style={styles.staffValue}>{courseDetail.instructors || 'Not Assigned'}</Text>
+                <Text style={styles.staffValue}>{detail.instructors || 'Not Assigned'}</Text>
               </View>
 
-              {courseDetail.tutors ? (
+              {detail.tutors ? (
                 <View style={styles.staffRow}>
                   <Text style={styles.staffLabel}>Tutor(s):</Text>
-                  <Text style={styles.staffValue}>{courseDetail.tutors}</Text>
+                  <Text style={styles.staffValue}>{detail.tutors}</Text>
                 </View>
               ) : null}
 
-              {courseDetail.teachingAssistants ? (
+              {detail.teachingAssistants ? (
                 <View style={styles.staffRow}>
                   <Text style={styles.staffLabel}>Teaching Assistants:</Text>
-                  <Text style={styles.staffValue}>{courseDetail.teachingAssistants}</Text>
+                  <Text style={styles.staffValue}>{detail.teachingAssistants}</Text>
                 </View>
               ) : null}
             </View>
 
             {/* Prerequisites Section */}
-            {courseDetail.prerequisites || courseDetail.otherPrerequisites ? (
+            {detail.prerequisites || detail.otherPrerequisites ? (
               <View style={styles.sectionCard}>
                 <View style={styles.sectionHeader}>
                   <Ionicons name="git-branch-outline" size={18} color={Theme.colors.lavender} />
                   <Text style={styles.sectionTitle}>Prerequisites</Text>
                 </View>
-                {courseDetail.prerequisites ? (
-                  <Text style={styles.bodyText}>{courseDetail.prerequisites}</Text>
+                {detail.prerequisites ? (
+                  <Text style={styles.bodyText}>{detail.prerequisites}</Text>
                 ) : null}
-                {courseDetail.otherPrerequisites ? (
+                {detail.otherPrerequisites ? (
                   <Text style={[styles.bodyText, { marginTop: 6 }]}>
-                    {courseDetail.otherPrerequisites}
+                    {detail.otherPrerequisites}
                   </Text>
                 ) : null}
               </View>
             ) : null}
 
             {/* Learning Objectives Section */}
-            {courseDetail.learningObjectives && courseDetail.learningObjectives.length > 0 ? (
+            {detail.learningObjectives && detail.learningObjectives.length > 0 ? (
               <View style={styles.sectionCard}>
                 <View style={styles.sectionHeader}>
                   <Ionicons name="checkbox-outline" size={18} color={Theme.colors.mint} />
                   <Text style={styles.sectionTitle}>Learning Objectives</Text>
                 </View>
-                {courseDetail.learningObjectives.map((obj, idx) => (
+                {detail.learningObjectives.map((obj, idx) => (
                   <View key={`obj-${idx}`} style={styles.bulletItem}>
                     <View style={styles.bulletDot} />
                     <Text style={styles.bulletText}>{obj}</Text>
@@ -161,24 +221,24 @@ export default function CourseDetailModal({
             ) : null}
 
             {/* Syllabus / Course Content Section */}
-            {courseDetail.content ? (
+            {detail.content ? (
               <View style={styles.sectionCard}>
                 <View style={styles.sectionHeader}>
                   <Ionicons name="document-text-outline" size={18} color={Theme.colors.pink} />
                   <Text style={styles.sectionTitle}>Course Syllabus & Content</Text>
                 </View>
-                <Text style={styles.bodyText}>{courseDetail.content}</Text>
+                <Text style={styles.bodyText}>{detail.content}</Text>
               </View>
             ) : null}
 
             {/* Textbooks & References Section */}
-            {courseDetail.textBooks && courseDetail.textBooks.length > 0 ? (
+            {detail.textBooks && detail.textBooks.length > 0 ? (
               <View style={styles.sectionCard}>
                 <View style={styles.sectionHeader}>
                   <Ionicons name="library-outline" size={18} color={Theme.colors.lavender} />
                   <Text style={styles.sectionTitle}>Prescribed Textbooks</Text>
                 </View>
-                {courseDetail.textBooks.map((book, idx) => (
+                {detail.textBooks.map((book, idx) => (
                   <View key={`tb-${idx}`} style={styles.bookItem}>
                     <Ionicons name="book-outline" size={15} color={Theme.colors.primary} style={{ marginTop: 2, marginRight: 8 }} />
                     <Text style={styles.bookText}>{book}</Text>
@@ -187,13 +247,13 @@ export default function CourseDetailModal({
               </View>
             ) : null}
 
-            {courseDetail.referenceBooks && courseDetail.referenceBooks.length > 0 ? (
+            {detail.referenceBooks && detail.referenceBooks.length > 0 ? (
               <View style={styles.sectionCard}>
                 <View style={styles.sectionHeader}>
                   <Ionicons name="bookmarks-outline" size={18} color={Theme.colors.lavender} />
                   <Text style={styles.sectionTitle}>Reference Books</Text>
                 </View>
-                {courseDetail.referenceBooks.map((refBook, idx) => (
+                {detail.referenceBooks.map((refBook, idx) => (
                   <View key={`rb-${idx}`} style={styles.bookItem}>
                     <Ionicons name="bookmark-outline" size={15} color={Theme.colors.textSecondary} style={{ marginTop: 2, marginRight: 8 }} />
                     <Text style={styles.bookText}>{refBook}</Text>
@@ -203,13 +263,13 @@ export default function CourseDetailModal({
             ) : null}
 
             {/* Remarks (if present) */}
-            {courseDetail.remark ? (
+            {detail.remark ? (
               <View style={styles.sectionCard}>
                 <View style={styles.sectionHeader}>
                   <Ionicons name="information-circle-outline" size={18} color={Theme.colors.textSecondary} />
                   <Text style={styles.sectionTitle}>Remarks</Text>
                 </View>
-                <Text style={styles.bodyText}>{courseDetail.remark}</Text>
+                <Text style={styles.bodyText}>{detail.remark}</Text>
               </View>
             ) : null}
 
@@ -229,7 +289,7 @@ export default function CourseDetailModal({
               </View>
             )}
           </ScrollView>
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
@@ -238,8 +298,11 @@ export default function CourseDetailModal({
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.65)',
     justifyContent: 'flex-end',
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
   },
   backdropPressable: {
     flex: 1,
