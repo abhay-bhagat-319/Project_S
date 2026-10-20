@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { StyleSheet, Text, View, Image, ScrollView, TouchableOpacity, Modal, FlatList, Dimensions, Alert, RefreshControl } from 'react-native';
+import React, { useState, useRef } from 'react';
+import { StyleSheet, Text, View, Image, ScrollView, TouchableOpacity, Modal, FlatList, Dimensions, Alert, RefreshControl, Animated } from 'react-native';
 import Svg, { Line, Circle, Polyline, Text as SvgText, Rect, Path, Defs, LinearGradient as SvgLinearGradient, Stop, G } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -7,6 +7,8 @@ import { CalendarDots, Table, FileText, ClipboardText } from 'phosphor-react-nat
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { ProfileData } from '../services/CacheService';
+
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface DashboardScreenProps {
   profileData: ProfileData | null;
@@ -29,6 +31,9 @@ export default function DashboardScreen({
   const [modalVisible, setModalVisible] = useState(false);
   const [modalType, setModalType] = useState<'passed' | 'failed'>('passed');
 
+  const backdropAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+
   if (!profileData) {
     return (
       <View style={styles.loadingContainer}>
@@ -46,6 +51,39 @@ export default function DashboardScreen({
   const showModal = (type: 'passed' | 'failed') => {
     setModalType(type);
     setModalVisible(true);
+    backdropAnim.setValue(0);
+    slideAnim.setValue(SCREEN_HEIGHT);
+    Animated.parallel([
+      Animated.timing(backdropAnim, {
+        toValue: 1,
+        duration: 240,
+        useNativeDriver: true,
+      }),
+      Animated.spring(slideAnim, {
+        toValue: 0,
+        damping: 28,
+        stiffness: 260,
+        mass: 0.8,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+
+  const handleDismissModal = () => {
+    Animated.parallel([
+      Animated.timing(backdropAnim, {
+        toValue: 0,
+        duration: 180,
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: SCREEN_HEIGHT,
+        duration: 220,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      setModalVisible(false);
+    });
   };
 
   const avatarUri = photoBase64 || photoUrl;
@@ -406,24 +444,33 @@ export default function DashboardScreen({
       {/* Academic Courses Details Modal */}
       <Modal
         visible={modalVisible}
-        animationType="slide"
+        animationType="none"
         transparent={true}
-        onRequestClose={() => setModalVisible(false)}
+        onRequestClose={handleDismissModal}
         statusBarTranslucent={true}
       >
-        <View style={styles.modalBackdrop}>
-          <TouchableOpacity
-            style={styles.modalDismiss}
-            activeOpacity={1}
-            onPress={() => setModalVisible(false)}
-          />
-          <View style={styles.modalContent}>
+        <View style={styles.modalOverlay}>
+          {/* Animated Backdrop: Fades in on the spot */}
+          <Animated.View style={[styles.backdrop, { opacity: backdropAnim }]}>
+            <TouchableOpacity
+              style={styles.modalDismiss}
+              activeOpacity={1}
+              onPress={handleDismissModal}
+            />
+          </Animated.View>
+
+          <Animated.View
+            style={[
+              styles.modalContent,
+              { transform: [{ translateY: slideAnim }] }
+            ]}
+          >
             <View style={styles.sheetHandle} />
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
                 {modalType === 'passed' ? 'Passed Courses' : 'Failed Courses'}
               </Text>
-              <TouchableOpacity style={styles.closeBtn} onPress={() => setModalVisible(false)}>
+              <TouchableOpacity style={styles.closeBtn} onPress={handleDismissModal}>
                 <Ionicons name="close" size={24} color={Theme.colors.textPrimary} />
               </TouchableOpacity>
             </View>
@@ -446,7 +493,7 @@ export default function DashboardScreen({
               }
               contentContainerStyle={[styles.listContent, { paddingBottom: Math.max(24, insets.bottom + 16) }]}
             />
-          </View>
+          </Animated.View>
         </View>
       </Modal>
 
@@ -693,10 +740,13 @@ const styles = StyleSheet.create({
   svgWrapper: {
     alignItems: 'center',
   },
-  modalBackdrop: {
+  modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.65)',
     justifyContent: 'flex-end',
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
   },
   modalDismiss: {
     flex: 1,
