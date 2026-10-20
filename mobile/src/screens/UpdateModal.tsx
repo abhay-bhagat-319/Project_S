@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -9,6 +9,8 @@ import {
   ActivityIndicator,
   Linking,
   Alert,
+  Dimensions,
+  Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,6 +24,8 @@ interface UpdateModalProps {
   onSnooze?: (versionTag: string) => void;
 }
 
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+
 type DownloadStatus = 'IDLE' | 'DOWNLOADING' | 'READY_TO_INSTALL' | 'ERROR';
 type ActiveInfoKey = 'DOWNLOAD_NOW' | 'REMIND_LATER' | 'INSTALL_NOW' | null;
 
@@ -32,14 +36,19 @@ export default function UpdateModal({
   onSnooze,
 }: UpdateModalProps) {
   const insets = useSafeAreaInsets();
+  const [internalVisible, setInternalVisible] = useState(visible);
   const [status, setStatus] = useState<DownloadStatus>('IDLE');
   const [progress, setProgress] = useState<number>(0);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [isApkCached, setIsApkCached] = useState<boolean>(false);
   const [activeInfo, setActiveInfo] = useState<ActiveInfoKey>(null);
 
+  const backdropAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+
   useEffect(() => {
     if (visible && updateInfo) {
+      setInternalVisible(true);
       checkCacheStatus();
       setActiveInfo(null);
       setErrorMessage('');
@@ -50,8 +59,45 @@ export default function UpdateModal({
       } else {
         setStatus('IDLE');
       }
+
+      backdropAnim.setValue(0);
+      slideAnim.setValue(SCREEN_HEIGHT);
+      Animated.parallel([
+        Animated.timing(backdropAnim, {
+          toValue: 1,
+          duration: 240,
+          useNativeDriver: true,
+        }),
+        Animated.spring(slideAnim, {
+          toValue: 0,
+          damping: 28,
+          stiffness: 260,
+          mass: 0.8,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else if (!visible && internalVisible) {
+      handleDismiss();
     }
   }, [visible, updateInfo]);
+
+  const handleDismiss = () => {
+    Animated.parallel([
+      Animated.timing(backdropAnim, {
+        toValue: 0,
+        duration: 180,
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: SCREEN_HEIGHT,
+        duration: 220,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      setInternalVisible(false);
+      onClose();
+    });
+  };
 
   // Subscribe to live background download progress
   useEffect(() => {
@@ -84,12 +130,12 @@ export default function UpdateModal({
     }
   };
 
-  if (!updateInfo) return null;
+  if (!internalVisible || !updateInfo) return null;
 
   const handleDownloadOrInstall = async () => {
     if (!updateInfo.apkDownloadUrl && !isApkCached) {
       await Linking.openURL(updateInfo.htmlUrl);
-      onClose();
+      handleDismiss();
       return;
     }
 
@@ -97,7 +143,7 @@ export default function UpdateModal({
       // If already cached, launch the installer immediately
       if (isApkCached) {
         await UpdateService.installCachedApk(updateInfo.latestVersion);
-        onClose();
+        handleDismiss();
         return;
       }
 
@@ -134,12 +180,12 @@ export default function UpdateModal({
     if (onSnooze) {
       onSnooze(updateInfo.latestVersion);
     }
-    onClose();
+    handleDismiss();
   };
 
   const handleOpenBrowser = async () => {
     await Linking.openURL(updateInfo.htmlUrl);
-    onClose();
+    handleDismiss();
   };
 
   const toggleInfo = (key: ActiveInfoKey) => {
@@ -168,23 +214,29 @@ export default function UpdateModal({
 
   return (
     <Modal
-      visible={visible}
-      animationType="slide"
+      visible={internalVisible}
+      animationType="none"
       transparent={true}
-      onRequestClose={onClose}
+      onRequestClose={handleDismiss}
       statusBarTranslucent={true}
     >
       <View style={styles.modalOverlay}>
-        <TouchableOpacity
-          style={styles.modalDismiss}
-          activeOpacity={1}
-          onPress={onClose}
-        />
+        {/* Animated Backdrop: Fades in on the spot */}
+        <Animated.View style={[styles.backdrop, { opacity: backdropAnim }]}>
+          <TouchableOpacity
+            style={styles.modalDismiss}
+            activeOpacity={1}
+            onPress={handleDismiss}
+          />
+        </Animated.View>
 
-        <View
+        <Animated.View
           style={[
             styles.modalContainer,
-            { paddingBottom: Math.max(24, insets.bottom + 16) }
+            {
+              paddingBottom: Math.max(24, insets.bottom + 16),
+              transform: [{ translateY: slideAnim }],
+            }
           ]}
         >
           {/* Sheet Handle */}
@@ -225,7 +277,7 @@ export default function UpdateModal({
               </View>
             </View>
 
-            <TouchableOpacity style={styles.closeBtn} onPress={onClose} activeOpacity={0.7}>
+            <TouchableOpacity style={styles.closeBtn} onPress={handleDismiss} activeOpacity={0.7}>
               <Ionicons name="close" size={18} color={Theme.colors.textPrimary} />
             </TouchableOpacity>
           </View>
@@ -372,7 +424,7 @@ export default function UpdateModal({
               <Text style={styles.gitHubLinkText}>View Release on GitHub</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
@@ -381,8 +433,11 @@ export default function UpdateModal({
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.70)',
     justifyContent: 'flex-end',
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0, 0, 0, 0.70)',
   },
   modalDismiss: {
     flex: 1,
