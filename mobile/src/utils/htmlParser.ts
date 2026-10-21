@@ -5,13 +5,16 @@
 
 export const HtmlParser = {
   /**
-   * Strips HTML tags and decodes common HTML entities
+   * Strips HTML tags and decodes common HTML entities while preserving structural line breaks.
    */
   stripHtml(html: string | null | undefined): string {
     if (!html) return '';
     return html
+      .replace(/<li[^>]*>/gi, '\n• ')
+      .replace(/<\/li>/gi, '\n')
       .replace(/<br\s*[\/]?>/gi, '\n')
-      .replace(/<\/p>/gi, '\n\n')
+      .replace(/<\/(p|div|tr|h[1-6])>/gi, '\n\n')
+      .replace(/<(p|div|tr|h[1-6])[^>]*>/gi, '\n')
       .replace(/<[^>]+>/g, '')
       .replace(/&amp;nbsp;?/gi, ' ')
       .replace(/&nbsp;?/gi, ' ')
@@ -25,34 +28,41 @@ export const HtmlParser = {
       .replace(/&mdash;|&#8212;/gi, '—')
       .replace(/\r\n|\r/g, '\n')
       .replace(/[ \t]+/g, ' ')
-      .replace(/\n\s*\n/g, '\n\n')
+      .replace(/\n\s*\n\s*\n/g, '\n\n')
       .trim();
   },
 
   /**
-   * Extracts list items from <li>, <ol>, or <ul> tags into an array of clean strings.
-   * If no list tags exist, splits on newlines or returns a single item.
+   * Extracts list items from <li>, <ol>, <ul>, or numbered/bulleted/newline-separated text
+   * into an array of clean strings.
    */
-  parseListItems(html: string | null | undefined): string[] {
-    if (!html) return [];
-    
-    // Check if HTML contains <li> tags
-    const liMatches = html.match(/<li[^>]*>(.*?)<\/li>/gis);
-    if (liMatches && liMatches.length > 0) {
-      return liMatches
-        .map((item) => this.stripHtml(item))
-        .filter((item) => item.length > 0);
-    }
+  parseListItems(input: string | string[] | null | undefined): string[] {
+    if (!input) return [];
+    const raw = Array.isArray(input) ? input.join('\n') : String(input);
+    if (!raw.trim()) return [];
 
-    // Fallback: check if text has numbered items like "1. Item\n2. Item"
-    const cleaned = this.stripHtml(html);
+    // Decode HTML block tags into newlines first
+    const cleaned = this.stripHtml(raw);
     if (!cleaned) return [];
 
-    const lines = cleaned.split('\n').map((l) => l.trim()).filter(Boolean);
-    if (lines.length > 1) {
-      return lines.map((l) => l.replace(/^\d+[\.\)]\s*/, '').trim()).filter(Boolean);
+    // Split by newline first
+    let lines = cleaned
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    // If only 1 line, check if it contains inline numbered or bulleted points
+    if (lines.length === 1) {
+      const single = lines[0];
+      const numberedMatches = single
+        .split(/(?:^|\s+)(?=(?:\d+[\.\)]|\([a-z0-9]+\)|[•\-\*])\s+)/i)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (numberedMatches.length > 1) {
+        lines = numberedMatches;
+      }
     }
 
-    return [cleaned];
+    return lines;
   }
 };

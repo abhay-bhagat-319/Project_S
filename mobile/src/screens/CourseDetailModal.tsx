@@ -49,10 +49,11 @@ export default function CourseDetailModal({
       prerequisites: HtmlParser.stripHtml(rawDetail.prerequisites),
       otherPrerequisites: HtmlParser.stripHtml(rawDetail.otherPrerequisites),
       content: HtmlParser.stripHtml(rawDetail.content),
+      contentPoints: HtmlParser.parseListItems(rawDetail.content),
       remark: HtmlParser.stripHtml(rawDetail.remark),
-      learningObjectives: (rawDetail.learningObjectives || []).map((o) => HtmlParser.stripHtml(o)).filter(Boolean),
-      textBooks: (rawDetail.textBooks || []).map((b) => HtmlParser.stripHtml(b)).filter(Boolean),
-      referenceBooks: (rawDetail.referenceBooks || []).map((b) => HtmlParser.stripHtml(b)).filter(Boolean),
+      learningObjectives: HtmlParser.parseListItems(rawDetail.learningObjectives),
+      textBooks: HtmlParser.parseListItems(rawDetail.textBooks),
+      referenceBooks: HtmlParser.parseListItems(rawDetail.referenceBooks),
     };
   }, [rawDetail]);
 
@@ -107,6 +108,7 @@ export default function CourseDetailModal({
     detail.prerequisites ||
     detail.otherPrerequisites ||
     (detail.learningObjectives && detail.learningObjectives.length > 0) ||
+    (detail.contentPoints && detail.contentPoints.length > 0) ||
     detail.content ||
     (detail.textBooks && detail.textBooks.length > 0) ||
     (detail.referenceBooks && detail.referenceBooks.length > 0) ||
@@ -232,20 +234,29 @@ export default function CourseDetailModal({
                 {detail.learningObjectives.map((obj, idx) => (
                   <View key={`obj-${idx}`} style={styles.bulletItem}>
                     <View style={styles.bulletDot} />
-                    <Text style={styles.bulletText}>{obj}</Text>
+                    <Text style={styles.bulletText}>{obj.replace(/^[•\-\*]\s*/, '')}</Text>
                   </View>
                 ))}
               </View>
             ) : null}
 
             {/* Syllabus / Course Content Section */}
-            {detail.content ? (
+            {detail.contentPoints && detail.contentPoints.length > 0 ? (
               <View style={styles.sectionCard}>
                 <View style={styles.sectionHeader}>
                   <Ionicons name="document-text-outline" size={18} color={Theme.colors.pink} />
                   <Text style={styles.sectionTitle}>Course Syllabus & Content</Text>
                 </View>
-                <Text style={styles.bodyText}>{detail.content}</Text>
+                {detail.contentPoints.length === 1 && !detail.contentPoints[0].startsWith('•') && !/^\d+[\.\)]/.test(detail.contentPoints[0]) ? (
+                  <Text style={styles.bodyText}>{detail.contentPoints[0]}</Text>
+                ) : (
+                  detail.contentPoints.map((point, idx) => (
+                    <View key={`content-${idx}`} style={styles.bulletItem}>
+                      <View style={[styles.bulletDot, { backgroundColor: Theme.colors.pink }]} />
+                      <Text style={styles.bulletText}>{point.replace(/^[•\-\*]\s*/, '')}</Text>
+                    </View>
+                  ))
+                )}
               </View>
             ) : null}
 
