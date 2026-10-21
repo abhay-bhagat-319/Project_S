@@ -10,6 +10,7 @@ import {
   Course,
   CourseDetail,
 } from './CacheService';
+import { HtmlParser } from '../utils/htmlParser';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
@@ -1195,16 +1196,12 @@ export class HttpPortalClient {
         const d = resData.moreDetails;
         const cleanText = (t: any): string => {
           if (!t) return '';
-          return String(t).replace(/<[^>]*>/g, '').trim();
+          return HtmlParser.stripHtml(String(t));
         };
 
         const parseList = (html: any): string[] => {
           if (!html) return [];
-          const str = String(html);
-          const liMatches = Array.from(str.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)).map((m) => cleanText(m[1]));
-          if (liMatches.length > 0) return liMatches.filter(Boolean);
-          const cleaned = cleanText(str);
-          return cleaned ? [cleaned] : [];
+          return HtmlParser.parseListItems(String(html));
         };
 
         const rawCredits = d['Credits'] ?? d['credits'] ?? d['Credit'] ?? d['credit'];

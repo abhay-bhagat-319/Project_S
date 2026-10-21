@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import {
   StyleSheet,
   Text,
@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { CourseDetail } from '../services/CacheService';
 import { TimetableIcon } from '../components/icons/TimetableIcon';
+import { HtmlParser } from '../utils/htmlParser';
 
 interface CourseDetailModalProps {
   visible: boolean;
@@ -36,7 +37,24 @@ export default function CourseDetailModal({
   if (courseDetail) {
     activeDetailRef.current = courseDetail;
   }
-  const detail = courseDetail || activeDetailRef.current;
+  const rawDetail = courseDetail || activeDetailRef.current;
+  const detail = useMemo(() => {
+    if (!rawDetail) return null;
+    return {
+      ...rawDetail,
+      courseTitle: HtmlParser.stripHtml(rawDetail.courseTitle),
+      instructors: HtmlParser.stripHtml(rawDetail.instructors),
+      tutors: HtmlParser.stripHtml(rawDetail.tutors),
+      teachingAssistants: HtmlParser.stripHtml(rawDetail.teachingAssistants),
+      prerequisites: HtmlParser.stripHtml(rawDetail.prerequisites),
+      otherPrerequisites: HtmlParser.stripHtml(rawDetail.otherPrerequisites),
+      content: HtmlParser.stripHtml(rawDetail.content),
+      remark: HtmlParser.stripHtml(rawDetail.remark),
+      learningObjectives: (rawDetail.learningObjectives || []).map((o) => HtmlParser.stripHtml(o)).filter(Boolean),
+      textBooks: (rawDetail.textBooks || []).map((b) => HtmlParser.stripHtml(b)).filter(Boolean),
+      referenceBooks: (rawDetail.referenceBooks || []).map((b) => HtmlParser.stripHtml(b)).filter(Boolean),
+    };
+  }, [rawDetail]);
 
   const backdropAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
