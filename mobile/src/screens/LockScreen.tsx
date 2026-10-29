@@ -5,14 +5,17 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../Theme';
 import { MortarboardLogo } from '../components/MortarboardLogo';
+import { SecureStorageService } from '../services/SecureStorageService';
+import { CacheService } from '../services/CacheService';
+import { SessionLifecycleManager } from '../services/SessionLifecycleManager';
 
 interface LockScreenProps {
   onUnlock: () => void;
+  onResetToLogin?: () => void;
 }
 
-export default function LockScreen({ onUnlock }: LockScreenProps) {
+export default function LockScreen({ onUnlock, onResetToLogin }: LockScreenProps) {
   const insets = useSafeAreaInsets();
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [hasBiometrics, setHasBiometrics] = useState(false);
 
   useEffect(() => {
@@ -22,9 +25,10 @@ export default function LockScreen({ onUnlock }: LockScreenProps) {
   const checkDeviceSupport = async () => {
     const hasHardware = await LocalAuthentication.hasHardwareAsync();
     const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-    setHasBiometrics(hasHardware && isEnrolled);
-    
-    if (hasHardware && isEnrolled) {
+    const supported = hasHardware && isEnrolled;
+    setHasBiometrics(supported);
+
+    if (supported) {
       triggerBiometricAuth();
     }
   };
@@ -33,32 +37,46 @@ export default function LockScreen({ onUnlock }: LockScreenProps) {
     try {
       const result = await LocalAuthentication.authenticateAsync({
         promptMessage: 'Unlock Student Portal',
-        cancelLabel: 'Use Passcode',
+        cancelLabel: 'Cancel',
         disableDeviceFallback: false,
       });
 
       if (result.success) {
-        setIsAuthenticated(true);
         onUnlock();
       } else {
-        // Auth failed or canceled
         if (result.error !== 'user_cancel' && result.error !== 'app_cancel') {
-          Alert.alert('Authentication Failed', 'Unable to verify biometric data.');
+          Alert.alert('Authentication Failed', 'Unable to verify biometric or device credential.');
         }
       }
     } catch (error) {
-      console.log('Biometric error:', error);
+      if (__DEV__) {
+        console.log('Biometric error:', error);
+      }
+    }
+  };
+
+  /**
+   * Never allow bypassing the lock screen without authentication if OS biometrics are removed.
+   * Instead, wipe stored credentials/cache and require fresh LDAP password authentication.
+   */
+  const handleRequirePasswordRelogin = async () => {
+    await SecureStorageService.setBiometricsEnabled(false);
+    await SecureStorageService.clearCredentials();
+    await CacheService.clearCache();
+    SessionLifecycleManager.purgeSession().catch(() => {});
+    if (onResetToLogin) {
+      onResetToLogin();
     }
   };
 
   return (
-    <View 
+    <View
       style={[
-        styles.container, 
-        { 
+        styles.container,
+        {
           paddingTop: Math.max(40, insets.top + 30),
-          paddingBottom: Math.max(40, insets.bottom + 30) 
-        }
+          paddingBottom: Math.max(40, insets.bottom + 30),
+        },
       ]}
     >
       <View style={styles.logoContainer}>
@@ -76,8 +94,8 @@ export default function LockScreen({ onUnlock }: LockScreenProps) {
             <Text style={styles.btnText}>Authenticate with Biometrics</Text>
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity style={styles.fallbackBtn} onPress={onUnlock}>
-            <Text style={styles.fallbackText}>Skip Lock (No Biometrics Enrolled)</Text>
+          <TouchableOpacity style={styles.fallbackBtn} onPress={handleRequirePasswordRelogin}>
+            <Text style={styles.fallbackText}>Biometrics Unavailable — Sign In with Password</Text>
           </TouchableOpacity>
         )}
       </View>

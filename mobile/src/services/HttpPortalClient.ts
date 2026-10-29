@@ -207,7 +207,7 @@ export class HttpPortalClient {
         const match = setCookie.match(/(?:connect\.sid|PHPSESSID|ci_session)=([^;]+)/i);
         if (match && match[0]) {
           this.activeSessionCookie = match[0];
-          console.log('[HttpPortalClient] Captured session cookie from Set-Cookie:', this.activeSessionCookie);
+          if (__DEV__) { console.log('[HttpPortalClient] Captured session cookie from Set-Cookie'); }
         }
       }
     } catch {
@@ -496,9 +496,9 @@ export class HttpPortalClient {
       const responseUrlLower = response.url.toLowerCase();
       const rawTextLower = response.rawText.toLowerCase();
       const htmlSnippet = response.rawText.substring(0, 500);
-      console.log(`[HttpPortalClient] Login response → status=${response.status}, url=${response.url}`);
-      console.log(`[HttpPortalClient] Login response HTML (first 500 chars): ${htmlSnippet}`);
-      console.log(`[HttpPortalClient] Active cookie after login: ${this.activeSessionCookie}`);
+      if (__DEV__) {
+        console.log(`[HttpPortalClient] Login response → status=${response.status}, url=${response.url}`);
+      }
 
       // 1. Check for explicit FAILURE indicators first (these are definitive)
       const hasExplicitError =
@@ -565,7 +565,7 @@ export class HttpPortalClient {
             confirmUrlLower.includes('/secure') ||
             confirmResponse.rawText.includes('/secure/studenthome')
           ) {
-            console.log('[HttpPortalClient] Session confirmed! Cookie:', this.activeSessionCookie);
+            if (__DEV__) { console.log('[HttpPortalClient] Session confirmed!'); }
             return {
               success: true,
               sessionCookie: this.activeSessionCookie || undefined,
@@ -573,7 +573,7 @@ export class HttpPortalClient {
           } else {
             // Session confirmation failed — server didn't actually create a session
             console.warn('[HttpPortalClient] Session confirmation failed. Confirm URL:', confirmResponse.url);
-            console.warn('[HttpPortalClient] Confirm HTML snippet:', confirmResponse.rawText.substring(0, 300));
+            
             return {
               success: false,
               code: 'AUTH_FAILED',
@@ -581,18 +581,20 @@ export class HttpPortalClient {
             };
           }
         } catch (confirmErr: any) {
-          console.warn('[HttpPortalClient] Session confirmation request failed:', confirmErr.message);
-          // Even if confirmation fails, the auth itself succeeded
+          if (__DEV__) {
+            console.warn('[HttpPortalClient] Session confirmation request failed:', confirmErr.message);
+          }
           return {
-            success: true,
-            sessionCookie: this.activeSessionCookie || undefined,
+            success: false,
+            code: 'NETWORK_ERROR',
+            message: 'Unable to verify session with Shiksha portal. Please check your connection and try again.',
           };
         }
       }
 
       // 4. If we reached here, the login page was re-rendered with no success/error indicators
       console.warn('[HttpPortalClient] Login AMBIGUOUS: no success or error indicators detected.');
-      console.warn('[HttpPortalClient] Full response body for debugging:', response.rawText.substring(0, 2000));
+      
 
       return {
         success: false,

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { StyleSheet, Text, View, Switch, TextInput, TouchableOpacity, ActivityIndicator, Alert, ScrollView, Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as LocalAuthentication from 'expo-local-authentication';
 import { Theme } from '../Theme';
 import { SecureStorageService } from '../services/SecureStorageService';
 import { CacheService } from '../services/CacheService';
@@ -65,6 +66,17 @@ export default function SettingsScreen({
   };
 
   const handleToggleBiometrics = async (val: boolean) => {
+    if (val) {
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+      if (!hasHardware || !isEnrolled) {
+        Alert.alert(
+          'Biometrics Unavailable',
+          'Please enroll a fingerprint or face lock in your device settings before enabling Biometric Lock.'
+        );
+        return;
+      }
+    }
     setBiometricsEnabled(val);
     await SecureStorageService.setBiometricsEnabled(val);
     Alert.alert('Biometrics Updated', `Biometric unlock has been ${val ? 'enabled' : 'disabled'}.`);

@@ -3,6 +3,7 @@ import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, Alert, Sta
 import { Ionicons } from '@expo/vector-icons';
 
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as LocalAuthentication from 'expo-local-authentication';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 import { BlurView, BlurTargetView } from 'expo-blur';
 
@@ -109,21 +110,7 @@ function AppContent() {
   const portalWebviewRef = useRef<PortalWebviewHandle>(null);
   const lastBackPressRef = useRef<number>(0);
 
-  // Register Root PDF Downloader bridge with Portal WebView
-  useEffect(() => {
-    const unregisterPdf = ReportsService.registerPdfDownloader((fileUrl, reportId) => {
-      const pendingPromise = ReportsService.createPendingPdfDownload(reportId);
-      const script = ScraperService.getPdfDownloadScript(fileUrl, reportId);
-      if (portalWebviewRef.current?.injectJavaScript) {
-        portalWebviewRef.current.injectJavaScript(script);
-      }
-      return pendingPromise;
-    });
 
-    return () => {
-      unregisterPdf();
-    };
-  }, []);
 
   // Android Hardware Back Button Navigation Handler
   useEffect(() => {
@@ -443,7 +430,13 @@ function AppContent() {
     const creds = await SecureStorageService.getCredentials();
     setCredentials(creds);
 
-    // Automatically prompt to enable biometrics
+    const hasHardware = await LocalAuthentication.hasHardwareAsync();
+    const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+    if (!hasHardware || !isEnrolled) {
+      completeLogin();
+      return;
+    }
+
     Alert.alert(
       'Biometric Login',
       'Would you like to enable fingerprint/face authentication for faster secure unlock?',
@@ -529,7 +522,7 @@ function AppContent() {
           <Text style={styles.initializingText}>Loading Shiksha Wrapper...</Text>
         </View>
       ) : appState === 'LOCKED' ? (
-        <LockScreen onUnlock={handleUnlockSuccess} />
+        <LockScreen onUnlock={handleUnlockSuccess} onResetToLogin={handleLogoutSuccess} />
       ) : appState === 'NEEDS_LOGIN' ? (
         <LoginScreen onSuccess={handleLoginSuccess} />
       ) : (

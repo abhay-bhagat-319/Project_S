@@ -3,10 +3,10 @@ const fs = require('fs');
 const path = require('path');
 
 const withIiserbSsl = (config) => {
-  // 1. Configure AndroidManifest.xml
+  // 1. Configure AndroidManifest.xml (enforce HTTPS; scope custom trust via network_security_config)
   config = withAndroidManifest(config, (config) => {
     const mainApplication = config.modResults.manifest.application[0];
-    mainApplication.$['android:usesCleartextTraffic'] = 'true';
+    mainApplication.$['android:usesCleartextTraffic'] = 'false';
     mainApplication.$['android:networkSecurityConfig'] = '@xml/network_security_config';
     return config;
   });
@@ -14,8 +14,7 @@ const withIiserbSsl = (config) => {
   // 2. Modify MainApplication.kt
   config = withMainApplication(config, (config) => {
     let contents = config.modResults.contents;
-    
-    // Add import if not present
+
     if (!contents.includes('import com.facebook.react.modules.network.OkHttpClientProvider')) {
       contents = contents.replace(
         'import expo.modules.ApplicationLifecycleDispatcher',
@@ -23,11 +22,10 @@ const withIiserbSsl = (config) => {
       );
     }
 
-    // Add OkHttpClientProvider.setOkHttpClientFactory if not present
     if (!contents.includes('OkHttpClientProvider.setOkHttpClientFactory')) {
       contents = contents.replace(
         'super.onCreate()',
-        'super.onCreate()\n    // Configure domain-scoped SSL trust for IISERB intranet hosts\n    OkHttpClientProvider.setOkHttpClientFactory(IiserbOkHttpClientFactory())'
+        'super.onCreate()\n    // Configure strictly domain-scoped TLS validation for IISERB hosts\n    OkHttpClientProvider.setOkHttpClientFactory(IiserbOkHttpClientFactory())'
       );
     }
 
@@ -42,32 +40,36 @@ const withIiserbSsl = (config) => {
       const projectRoot = config.modRequest.projectRoot;
       const androidAppDir = path.join(projectRoot, 'android', 'app', 'src', 'main');
 
-      // Ensure res/xml directory exists
       const resXmlDir = path.join(androidAppDir, 'res', 'xml');
       if (!fs.existsSync(resXmlDir)) {
         fs.mkdirSync(resXmlDir, { recursive: true });
       }
 
+      // Disallow cleartext traffic and untrusted user CAs in production builds;
+      // allow user CAs only inside <debug-overrides> for local development.
       const networkSecurityConfigContent = `<?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <base-config cleartextTrafficPermitted="true">
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
-            <certificates src="user" />
         </trust-anchors>
     </base-config>
-    <domain-config cleartextTrafficPermitted="true">
+    <domain-config cleartextTrafficPermitted="false">
         <domain includeSubdomains="true">iiserb.ac.in</domain>
         <trust-anchors>
             <certificates src="system" />
-            <certificates src="user" />
         </trust-anchors>
     </domain-config>
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
 </network-security-config>
 `;
       fs.writeFileSync(path.join(resXmlDir, 'network_security_config.xml'), networkSecurityConfigContent);
 
-      // Package directory
       const packageDir = path.join(androidAppDir, 'java', 'com', 'iiserb', 'project_s');
       if (!fs.existsSync(packageDir)) {
         fs.mkdirSync(packageDir, { recursive: true });
@@ -80,9 +82,11 @@ import com.facebook.react.modules.network.OkHttpClientProvider
 import okhttp3.OkHttpClient
 import java.net.Socket
 import java.security.KeyStore
+import java.security.MessageDigest
 import java.security.SecureRandom
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
+import android.util.Base64
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLEngine
@@ -95,46 +99,92 @@ import javax.net.ssl.X509TrustManager
 /**
  * Custom OkHttpClientFactory for React Native Android networking.
  *
- * Configures domain-scoped SSL trust for IISER Bhopal institutional intranet hosts (*.iiserb.ac.in).
- * Standard CA validation is strictly maintained for all external internet hosts (e.g. GitHub APK downloads).
+ * Strictly scopes institutional certificate fallback to verified *.iiserb.ac.in connections
+ * and enforces standard system CA validation for all external hosts (such as GitHub API/Releases).
  */
 class IiserbOkHttpClientFactory : OkHttpClientFactory {
 
+  companion object {
+    // Optional SHA-256 SPKI pins (base64) for shiksha.iiserb.ac.in / acad.iiserb.ac.in leaf or intermediate CA.
+    // Populate with your institutional CA's exact SPKI SHA-256 pin(s) if the intranet CA is not in the Android system store.
+    private val ALLOWED_IISERB_SPKI_PINS = setOf<String>()
+  }
+
   override fun createNewNetworkModuleClient(): OkHttpClient {
     val builder = OkHttpClientProvider.createClientBuilder()
-
     val defaultTrustManager = getDefaultTrustManager()
+    val defaultExtendedTrustManager = defaultTrustManager as? X509ExtendedTrustManager
 
     val iiserbTrustManager = object : X509ExtendedTrustManager() {
       override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {
         defaultTrustManager?.checkClientTrusted(chain, authType)
+          ?: throw CertificateException("No default TrustManager available")
       }
 
       override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?, socket: Socket?) {
-        defaultTrustManager?.checkClientTrusted(chain, authType)
+        if (defaultExtendedTrustManager != null) {
+          defaultExtendedTrustManager.checkClientTrusted(chain, authType, socket)
+        } else {
+          defaultTrustManager?.checkClientTrusted(chain, authType)
+            ?: throw CertificateException("No default TrustManager available")
+        }
       }
 
       override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?, engine: SSLEngine?) {
-        defaultTrustManager?.checkClientTrusted(chain, authType)
+        if (defaultExtendedTrustManager != null) {
+          defaultExtendedTrustManager.checkClientTrusted(chain, authType, engine)
+        } else {
+          defaultTrustManager?.checkClientTrusted(chain, authType)
+            ?: throw CertificateException("No default TrustManager available")
+        }
       }
 
       override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
-        verifyServerCertificate(chain, authType)
+        // Without a peer hostname context, strictly require system CA validation
+        defaultTrustManager?.checkServerTrusted(chain, authType)
+          ?: throw CertificateException("No default TrustManager available")
       }
 
       override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?, socket: Socket?) {
-        verifyServerCertificate(chain, authType)
+        val peerHost = (socket as? SSLSocket)?.handshakeSession?.peerHost
+        verifyServerCertificate(chain, authType, peerHost, socket, null)
       }
 
       override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?, engine: SSLEngine?) {
-        verifyServerCertificate(chain, authType)
+        val peerHost = engine?.peerHost
+        verifyServerCertificate(chain, authType, peerHost, null, engine)
       }
 
-      private fun verifyServerCertificate(chain: Array<out X509Certificate>?, authType: String?) {
+      private fun verifyServerCertificate(
+        chain: Array<out X509Certificate>?,
+        authType: String?,
+        peerHost: String?,
+        socket: Socket?,
+        engine: SSLEngine?
+      ) {
+        if (chain.isNullOrEmpty()) {
+          throw CertificateException("Certificate chain is empty")
+        }
+
         try {
-          defaultTrustManager?.checkServerTrusted(chain, authType)
+          if (defaultExtendedTrustManager != null) {
+            if (socket != null) {
+              defaultExtendedTrustManager.checkServerTrusted(chain, authType, socket)
+            } else if (engine != null) {
+              defaultExtendedTrustManager.checkServerTrusted(chain, authType, engine)
+            } else {
+              defaultExtendedTrustManager.checkServerTrusted(chain, authType)
+            }
+          } else {
+            defaultTrustManager?.checkServerTrusted(chain, authType)
+              ?: throw CertificateException("No default TrustManager available")
+          }
         } catch (e: CertificateException) {
-          if (!isAcceptableInstitutionalCert(chain)) {
+          // NEVER allow fallback trust for non-iiserb.ac.in hosts (e.g., api.github.com)
+          if (peerHost == null || !isTrustedIiserbHost(peerHost)) {
+            throw e
+          }
+          if (!isValidPinnedInstitutionalCert(chain, peerHost)) {
             throw e
           }
         }
@@ -143,22 +193,63 @@ class IiserbOkHttpClientFactory : OkHttpClientFactory {
       override fun getAcceptedIssuers(): Array<X509Certificate> =
         defaultTrustManager?.acceptedIssuers ?: arrayOf()
 
-      private fun isTrustedHost(host: String): Boolean {
-        return host.endsWith("iiserb.ac.in") || host == "localhost" || host == "127.0.0.1"
+      private fun isTrustedIiserbHost(host: String): Boolean {
+        val lower = host.lowercase().trim()
+        return lower == "iiserb.ac.in" || lower.endsWith(".iiserb.ac.in")
       }
 
-      private fun isAcceptableInstitutionalCert(chain: Array<out X509Certificate>?): Boolean {
-        return chain?.any { cert ->
-          val subject = cert.subjectX500Principal?.name?.lowercase() ?: ""
-          val issuer = cert.issuerX500Principal?.name?.lowercase() ?: ""
-          subject.contains("iiserb") || issuer.contains("iiserb") ||
-          subject.contains("iiser") || issuer.contains("iiser") ||
-          subject.contains("shiksha") || issuer.contains("shiksha") ||
-          subject.contains("bhopal") || issuer.contains("bhopal") ||
-          subject.contains("fortinet") || issuer.contains("fortinet") ||
-          subject.contains("fortigate") || issuer.contains("fortigate") ||
-          subject.contains("sectigo") || issuer.contains("sectigo")
-        } ?: false
+      private fun isValidPinnedInstitutionalCert(chain: Array<out X509Certificate>, peerHost: String): Boolean {
+        val leaf = chain[0]
+        // 1. Every certificate in the chain must be within its validity window
+        for (cert in chain) {
+          cert.checkValidity()
+        }
+
+        // 2. Leaf certificate SAN / CN must match the requested *.iiserb.ac.in hostname
+        if (!certificateMatchesHost(leaf, peerHost)) {
+          return false
+        }
+
+        // 3. If SPKI pins are configured, require a cryptographic SPKI match in the chain
+        if (ALLOWED_IISERB_SPKI_PINS.isNotEmpty()) {
+          val hasPinnedKey = chain.any { cert ->
+            val spkiHash = sha256Base64(cert.publicKey.encoded)
+            ALLOWED_IISERB_SPKI_PINS.contains(spkiHash)
+          }
+          return hasPinnedKey
+        }
+
+        return false
+      }
+
+      private fun certificateMatchesHost(cert: X509Certificate, host: String): Boolean {
+        val lowerHost = host.lowercase().trim()
+        val sans = cert.subjectAlternativeNames
+        if (sans != null) {
+          for (san in sans) {
+            if (san.size >= 2 && san[0] == 2) { // dNSName = 2
+              val pattern = (san[1] as? String)?.lowercase()?.trim() ?: continue
+              if (matchesDnsPattern(lowerHost, pattern)) {
+                return true
+              }
+            }
+          }
+        }
+        return false
+      }
+
+      private fun matchesDnsPattern(host: String, pattern: String): Boolean {
+        if (host == pattern) return true
+        if (pattern.startsWith("*.")) {
+          val suffix = pattern.substring(1) // ".iiserb.ac.in"
+          return host.endsWith(suffix) && host.length > suffix.length
+        }
+        return false
+      }
+
+      private fun sha256Base64(bytes: ByteArray): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+        return Base64.encodeToString(digest, Base64.NO_WRAP)
       }
     }
 
@@ -170,12 +261,7 @@ class IiserbOkHttpClientFactory : OkHttpClientFactory {
 
     val defaultVerifier = HttpsURLConnection.getDefaultHostnameVerifier()
     builder.hostnameVerifier { hostname, session ->
-      val lower = hostname.lowercase()
-      if (lower.endsWith("iiserb.ac.in") || lower == "localhost" || lower == "127.0.0.1") {
-        true
-      } else {
-        defaultVerifier.verify(hostname, session)
-      }
+      defaultVerifier.verify(hostname, session)
     }
 
     return builder.build()
