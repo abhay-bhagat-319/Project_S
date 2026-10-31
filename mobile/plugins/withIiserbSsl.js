@@ -176,7 +176,10 @@ class IiserbOkHttpClientFactory : OkHttpClientFactory {
           defaultTrustManager?.checkServerTrusted(chain, authType)
         } catch (e: CertificateException) {
           // Only apply institutional fallback for *.iiserb.ac.in hosts
-          val isInstitutional = peerHost != null && isIiserbHost(peerHost)
+          // If peerHost is known, it must belong to IISERB domain.
+          // If peerHost is null (OkHttp 2-arg checkServerTrusted), allow institutional fallback
+          // because the subsequent HostnameVerifier acts as the domain gate.
+          val isInstitutional = (peerHost == null || isIiserbHost(peerHost))
           if (isInstitutional && isAcceptableInstitutionalCert(chain)) {
             // Certificate accepted for institutional host
             return

@@ -1,4 +1,4 @@
-﻿import { Platform, Linking } from 'react-native';
+import { Platform, Linking } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { CacheService, ReportItem } from './CacheService';
@@ -387,6 +387,28 @@ export class ReportsService {
       }
     } catch (e) {
       console.warn('Error clearing report files:', e);
+    }
+  }
+  /**
+   * Computes the total byte size of all downloaded report PDFs on disk
+   */
+  public static async getTotalReportsStorageBytes(): Promise<number> {
+    try {
+      const dir = this.getReportsDirectory();
+      const dirInfo = await FileSystem.getInfoAsync(dir);
+      if (!dirInfo.exists) return 0;
+
+      const files = await FileSystem.readDirectoryAsync(dir);
+      let total = 0;
+      for (const file of files) {
+        const fileInfo = await FileSystem.getInfoAsync(`${dir}${file}`);
+        if (fileInfo.exists && !fileInfo.isDirectory && fileInfo.size) {
+          total += fileInfo.size;
+        }
+      }
+      return total;
+    } catch {
+      return 0;
     }
   }
 }

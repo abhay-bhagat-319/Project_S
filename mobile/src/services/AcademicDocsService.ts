@@ -1,4 +1,4 @@
-﻿import { Platform, Linking } from 'react-native';
+import { Platform, Linking } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -388,6 +388,43 @@ export class AcademicDocsService {
           : doc.url;
         await Linking.openURL(openUrl);
       }
+    }
+  }
+  /**
+   * Clears all downloaded academic document files from disk
+   */
+  public static async clearAllDocsFiles(): Promise<void> {
+    try {
+      const dir = this.getDocsDirectory();
+      const dirInfo = await FileSystem.getInfoAsync(dir);
+      if (dirInfo.exists) {
+        await FileSystem.deleteAsync(dir, { idempotent: true });
+      }
+    } catch (e) {
+      console.warn('[AcademicDocsService] Error clearing document files:', e);
+    }
+  }
+
+  /**
+   * Computes the total byte size of all downloaded academic documents on disk
+   */
+  public static async getTotalDocsStorageBytes(): Promise<number> {
+    try {
+      const dir = this.getDocsDirectory();
+      const dirInfo = await FileSystem.getInfoAsync(dir);
+      if (!dirInfo.exists) return 0;
+
+      const files = await FileSystem.readDirectoryAsync(dir);
+      let total = 0;
+      for (const file of files) {
+        const fileInfo = await FileSystem.getInfoAsync(`${dir}${file}`);
+        if (fileInfo.exists && !fileInfo.isDirectory && fileInfo.size) {
+          total += fileInfo.size;
+        }
+      }
+      return total;
+    } catch {
+      return 0;
     }
   }
 }

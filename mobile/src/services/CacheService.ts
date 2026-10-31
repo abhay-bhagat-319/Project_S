@@ -227,16 +227,30 @@ export const CacheService = {
    */
   async getCacheStats(): Promise<CacheStats> {
     try {
-      const keys = [KEY_PROFILE_DATA, KEY_ATTENDANCE_DATA, KEY_COURSE_DETAILS, KEY_REPORTS_DATA, KEY_LAST_SYNC_TIME];
+      const allKeys = await AsyncStorage.getAllKeys();
       let memoryBytes = 0;
-      for (const k of keys) {
-        const item = await AsyncStorage.getItem(k);
-        if (item) {
-          memoryBytes += item.length * 2;
+      for (const k of allKeys) {
+        if (k.startsWith('shiksha_') || k.startsWith('project_s_')) {
+          const item = await AsyncStorage.getItem(k);
+          if (item) {
+            memoryBytes += item.length * 2;
+          }
         }
       }
 
-      const diskBytes = await UpdateService.getTotalUpdateStorageBytes();
+      let diskBytes = 0;
+      try {
+        diskBytes += await UpdateService.getTotalUpdateStorageBytes();
+      } catch {}
+      try {
+        const { ReportsService } = require('./ReportsService');
+        diskBytes += await ReportsService.getTotalReportsStorageBytes();
+      } catch {}
+      try {
+        const { AcademicDocsService } = require('./AcademicDocsService');
+        diskBytes += await AcademicDocsService.getTotalDocsStorageBytes();
+      } catch {}
+
       const totalBytes = memoryBytes + diskBytes;
 
       let formatted = '0 KB';
@@ -301,6 +315,10 @@ export const CacheService = {
     try {
       const { ReportsService } = require('./ReportsService');
       await ReportsService.clearAllReportFiles();
+    } catch { }
+    try {
+      const { AcademicDocsService } = require('./AcademicDocsService');
+      await AcademicDocsService.clearAllDocsFiles();
     } catch { }
   },
 };
