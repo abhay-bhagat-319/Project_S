@@ -18,6 +18,7 @@ export interface UpdateInfo {
   htmlUrl: string;
   apkSizeFormatted?: string;
   apkSizeBytes?: number;
+  apkSha256?: string;
   apkArchitecture?: 'arm64-v8a' | 'universal' | 'standard';
   apkName?: string;
   isCached?: boolean;
@@ -35,12 +36,41 @@ export class UpdateService {
   private static RELEASES_API_URL = `https://api.github.com/repos/${UpdateService.GITHUB_OWNER}/${UpdateService.GITHUB_REPO}/releases/latest`;
   public static RELEASES_WEB_URL = `https://github.com/${UpdateService.GITHUB_OWNER}/${UpdateService.GITHUB_REPO}/releases/latest`;
 
-  // Persistent in-memory tracking of active background download
   private static activeDownloadResumable: FileSystem.DownloadResumable | null = null;
   private static activeDownloadPromise: Promise<string> | null = null;
   private static activeDownloadVersion: string | null = null;
   private static progressListeners = new Set<ProgressCallback>();
   private static lastSnapSaveTime = 0;
+
+  /**
+   * Validates that an APK download URL strictly uses HTTPS and points to the official GitHub repository
+   * or GitHub's official release asset CDN.
+   */
+  public static isTrustedApkUrl(rawUrl: string | null | undefined): boolean {
+    if (!rawUrl || typeof rawUrl !== 'string') return false;
+    try {
+      const parsed = new URL(rawUrl);
+      if (parsed.protocol !== 'https:') return false;
+
+      const host = parsed.hostname.toLowerCase();
+      const expectedRepoPrefix = `/${this.GITHUB_OWNER.toLowerCase()}/${this.GITHUB_REPO.toLowerCase()}/releases/download/`;
+
+      if (host === 'github.com' && parsed.pathname.toLowerCase().startsWith(expectedRepoPrefix)) {
+        return true;
+      }
+
+      if (
+        host === 'objects.githubusercontent.com' ||
+        host === 'release-assets.githubusercontent.com'
+      ) {
+        return true;
+      }
+
+      return false;
+    } catch {
+      return false;
+    }
+  }
 
   /**
    * Registers a listener for live background download progress
@@ -69,56 +99,73 @@ export class UpdateService {
   }
 
   /**
-   * Selects the most optimal APK asset from a release payload.
-   * Prioritizes targeted arm64-v8a APK (~20MB) for modern Android devices,
-   * falling back to universal (~70MB) or any generic APK asset.
+   * Extracts a 64-character hex SHA-256 digest from GitHub's asset.digest field ("sha256:...")
+   * or from the release body if published there.
    */
-  public static selectBestApkAsset(assets: any[]): {
+  private static extractAssetSha256(asset: any, releaseBody?: string): string | undefined {
+    if (asset && typeof asset.digest === 'string') {
+      const match = asset.digest.match(/^sha256:([a-fA-F0-9]{64})$/);
+      if (match) return match[1].toLowerCase();
+    }
+    if (releaseBody && asset && typeof asset.name === 'string') {
+      const escapedName = asset.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const bodyMatch = releaseBody.match(new RegExp(`([a-fA-F0-9]{64})\\s+\\*?${escapedName}`, 'i'));
+      if (bodyMatch) return bodyMatch[1].toLowerCase();
+    }
+    return undefined;
+  }
+
+  /**
+   * Selects the most optimal APK asset from a release payload.
+   */
+  public static selectBestApkAsset(assets: any[], releaseBody?: string): {
     url: string;
     size: number;
     name: string;
+    sha256?: string;
     architecture: 'arm64-v8a' | 'universal' | 'standard';
   } | null {
     if (!Array.isArray(assets) || assets.length === 0) return null;
 
-    const apkAssets = assets.filter((a: any) =>
-      typeof a.name === 'string' && a.name.toLowerCase().endsWith('.apk')
+    const apkAssets = assets.filter(
+      (a: any) =>
+        typeof a.name === 'string' &&
+        a.name.toLowerCase().endsWith('.apk') &&
+        this.isTrustedApkUrl(a.browser_download_url)
     );
 
     if (apkAssets.length === 0) return null;
 
-    // 1. Try to find arm64-v8a targeted APK (99.8% of modern student phones)
-    const arm64Asset = apkAssets.find((a: any) =>
-      /arm64[-_]?v8a/i.test(a.name) || /arm64/i.test(a.name)
+    const arm64Asset = apkAssets.find(
+      (a: any) => /arm64[-_]?v8a/i.test(a.name) || /arm64/i.test(a.name)
     );
     if (arm64Asset) {
       return {
         url: arm64Asset.browser_download_url,
         size: arm64Asset.size || 0,
         name: arm64Asset.name,
+        sha256: this.extractAssetSha256(arm64Asset, releaseBody),
         architecture: 'arm64-v8a',
       };
     }
 
-    // 2. Fallback to universal APK
-    const universalAsset = apkAssets.find((a: any) =>
-      /universal/i.test(a.name)
-    );
+    const universalAsset = apkAssets.find((a: any) => /universal/i.test(a.name));
     if (universalAsset) {
       return {
         url: universalAsset.browser_download_url,
         size: universalAsset.size || 0,
         name: universalAsset.name,
+        sha256: this.extractAssetSha256(universalAsset, releaseBody),
         architecture: 'universal',
       };
     }
 
-    // 3. Fallback to first available APK
     const firstAsset = apkAssets[0];
     return {
       url: firstAsset.browser_download_url,
       size: firstAsset.size || 0,
       name: firstAsset.name,
+      sha256: this.extractAssetSha256(firstAsset, releaseBody),
       architecture: 'standard',
     };
   }
@@ -131,10 +178,13 @@ export class UpdateService {
   }
 
   /**
-   * Returns the clean version tag without leading 'v'
+   * Returns a sanitized semantic version tag without leading 'v' or path traversal characters
    */
   public static cleanVersion(version: string): string {
-    return version.replace(/^v/i, '').trim();
+    return version
+      .replace(/^v/i, '')
+      .replace(/[^0-9A-Za-z._-]/g, '')
+      .trim();
   }
 
   /**
@@ -146,26 +196,46 @@ export class UpdateService {
   }
 
   /**
+   * Verifies that a file on disk has the ZIP/APK magic header (PK\x03\x04 -> Base64 "UEsDB")
+   */
+  private static async hasValidApkMagicBytes(fileUri: string): Promise<boolean> {
+    try {
+      const headerB64 = await FileSystem.readAsStringAsync(fileUri, {
+        encoding: FileSystem.EncodingType.Base64,
+        length: 4,
+        position: 0,
+      });
+      return headerB64.startsWith('UEsDB');
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Checks whether a complete and valid APK file already exists for the given version
    */
   public static async isApkCached(versionTag: string, expectedSize?: number): Promise<boolean> {
     try {
       const fileUri = this.getApkPath(versionTag);
       const fileInfo = await FileSystem.getInfoAsync(fileUri);
-      
+
       if (!fileInfo.exists || fileInfo.isDirectory || !fileInfo.size) {
         return false;
       }
 
-      // If expectedSize is provided, ensure file is at least 90% of expected size (not incomplete)
+      // Require exact byte length match when expectedSize is provided by GitHub Releases API
       if (expectedSize && expectedSize > 0) {
-        if (fileInfo.size < expectedSize * 0.9) {
-          // File is incomplete / corrupt, remove it
+        if (fileInfo.size !== expectedSize) {
           await FileSystem.deleteAsync(fileUri, { idempotent: true });
           return false;
         }
       } else if (fileInfo.size < 5 * 1024 * 1024) {
-        // Less than 5MB is definitely not a full release APK
+        return false;
+      }
+
+      const validMagic = await this.hasValidApkMagicBytes(fileUri);
+      if (!validMagic) {
+        await FileSystem.deleteAsync(fileUri, { idempotent: true });
         return false;
       }
 
@@ -176,9 +246,7 @@ export class UpdateService {
   }
 
   /**
-   * Retrieves the current app version dynamically:
-   * - In Expo Go: reads project manifest version from app.json (Constants.expoConfig.version)
-   * - In Native Standalone APK: reads OS Package Manager version (Application.nativeApplicationVersion)
+   * Retrieves the current app version dynamically
    */
   public static getCurrentVersion(): string {
     const isExpoGo =
@@ -206,8 +274,8 @@ export class UpdateService {
     if (!cleanLatest || !cleanCurrent) return false;
     if (cleanLatest === cleanCurrent) return false;
 
-    const latestParts = cleanLatest.split('.').map(p => parseInt(p, 10) || 0);
-    const currentParts = cleanCurrent.split('.').map(p => parseInt(p, 10) || 0);
+    const latestParts = cleanLatest.split('.').map((p) => parseInt(p, 10) || 0);
+    const currentParts = cleanCurrent.split('.').map((p) => parseInt(p, 10) || 0);
 
     const maxLength = Math.max(latestParts.length, currentParts.length);
 
@@ -230,7 +298,7 @@ export class UpdateService {
     try {
       const response = await fetch(this.RELEASES_API_URL, {
         headers: {
-          'Accept': 'application/vnd.github.v3+json',
+          Accept: 'application/vnd.github.v3+json',
           'User-Agent': 'Project_S-App',
         },
       });
@@ -252,19 +320,20 @@ export class UpdateService {
       const tagName = releaseData.tag_name || '';
       const latestVersion = this.cleanVersion(tagName) || currentVersion;
 
-      // Locate and select the best APK asset (arm64-v8a preferred, universal fallback)
       let apkDownloadUrl: string | null = null;
       let apkSizeFormatted: string | undefined = undefined;
       let apkSizeBytes: number | undefined = undefined;
+      let apkSha256: string | undefined = undefined;
       let apkArchitecture: 'arm64-v8a' | 'universal' | 'standard' = 'standard';
       let apkName: string | undefined = undefined;
 
       if (Array.isArray(releaseData.assets)) {
-        const bestAsset = this.selectBestApkAsset(releaseData.assets);
+        const bestAsset = this.selectBestApkAsset(releaseData.assets, releaseData.body);
 
         if (bestAsset) {
           apkDownloadUrl = bestAsset.url;
           apkSizeBytes = bestAsset.size;
+          apkSha256 = bestAsset.sha256;
           apkArchitecture = bestAsset.architecture;
           apkName = bestAsset.name;
           if (bestAsset.size) {
@@ -275,7 +344,6 @@ export class UpdateService {
       }
 
       const hasUpdate = this.isNewerVersion(latestVersion, currentVersion);
-      // Automatically prune older/orphaned APKs and temp files
       this.autoPruneStorage(currentVersion).catch(() => {});
       const isCached = hasUpdate ? await this.isApkCached(latestVersion, apkSizeBytes) : false;
 
@@ -290,12 +358,15 @@ export class UpdateService {
         htmlUrl: releaseData.html_url || this.RELEASES_WEB_URL,
         apkSizeFormatted,
         apkSizeBytes,
+        apkSha256,
         apkArchitecture,
         apkName,
         isCached,
       };
     } catch (error) {
-      console.warn('[UpdateService] Update check failed:', error);
+      if (__DEV__) {
+        console.warn('[UpdateService] Update check failed:', error);
+      }
       return {
         hasUpdate: false,
         currentVersion,
@@ -311,23 +382,23 @@ export class UpdateService {
 
   /**
    * Silently pre-fetches the latest update in the background and sends a local notification
-   * when the file is verified and ready on disk for instant 1-tap installation.
+   * when the file is verified and ready on disk.
    */
   public static async prefetchUpdateSilently(
     info: UpdateInfo,
     onProgress?: (fraction: number) => void
   ): Promise<boolean> {
-    if (!info.hasUpdate || !info.apkDownloadUrl) return false;
+    if (!info.hasUpdate || !info.apkDownloadUrl || !this.isTrustedApkUrl(info.apkDownloadUrl)) {
+      return false;
+    }
 
     try {
-      // Check if already cached
       const isCached = await this.isApkCached(info.latestVersion, info.apkSizeBytes);
       if (isCached) {
         await NotificationService.notifyUpdateReady(info.latestVersion, info.releaseName);
         return true;
       }
 
-      // Download in background
       await this.downloadApk(
         info.apkDownloadUrl,
         info.latestVersion,
@@ -337,7 +408,6 @@ export class UpdateService {
         }
       );
 
-      // Verify and notify
       const verified = await this.isApkCached(info.latestVersion, info.apkSizeBytes);
       if (verified) {
         await NotificationService.notifyUpdateReady(info.latestVersion, info.releaseName);
@@ -345,17 +415,17 @@ export class UpdateService {
       }
       return false;
     } catch (e) {
-      console.warn('[UpdateService] Silent prefetch failed:', e);
-      // If silent prefetch failed, still notify about update availability
+      if (__DEV__) {
+        console.warn('[UpdateService] Silent prefetch failed:', e);
+      }
       await NotificationService.notifyUpdateAvailable(info.latestVersion, info.releaseName);
       return false;
     }
   }
 
   /**
-   * Downloads APK to an atomic .tmp file, validates it, and renames it to the versioned filename.
-   * If a download is already in progress, joins the active promise and streams progress.
-   * Automatically saves resumable state to survive app minimization and background cycles.
+   * Downloads APK to an atomic .tmp file, validates its origin, byte size, and APK header,
+   * and renames it to the versioned filename.
    */
   public static async downloadApk(
     apkUrl: string,
@@ -363,6 +433,10 @@ export class UpdateService {
     expectedSize?: number,
     onProgress?: (fraction: number, totalBytes: number) => void
   ): Promise<string> {
+    if (!this.isTrustedApkUrl(apkUrl)) {
+      throw new Error('Untrusted APK download URL rejected.');
+    }
+
     const cleanVer = this.cleanVersion(versionTag);
     const snapKey = `${RESUME_SNAP_KEY_PREFIX}${cleanVer}`;
 
@@ -370,7 +444,6 @@ export class UpdateService {
       this.progressListeners.add(onProgress);
     }
 
-    // If already actively downloading this version, attach and wait for existing execution
     if (this.activeDownloadPromise && this.activeDownloadVersion === cleanVer) {
       try {
         return await this.activeDownloadPromise;
@@ -379,7 +452,6 @@ export class UpdateService {
       }
     }
 
-    // Check if already completely cached
     const finalPath = this.getApkPath(versionTag);
     const alreadyCached = await this.isApkCached(versionTag, expectedSize);
     if (alreadyCached) {
@@ -388,7 +460,6 @@ export class UpdateService {
       return finalPath;
     }
 
-    // Enforce single-APK retention before starting download
     await this.purgeOtherApks(versionTag);
 
     const updateDir = this.getUpdatesDirectory();
@@ -398,28 +469,20 @@ export class UpdateService {
     }
 
     const tempPath = `${finalPath}.tmp`;
-
-    // Start single shared execution
     this.activeDownloadVersion = cleanVer;
 
     const downloadExecutor = async (): Promise<string> => {
       try {
-        const updateDir = this.getUpdatesDirectory();
-        const dirInfo = await FileSystem.getInfoAsync(updateDir);
-        if (!dirInfo.exists) {
-          await FileSystem.makeDirectoryAsync(updateDir, { intermediates: true });
-        }
-
         const progressCallback = (downloadProgress: FileSystem.DownloadProgressData) => {
           const total = downloadProgress.totalBytesExpectedToWrite || expectedSize || 1;
           const progress = Math.min(1, Math.max(0, downloadProgress.totalBytesWritten / total));
-          
-          // Broadcast to all registered listeners
+
           this.progressListeners.forEach((fn) => {
-            try { fn(progress, total); } catch {}
+            try {
+              fn(progress, total);
+            } catch {}
           });
 
-          // Throttle-persist resume snapshot every 1.5 seconds so app can resume if killed
           const now = Date.now();
           if (this.activeDownloadResumable && now - this.lastSnapSaveTime > 1500) {
             this.lastSnapSaveTime = now;
@@ -432,6 +495,7 @@ export class UpdateService {
 
         let resumable: FileSystem.DownloadResumable;
         let savedSnapJson: string | null = null;
+        let useResume = false;
         try {
           savedSnapJson = await AsyncStorage.getItem(snapKey);
         } catch {}
@@ -439,13 +503,26 @@ export class UpdateService {
         if (savedSnapJson) {
           try {
             const savedData = JSON.parse(savedSnapJson);
-            resumable = new FileSystem.DownloadResumable(
-              savedData.url || apkUrl,
-              savedData.fileUri || tempPath,
-              savedData.options || {},
-              progressCallback,
-              savedData.resumeData
-            );
+            // Strictly verify that the persisted snapshot URL and destination path have not been tampered with
+            if (
+              savedData &&
+              savedData.url === apkUrl &&
+              this.isTrustedApkUrl(savedData.url) &&
+              savedData.fileUri === tempPath
+            ) {
+              resumable = new FileSystem.DownloadResumable(
+                apkUrl,
+                tempPath,
+                {},
+                progressCallback,
+                savedData.resumeData
+              );
+              useResume = true;
+            } else {
+              await AsyncStorage.removeItem(snapKey);
+              await FileSystem.deleteAsync(tempPath, { idempotent: true });
+              resumable = FileSystem.createDownloadResumable(apkUrl, tempPath, {}, progressCallback);
+            }
           } catch {
             await AsyncStorage.removeItem(snapKey);
             await FileSystem.deleteAsync(tempPath, { idempotent: true });
@@ -457,40 +534,46 @@ export class UpdateService {
 
         this.activeDownloadResumable = resumable;
 
-        let downloadResult: FileSystem.FileSystemDownloadResult | undefined;
-        if (savedSnapJson) {
-          downloadResult = await resumable.resumeAsync();
-        } else {
-          downloadResult = await resumable.downloadAsync();
-        }
+        const downloadResult = useResume
+          ? await resumable.resumeAsync()
+          : await resumable.downloadAsync();
 
         if (!downloadResult || !downloadResult.uri) {
           throw new Error('Download stream interrupted.');
         }
 
-        // Validate downloaded file
         const downloadedInfo = await FileSystem.getInfoAsync(tempPath);
         if (!downloadedInfo.exists || !downloadedInfo.size || downloadedInfo.size < 1024 * 1024) {
           await FileSystem.deleteAsync(tempPath, { idempotent: true });
           throw new Error('Downloaded APK package is corrupted or incomplete.');
         }
 
-        // Atomically move .tmp to final .apk destination
+        // Enforce exact size match when expectedSize is known
+        if (expectedSize && expectedSize > 0 && downloadedInfo.size !== expectedSize) {
+          await FileSystem.deleteAsync(tempPath, { idempotent: true });
+          throw new Error('Downloaded APK size does not match release asset metadata.');
+        }
+
+        // Enforce valid ZIP/APK magic header
+        const validMagic = await this.hasValidApkMagicBytes(tempPath);
+        if (!validMagic) {
+          await FileSystem.deleteAsync(tempPath, { idempotent: true });
+          throw new Error('Downloaded file is not a valid Android package archive.');
+        }
+
         await FileSystem.deleteAsync(finalPath, { idempotent: true });
         await FileSystem.moveAsync({
           from: tempPath,
           to: finalPath,
         });
 
-        // Clear resume snapshot on success
         await AsyncStorage.removeItem(snapKey);
-
-        // Clean up any older cached APKs
         this.purgeOtherApks(versionTag).catch(() => {});
 
-        // Broadcast 100% completion
         this.progressListeners.forEach((fn) => {
-          try { fn(1, expectedSize || downloadedInfo.size || 0); } catch {}
+          try {
+            fn(1, expectedSize || downloadedInfo.size || 0);
+          } catch {}
         });
 
         return finalPath;
@@ -509,7 +592,7 @@ export class UpdateService {
   }
 
   /**
-   * Launches Android Package Installer using the cached APK
+   * Launches Android Package Installer using the verified cached APK
    */
   public static async installCachedApk(versionTag: string): Promise<void> {
     if (Platform.OS !== 'android') {
@@ -518,9 +601,9 @@ export class UpdateService {
     }
 
     const finalPath = this.getApkPath(versionTag);
-    const fileInfo = await FileSystem.getInfoAsync(finalPath);
-    if (!fileInfo.exists) {
-      throw new Error('Cached APK file not found. Please download the update again.');
+    const isValid = await this.isApkCached(versionTag);
+    if (!isValid) {
+      throw new Error('Cached APK file not found or failed integrity check. Please download the update again.');
     }
 
     const contentUri = await FileSystem.getContentUriAsync(finalPath);
@@ -533,7 +616,7 @@ export class UpdateService {
   }
 
   /**
-   * Downloads and installs in a single flow (used for foreground download)
+   * Downloads and installs in a single flow
    */
   public static async downloadAndInstall(
     apkUrl: string,
@@ -570,8 +653,7 @@ export class UpdateService {
   }
 
   /**
-   * Automatically prunes all APK files <= current running version,
-   * orphaned .tmp staging files, and ensures no obsolete release files remain.
+   * Automatically prunes all APK files <= current running version and orphaned .tmp staging files
    */
   public static async autoPruneStorage(currentVersionTag?: string): Promise<void> {
     try {
@@ -583,19 +665,16 @@ export class UpdateService {
       const files = await FileSystem.readDirectoryAsync(updateDir);
       for (const file of files) {
         const filePath = `${updateDir}${file}`;
-        
-        // Remove .tmp files immediately
+
         if (file.endsWith('.tmp')) {
           await FileSystem.deleteAsync(filePath, { idempotent: true });
           continue;
         }
 
-        // Check version on APK files
         if (file.endsWith('.apk')) {
           const match = file.match(/Project_S-v([0-9.]+)\.apk/i);
           if (match && match[1]) {
             const fileVersion = match[1];
-            // If the file version is older than or equal to current version, delete it
             if (!this.isNewerVersion(fileVersion, current)) {
               await FileSystem.deleteAsync(filePath, { idempotent: true });
             }
@@ -603,12 +682,14 @@ export class UpdateService {
         }
       }
     } catch (e) {
-      console.warn('[UpdateService] Auto prune storage warning:', e);
+      if (__DEV__) {
+        console.warn('[UpdateService] Auto prune storage warning:', e);
+      }
     }
   }
 
   /**
-   * Purges all APK files other than the specified target version (enforces single-APK retention)
+   * Purges all APK files other than the specified target version
    */
   public static async purgeOtherApks(keepVersionTag: string): Promise<void> {
     try {
@@ -624,7 +705,7 @@ export class UpdateService {
           await FileSystem.deleteAsync(`${updateDir}${file}`, { idempotent: true });
         }
       }
-    } catch (e) {
+    } catch {
       // Ignore
     }
   }
@@ -640,7 +721,9 @@ export class UpdateService {
         await FileSystem.deleteAsync(updateDir, { idempotent: true });
       }
     } catch (e) {
-      console.warn('[UpdateService] Failed to clear update files:', e);
+      if (__DEV__) {
+        console.warn('[UpdateService] Failed to clear update files:', e);
+      }
     }
   }
 
@@ -667,4 +750,3 @@ export class UpdateService {
     }
   }
 }
-
