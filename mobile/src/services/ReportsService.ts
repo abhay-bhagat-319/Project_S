@@ -1,4 +1,4 @@
-import { Platform, Linking } from 'react-native';
+﻿import { Platform, Linking } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { CacheService, ReportItem } from './CacheService';
@@ -341,6 +341,13 @@ export class ReportsService {
       targetPath = await this.downloadReport(report, onProgress);
     }
 
+    const resolveReportUrl = (file: string) => {
+      if (file.startsWith('http://') || file.startsWith('https://')) {
+        return file;
+      }
+      return `https://shiksha.iiserb.ac.in${file.startsWith('/') ? '' : '/'}${file}`;
+    };
+
     if (Platform.OS === 'android') {
       try {
         const contentUri = await FileSystem.getContentUriAsync(targetPath);
@@ -352,12 +359,18 @@ export class ReportsService {
       } catch (intentErr) {
         console.warn('Intent launcher error for report, falling back to Linking:', intentErr);
         if (report.file) {
-          await Linking.openURL(report.file);
+          const fullUrl = resolveReportUrl(report.file);
+          await Linking.openURL(fullUrl).catch((linkErr) => {
+            console.warn('Linking.openURL failed for report:', linkErr);
+          });
         }
       }
     } else {
       if (report.file) {
-        await Linking.openURL(report.file);
+        const fullUrl = resolveReportUrl(report.file);
+        await Linking.openURL(fullUrl).catch((linkErr) => {
+          console.warn('Linking.openURL failed for report:', linkErr);
+        });
       }
     }
   }

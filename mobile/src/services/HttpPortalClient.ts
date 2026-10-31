@@ -207,7 +207,7 @@ export class HttpPortalClient {
         const match = setCookie.match(/(?:connect\.sid|PHPSESSID|ci_session)=([^;]+)/i);
         if (match && match[0]) {
           this.activeSessionCookie = match[0];
-          console.log('[HttpPortalClient] Captured session cookie from Set-Cookie:', this.activeSessionCookie);
+          if (__DEV__) { console.log('[HttpPortalClient] Captured session cookie from Set-Cookie'); }
         }
       }
     } catch {
@@ -592,7 +592,7 @@ export class HttpPortalClient {
 
       // 4. If we reached here, the login page was re-rendered with no success/error indicators
       console.warn('[HttpPortalClient] Login AMBIGUOUS: no success or error indicators detected.');
-      console.warn('[HttpPortalClient] Full response body for debugging:', response.rawText.substring(0, 2000));
+      
 
       return {
         success: false,

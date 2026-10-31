@@ -279,11 +279,24 @@ export const CacheService = {
    * Clear all cache on logout or user reset (wipes AsyncStorage, update files, and report files)
    */
   async clearCache(): Promise<void> {
-    await AsyncStorage.removeItem(KEY_PROFILE_DATA);
-    await AsyncStorage.removeItem(KEY_ATTENDANCE_DATA);
-    await AsyncStorage.removeItem(KEY_COURSE_DETAILS);
-    await AsyncStorage.removeItem(KEY_REPORTS_DATA);
-    await AsyncStorage.removeItem(KEY_LAST_SYNC_TIME);
+    const baseKeys = [
+      KEY_PROFILE_DATA,
+      KEY_ATTENDANCE_DATA,
+      KEY_COURSES_DATA,
+      KEY_COURSE_DETAILS,
+      KEY_REPORTS_DATA,
+      KEY_LAST_SYNC_TIME,
+      'project_s_academic_docs_metadata_v1',
+    ];
+    try {
+      const allKeys = await AsyncStorage.getAllKeys();
+      const dynamicKeys = allKeys.filter((k) => k.startsWith(KEY_COURSE_MARKS_PREFIX));
+      await AsyncStorage.multiRemove([...baseKeys, ...dynamicKeys]);
+    } catch {
+      for (const k of baseKeys) {
+        await AsyncStorage.removeItem(k);
+      }
+    }
     await UpdateService.clearAllUpdateFiles();
     try {
       const { ReportsService } = require('./ReportsService');

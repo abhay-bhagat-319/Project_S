@@ -1,4 +1,4 @@
-import { Platform, Linking } from 'react-native';
+﻿import { Platform, Linking } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -48,7 +48,7 @@ export const DEFAULT_ACADEMIC_DOCS: AcademicDoc[] = [
     title: 'Class Time Table 2026-27',
     category: 'TIMETABLE',
     description: 'Semester-wise class schedules, lecture slots & room allocations',
-    url: 'https://acad.iiserb.ac.in/pdf_docs/schedule/class_time_table.pdf',
+    url: 'http://acad.iiserb.ac.in/pdf_docs/schedule/class_time_table.pdf',
     fileName: 'class_time_table.pdf',
     isCached: false,
   },
@@ -57,7 +57,7 @@ export const DEFAULT_ACADEMIC_DOCS: AcademicDoc[] = [
     title: 'Mid Semester Exam Schedule',
     category: 'EXAM',
     description: 'Mid-term examination schedule, slot distribution & rooms',
-    url: 'https://acad.iiserb.ac.in/pdf/Mid_Sem_Schedule.pdf',
+    url: 'http://acad.iiserb.ac.in/pdf/Mid_Sem_Schedule.pdf',
     fileName: 'Mid_Sem_Schedule.pdf',
     isCached: false,
   },
@@ -66,7 +66,7 @@ export const DEFAULT_ACADEMIC_DOCS: AcademicDoc[] = [
     title: 'End Semester Exam Schedule',
     category: 'EXAM',
     description: 'End-term final examination schedule and venues',
-    url: 'https://acad.iiserb.ac.in/pdf/End_Semester_Examination_Schedule.pdf',
+    url: 'http://acad.iiserb.ac.in/pdf/End_Semester_Examination_Schedule.pdf',
     fileName: 'End_Semester_Examination_Schedule.pdf',
     isCached: false,
   },
@@ -144,6 +144,7 @@ export class AcademicDocsService {
         results.push({
           ...defaultDoc,
           ...meta,
+          url: defaultDoc.url,
           isCached,
           localUri: isCached ? localPath : undefined,
           fileSizeBytes: sizeBytes,
@@ -183,11 +184,29 @@ export class AcademicDocsService {
           if (doc.etag) headers['If-None-Match'] = doc.etag;
           if (doc.lastModified) headers['If-Modified-Since'] = doc.lastModified;
 
-          const response = await fetch(doc.url, {
-            method: 'HEAD',
-            headers,
-            signal: controller.signal,
-          });
+          let checkUrl = doc.url;
+          if (checkUrl.startsWith('https://acad.iiserb.ac.in')) {
+            checkUrl = checkUrl.replace('https://acad.iiserb.ac.in', 'http://acad.iiserb.ac.in');
+          }
+
+          let response: Response;
+          try {
+            response = await fetch(checkUrl, {
+              method: 'HEAD',
+              headers,
+              signal: controller.signal,
+            });
+          } catch (fetchErr) {
+            if (checkUrl.startsWith('https://')) {
+              response = await fetch(checkUrl.replace('https://', 'http://'), {
+                method: 'HEAD',
+                headers,
+                signal: controller.signal,
+              });
+            } else {
+              throw fetchErr;
+            }
+          }
           clearTimeout(timeoutId);
 
           if (response.status === 304) {
@@ -262,20 +281,40 @@ export class AcademicDocsService {
 
     await FileSystem.deleteAsync(tempPath, { idempotent: true });
 
-    const downloadResumable = FileSystem.createDownloadResumable(
-      doc.url,
-      tempPath,
-      {},
-      (progressEvent) => {
-        const total = progressEvent.totalBytesExpectedToWrite || 1;
-        const progress = progressEvent.totalBytesWritten / total;
-        if (onProgress) {
-          onProgress(Math.min(1, Math.max(0, progress)));
-        }
-      }
-    );
+    let downloadUrl = doc.url;
+    if (downloadUrl.startsWith('https://acad.iiserb.ac.in')) {
+      downloadUrl = downloadUrl.replace('https://acad.iiserb.ac.in', 'http://acad.iiserb.ac.in');
+    }
 
-    const result = await downloadResumable.downloadAsync();
+    const startDownload = async (targetUrl: string) => {
+      const downloadResumable = FileSystem.createDownloadResumable(
+        targetUrl,
+        tempPath,
+        {},
+        (progressEvent) => {
+          const total = progressEvent.totalBytesExpectedToWrite || 1;
+          const progress = progressEvent.totalBytesWritten / total;
+          if (onProgress) {
+            onProgress(Math.min(1, Math.max(0, progress)));
+          }
+        }
+      );
+      return await downloadResumable.downloadAsync();
+    };
+
+    let result;
+    try {
+      result = await startDownload(downloadUrl);
+    } catch (downloadErr) {
+      if (downloadUrl.startsWith('https://')) {
+        const fallbackUrl = downloadUrl.replace('https://', 'http://');
+        console.warn(`Download failed for ${downloadUrl}, retrying HTTP fallback: ${fallbackUrl}`);
+        result = await startDownload(fallbackUrl);
+      } else {
+        throw downloadErr;
+      }
+    }
+
     if (!result || !result.uri) {
       throw new Error('Download failed to return a valid local file.');
     }
@@ -334,14 +373,20 @@ export class AcademicDocsService {
         const docs = await this.getAcademicDocs();
         const doc = docs.find((d) => d.id === docId);
         if (doc?.url) {
-          await Linking.openURL(doc.url);
+          const openUrl = doc.url.startsWith('https://acad.iiserb.ac.in')
+            ? doc.url.replace('https://acad.iiserb.ac.in', 'http://acad.iiserb.ac.in')
+            : doc.url;
+          await Linking.openURL(openUrl);
         }
       }
     } else {
       const docs = await this.getAcademicDocs();
       const doc = docs.find((d) => d.id === docId);
       if (doc?.url) {
-        await Linking.openURL(doc.url);
+        const openUrl = doc.url.startsWith('https://acad.iiserb.ac.in')
+          ? doc.url.replace('https://acad.iiserb.ac.in', 'http://acad.iiserb.ac.in')
+          : doc.url;
+        await Linking.openURL(openUrl);
       }
     }
   }
