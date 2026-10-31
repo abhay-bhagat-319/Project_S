@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, Linking } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -25,6 +25,39 @@ const DEFAULT_URL = 'https://shiksha.iiserb.ac.in/secure/studenthome';
 const DESKTOP_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 
+/**
+ * Validates that a URL is an HTTPS or HTTP URL belonging to *.iiserb.ac.in or a relative path
+ */
+function isAllowedIiserbUrl(rawUrl: string | null | undefined): boolean {
+  if (!rawUrl || typeof rawUrl !== 'string') return false;
+  if (rawUrl.startsWith('/') || rawUrl.startsWith('./')) return true;
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+    const host = parsed.hostname.toLowerCase();
+    return host === 'iiserb.ac.in' || host.endsWith('.iiserb.ac.in');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Validates that a URL specifically belongs to the Shiksha portal (https://shiksha.iiserb.ac.in) or is a relative portal path
+ */
+function isShikshaOrigin(rawUrl: string | null | undefined): boolean {
+  if (!rawUrl || typeof rawUrl !== 'string') return false;
+  if (rawUrl.startsWith('/') || rawUrl.startsWith('./')) return true;
+  try {
+    const parsed = new URL(rawUrl);
+    return (
+      (parsed.protocol === 'https:' || parsed.protocol === 'http:') &&
+      parsed.hostname.toLowerCase() === 'shiksha.iiserb.ac.in'
+    );
+  } catch {
+    return false;
+  }
+}
+
 const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenProps>(function PortalWebviewScreen({
   credentials,
   targetUrl,
@@ -32,8 +65,9 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
 }, ref) {
   const insets = useSafeAreaInsets();
   const webViewRef = useRef<WebView>(null);
-  const [initialSource] = useState({ uri: targetUrl || DEFAULT_URL });
-  const [currentUrl, setCurrentUrl] = useState<string>(targetUrl || DEFAULT_URL);
+  const initialUri = targetUrl && isAllowedIiserbUrl(targetUrl) ? targetUrl : DEFAULT_URL;
+  const [initialSource] = useState({ uri: initialUri });
+  const [currentUrl, setCurrentUrl] = useState<string>(initialUri);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -41,22 +75,45 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
   const [isCampusError, setIsCampusError] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
 
-  // Register WebView as the authenticated PDF downloader bridge
+  // Register WebView with SessionLifecycleManager (for logout cookie purge) and ReportsService
   useEffect(() => {
-    const unregister = ReportsService.registerPdfDownloader((fileUrl, reportId) => {
+    const unregisterAdapter = SessionLifecycleManager.registerAdapter({
+      loadUrl: (url: string) => {
+        if (isAllowedIiserbUrl(url)) {
+          webViewRef.current?.injectJavaScript(`window.location.href = ${JSON.stringify(url)}; true;`);
+        }
+      },
+      injectScript: (script: string) => {
+        webViewRef.current?.injectJavaScript(script);
+      },
+      reload: () => {
+        webViewRef.current?.reload();
+      },
+    });
+
+    const unregisterPdf = ReportsService.registerPdfDownloader((fileUrl, reportId) => {
+      if (!isAllowedIiserbUrl(fileUrl)) {
+        return Promise.reject(new Error('Refusing to download report from untrusted origin.'));
+      }
       const pendingPromise = ReportsService.createPendingPdfDownload(reportId);
       const script = ScraperService.getPdfDownloadScript(fileUrl, reportId);
       webViewRef.current?.injectJavaScript(script);
       return pendingPromise;
     });
-    return unregister;
+
+    return () => {
+      unregisterAdapter();
+      unregisterPdf();
+    };
   }, []);
 
   useEffect(() => {
     if (targetUrl && targetUrl !== currentUrl) {
-      setCurrentUrl(targetUrl);
-      setIsCampusError(false);
-      webViewRef.current?.injectJavaScript(`window.location.href = ${JSON.stringify(targetUrl)}; true;`);
+      if (isAllowedIiserbUrl(targetUrl)) {
+        setCurrentUrl(targetUrl);
+        setIsCampusError(false);
+        webViewRef.current?.injectJavaScript(`window.location.href = ${JSON.stringify(targetUrl)}; true;`);
+      }
       if (onClearTargetUrl) {
         onClearTargetUrl();
       }
@@ -71,8 +128,12 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
     setLoading(navState.loading);
     if (navState.url) {
       setCurrentUrl(navState.url);
-      // If portal redirected to /login, silently re-authenticate and reload with refreshed cookies
-      if (navState.url.includes('/login') && !isReauthenticatingRef.current) {
+      // Only trigger silent re-authentication when on the official shiksha.iiserb.ac.in origin
+      if (
+        isShikshaOrigin(navState.url) &&
+        navState.url.includes('/login') &&
+        !isReauthenticatingRef.current
+      ) {
         isReauthenticatingRef.current = true;
         try {
           const recovered = await SessionLifecycleManager.silentReauthenticate();
@@ -88,65 +149,120 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
     }
   };
 
+  const handleShouldStartLoadWithRequest = (request: any): boolean => {
+    const reqUrl = request?.url || '';
+    if (reqUrl === 'about:blank') return true;
+
+    if (isAllowedIiserbUrl(reqUrl)) {
+      return true;
+    }
+
+    // Open external non-iiserb links safely in the system browser instead of inside the authenticated WebView
+    if (reqUrl.startsWith('https://') || reqUrl.startsWith('http://')) {
+      Linking.openURL(reqUrl).catch(() => {});
+    }
+    return false;
+  };
+
   const handleMessage = (event: any) => {
     try {
+      const originUrl = event?.nativeEvent?.url || currentUrl;
+      if (!isAllowedIiserbUrl(originUrl)) {
+        return;
+      }
       const data = JSON.parse(event.nativeEvent.data);
+      if (SessionLifecycleManager.handleWebViewMessage(data)) {
+        return;
+      }
       if (ReportsService.handlePdfMessage(data)) {
         return;
       }
-    } catch (e) {}
+    } catch {}
   };
 
   const handleLoadEnd = () => {
     setLoading(false);
     setProgress(1);
     setIsCampusError(false);
-    // Inject desktop viewport and clean font smoothing
-    webViewRef.current?.injectJavaScript(ScraperService.getDesktopViewportScript());
+    if (isAllowedIiserbUrl(currentUrl)) {
+      webViewRef.current?.injectJavaScript(ScraperService.getDesktopViewportScript());
+    }
   };
 
-  const handleError = () => {
+  const handleError = (syntheticEvent?: any) => {
+    const code = syntheticEvent?.nativeEvent?.code;
+    // Ignore canceled/aborted loads (-999 on iOS, -1 on Android)
+    if (code === -999 || code === -1) {
+      return;
+    }
     setLoading(false);
     setIsCampusError(true);
+  };
+
+  const handleHttpError = (syntheticEvent: any) => {
+    const { statusCode } = syntheticEvent?.nativeEvent || {};
+    // Only flag 5xx server errors as campus errors, do not fail entire view for 4xx subresources
+    if (statusCode && statusCode >= 500) {
+      handleError(syntheticEvent);
+    }
   };
 
   const handleRetry = () => {
     setIsCampusError(false);
     setLoading(true);
-    webViewRef.current?.reload();
+    try {
+      webViewRef.current?.reload();
+    } catch {}
   };
 
   const goBack = () => {
-    if (canGoBack) {
-      // First try history back in JS context which bypasses synthetic redirect loops, fallback to native goBack
-      webViewRef.current?.injectJavaScript(`
-        if (window.history.length > 1) {
-          window.history.back();
-        }
-        true;
-      `);
-      webViewRef.current?.goBack();
+    if (canGoBack && !isCampusError) {
+      try {
+        webViewRef.current?.injectJavaScript(`
+          if (window.history.length > 1) {
+            window.history.back();
+          }
+          true;
+        `);
+        webViewRef.current?.goBack();
+      } catch {}
     }
   };
 
   const goForward = () => {
-    if (canGoForward) {
-      webViewRef.current?.injectJavaScript(`
-        window.history.forward();
-        true;
-      `);
-      webViewRef.current?.goForward();
+    if (canGoForward && !isCampusError) {
+      try {
+        webViewRef.current?.injectJavaScript(`
+          window.history.forward();
+          true;
+        `);
+        webViewRef.current?.goForward();
+      } catch {}
     }
   };
 
   const reload = () => {
     setIsCampusError(false);
-    webViewRef.current?.reload();
+    try {
+      webViewRef.current?.reload();
+    } catch {}
   };
 
   const goHome = () => {
     setIsCampusError(false);
-    webViewRef.current?.injectJavaScript(`window.location.href = "${DEFAULT_URL}"; true;`);
+    setCurrentUrl(DEFAULT_URL);
+    try {
+      if (isCampusError) {
+        webViewRef.current?.reload();
+      } else {
+        webViewRef.current?.injectJavaScript(`window.location.href = "${DEFAULT_URL}"; true;`);
+      }
+    } catch (e) {
+      console.warn('goHome navigation error:', e);
+      try {
+        webViewRef.current?.reload();
+      } catch {}
+    }
   };
 
   useImperativeHandle(ref, () => ({
@@ -205,7 +321,7 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
           <View style={styles.urlIndicator}>
             <Ionicons name="globe-outline" size={13} color={Theme.colors.primary} style={{ marginRight: 5 }} />
             <Text style={styles.urlText} numberOfLines={1} ellipsizeMode="tail">
-              {currentUrl.replace('https://', '')}
+              {currentUrl.replace('https://', '').replace('http://', '')}
             </Text>
           </View>
         </View>
@@ -231,8 +347,10 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
           javaScriptEnabled={true}
           domStorageEnabled={true}
           sharedCookiesEnabled={true}
-          thirdPartyCookiesEnabled={true}
-          originWhitelist={['*']}
+          thirdPartyCookiesEnabled={false}
+          allowFileAccess={false}
+          originWhitelist={['https://*.iiserb.ac.in', 'https://iiserb.ac.in', 'http://*.iiserb.ac.in', 'http://iiserb.ac.in']}
+          onShouldStartLoadWithRequest={handleShouldStartLoadWithRequest}
           scalesPageToFit={true}
           setBuiltInZoomControls={true}
           setDisplayZoomControls={false}
@@ -249,7 +367,11 @@ const PortalWebviewScreen = forwardRef<PortalWebviewHandle, PortalWebviewScreenP
           onLoadProgress={({ nativeEvent }) => setProgress(nativeEvent.progress)}
           onLoadEnd={handleLoadEnd}
           onError={handleError}
-          onHttpError={handleError}
+          onHttpError={handleHttpError}
+          onRenderProcessGone={() => {
+            setIsCampusError(true);
+            return true;
+          }}
           injectedJavaScript={ScraperService.getDesktopViewportScript()}
           userAgent={DESKTOP_USER_AGENT}
           style={[styles.webview, isCampusError && { opacity: 0 }]}
@@ -387,30 +509,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginBottom: 24,
   },
-  vpnInfoBox: {
-    width: '100%',
-    maxWidth: 340,
-    backgroundColor: Theme.colors.surface,
-    borderWidth: 1,
-    borderColor: Theme.colors.border,
-    borderRadius: Theme.radii.card,
-    padding: 14,
-    marginBottom: 24,
-  },
-  vpnInfoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  vpnInfoLabel: {
-    fontSize: 12,
-    color: Theme.colors.textSecondary,
-    width: 90,
-  },
-  vpnInfoVal: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: Theme.colors.textPrimary,
-  },
   fallbackActions: {
     width: '100%',
     maxWidth: 340,
@@ -428,42 +526,6 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 15,
     fontWeight: 'bold',
-  },
-  secondaryActionsRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  secondaryActionBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Theme.colors.surface,
-    borderWidth: 1,
-    borderColor: Theme.colors.border,
-    height: 44,
-    borderRadius: Theme.radii.pill,
-  },
-  secondaryActionBtnText: {
-    color: Theme.colors.textPrimary,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  retryActionBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Theme.colors.surface,
-    borderWidth: 1,
-    borderColor: Theme.colors.primary,
-    height: 44,
-    borderRadius: Theme.radii.pill,
-  },
-  retryActionBtnText: {
-    color: Theme.colors.primary,
-    fontSize: 13,
-    fontWeight: '600',
   },
 });
 
