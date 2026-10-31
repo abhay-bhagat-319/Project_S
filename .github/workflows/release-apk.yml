@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release Tag Name (e.g. v1.0.10)'
+        description: 'Release Tag Name (e.g. v1.2.3)'
         required: false
         default: ''
 
@@ -45,61 +45,92 @@ jobs:
       - name: 📦 Install NPM Dependencies
         run: npm ci
 
-      - name: 🏷️ Determine & Sync Version
+      - name: 🏷️ Determine & Validate Version Safely
         id: get_version
+        env:
+          INPUT_TAG_NAME: ${{ inputs.tag_name }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ -n "${{ inputs.tag_name }}" ]; then
-            TAG_NAME="${{ inputs.tag_name }}"
-          elif [[ "${{ github.ref_name }}" == v* ]]; then
-            TAG_NAME="${{ github.ref_name }}"
+          if [ -n "$INPUT_TAG_NAME" ]; then
+            TAG_NAME="$INPUT_TAG_NAME"
+          elif [[ "$GITHUB_REF_NAME" == v* ]]; then
+            TAG_NAME="$GITHUB_REF_NAME"
           else
             RAW_VER=$(node -p "require('./app.json').expo.version")
             TAG_NAME="v${RAW_VER}"
           fi
-          
+
           CLEAN_VER="${TAG_NAME#v}"
-          echo "Building version $CLEAN_VER (Tag: $TAG_NAME)"
-          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
-          echo "clean_ver=$CLEAN_VER" >> $GITHUB_OUTPUT
+
+          # Strict semantic version validation to prevent command/script injection
+          if [[ ! "$CLEAN_VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Invalid semantic version string: $CLEAN_VER"
+            exit 1
+          fi
+
+          echo "Building version $CLEAN_VER (Tag: v$CLEAN_VER)"
+          echo "tag_name=v$CLEAN_VER" >> "$GITHUB_OUTPUT"
+          echo "clean_ver=$CLEAN_VER" >> "$GITHUB_OUTPUT"
 
           npm version "$CLEAN_VER" --no-git-tag-version --allow-same-version
-          node -e "
-            const fs = require('fs');
-            const appJson = JSON.parse(fs.readFileSync('app.json', 'utf8'));
-            appJson.expo.version = '$CLEAN_VER';
-            fs.writeFileSync('app.json', JSON.stringify(appJson, null, 2) + '\n');
-          "
+          CLEAN_VER="$CLEAN_VER" node -e '
+            const fs = require("fs");
+            const appJson = JSON.parse(fs.readFileSync("app.json", "utf8"));
+            appJson.expo.version = process.env.CLEAN_VER;
+            fs.writeFileSync("app.json", JSON.stringify(appJson, null, 2) + "\n");
+          '
 
       - name: ⚙️ Generate Android Native Project
         run: npx expo prebuild --platform android --no-install
 
-      - name: 🔨 Build Release APKs (ARM64-v8a + Universal)
+      - name: 🔐 Configure Production Release Keystore
         working-directory: ./mobile/android
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          CLEAN_VER="${{ steps.get_version.outputs.clean_ver }}"
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > app/release.keystore
+            echo "SIGNING_ARGS=-Pandroid.injected.signing.store.file=$(pwd)/app/release.keystore -Pandroid.injected.signing.store.password=$ANDROID_KEYSTORE_PASSWORD -Pandroid.injected.signing.key.alias=$ANDROID_KEY_ALIAS -Pandroid.injected.signing.key.password=$ANDROID_KEY_PASSWORD" >> "$GITHUB_ENV"
+          else
+            echo "::warning::ANDROID_KEYSTORE_BASE64 secret is not configured. Configure a production keystore in GitHub Secrets before publishing release APKs."
+            echo "SIGNING_ARGS=" >> "$GITHUB_ENV"
+          fi
+
+      - name: 🔨 Build Release APKs & SHA-256 Checksums
+        working-directory: ./mobile/android
+        env:
+          CLEAN_VER: ${{ steps.get_version.outputs.clean_ver }}
+        run: |
           mkdir -p ../dist_apks
-          
-          # 1. Build optimized ARM64-v8a APK (~20MB for 99.8% of modern Android devices)
+
           echo "🔨 Building arm64-v8a APK..."
-          ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a
-          cp app/build/outputs/apk/release/app-release.apk ../dist_apks/Project_S-v${CLEAN_VER}-arm64-v8a.apk
-          
-          # 2. Build Universal fallback APK (~70MB for all CPU architectures)
-          # Note: No 'gradlew clean' so Gradle reuses intermediate compiler & hermes cache!
+          ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a $SIGNING_ARGS
+          cp app/build/outputs/apk/release/app-release.apk "../dist_apks/Project_S-v${CLEAN_VER}-arm64-v8a.apk"
+
           echo "🔨 Building universal APK..."
-          ./gradlew assembleRelease -PreactNativeArchitectures=armeabi-v7a,arm64-v8a,x86,x86_64
-          cp app/build/outputs/apk/release/app-release.apk ../dist_apks/Project_S-v${CLEAN_VER}-universal.apk
+          ./gradlew assembleRelease -PreactNativeArchitectures=armeabi-v7a,arm64-v8a,x86,x86_64 $SIGNING_ARGS
+          cp app/build/outputs/apk/release/app-release.apk "../dist_apks/Project_S-v${CLEAN_VER}-universal.apk"
 
-          echo "✅ Generated Release Artifacts:"
-          ls -lh ../dist_apks
+          cd ../dist_apks
+          sha256sum Project_S-*.apk > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
-      - name: 🏷️ Publish GitHub Release with APKs
+      - name: 🧹 Clean Temporary Keystore
+        if: always()
+        working-directory: ./mobile/android
+        run: rm -f app/release.keystore
+
+      - name: 🏷️ Publish GitHub Release with APKs & Checksums
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.get_version.outputs.tag_name }}
           name: Release ${{ steps.get_version.outputs.tag_name }}
           files: |
             mobile/dist_apks/Project_S-*.apk
+            mobile/dist_apks/SHA256SUMS.txt
           generate_release_notes: true
           draft: false
           prerelease: false
