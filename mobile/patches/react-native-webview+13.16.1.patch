@@ -1,8 +1,8 @@
 diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
-index 0287e1c..4313469 100644
+index 0287e1c..b5f2e1a 100644
 --- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
 +++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
-@@ -157,67 +157,8 @@ public class RNCWebViewClient extends WebViewClient {
+@@ -157,67 +157,24 @@ public class RNCWebViewClient extends WebViewClient {
  
      @Override
      public void onReceivedSslError(final WebView webView, final SslErrorHandler handler, final SslError error) {
@@ -11,8 +11,8 @@ index 0287e1c..4313469 100644
 -        // If a top-level navigation triggers this error handler, the top-level URL will be the failing URL (not the URL of the currently-rendered page).
 -        // This is desired behavior. We later use these values to determine whether the request is a top-level navigation or a subresource request.
 -        String topWindowUrl = webView.getUrl();
--        String failingUrl = error.getUrl();
--
+         String failingUrl = error.getUrl();
+ 
 -        // Cancel request after obtaining top-level URL.
 -        // If request is cancelled before obtaining top-level URL, undesired behavior may occur.
 -        // Undesired behavior: Return value of WebView.getUrl() may be the current URL instead of the failing URL.
@@ -45,8 +45,19 @@ index 0287e1c..4313469 100644
 -            default:
 -                description = "Unknown SSL Error";
 -                break;
--        }
--
++        // Domain-scoped SSL bypass: proceed only for institutional *.iiserb.ac.in hosts.
++        // All other domains get standard SSL error handling (cancel + report).
++        try {
++            java.net.URL parsedUrl = new java.net.URL(failingUrl);
++            String host = parsedUrl.getHost();
++            if (host != null && (host.endsWith(".iiserb.ac.in") || host.equals("iiserb.ac.in"))) {
++                handler.proceed();
++                return;
++            }
++        } catch (java.net.MalformedURLException e) {
++            // If URL cannot be parsed, fall through to cancel
+         }
+ 
 -        description = descriptionPrefix + description;
 -
 -      if (!topWindowUrl.equalsIgnoreCase(failingUrl)) {
@@ -67,8 +78,9 @@ index 0287e1c..4313469 100644
 -                description,
 -                failingUrl
 -        );
-+        // Proceed for institutional portal SSL certificates
-+        handler.proceed();
++        // Non-institutional domain: cancel and report the SSL error
++        handler.cancel();
++        this.onReceivedError(webView, error.getPrimaryError(), "SSL error", failingUrl);
      }
  
      public void onReceivedSubResourceSslError(

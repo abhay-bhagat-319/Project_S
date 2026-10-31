@@ -6,8 +6,11 @@ const withIiserbSsl = (config) => {
   // 1. Configure AndroidManifest.xml
   config = withAndroidManifest(config, (config) => {
     const mainApplication = config.modResults.manifest.application[0];
-    mainApplication.$['android:usesCleartextTraffic'] = 'true';
+    // Cleartext policy is governed entirely by network_security_config.xml.
+    // We still set this attribute so that Android reads the XML config.
     mainApplication.$['android:networkSecurityConfig'] = '@xml/network_security_config';
+    // Remove the legacy blanket usesCleartextTraffic if present — the XML handles per-domain rules.
+    delete mainApplication.$['android:usesCleartextTraffic'];
     return config;
   });
 
@@ -48,14 +51,20 @@ const withIiserbSsl = (config) => {
         fs.mkdirSync(resXmlDir, { recursive: true });
       }
 
+      // --- HARDENED network_security_config.xml ---
+      // - base-config: cleartext DISABLED, system CAs only (protects external hosts like api.github.com)
+      // - domain-config for *.iiserb.ac.in: cleartext ALLOWED (acad.iiserb.ac.in HTTP fallback),
+      //   system + user CAs trusted (for FortiGate SSL inspection on campus Wi-Fi)
+      // - debug-overrides: user CAs trusted for all domains (enables Charles/Proxyman during development)
       const networkSecurityConfigContent = `<?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <base-config cleartextTrafficPermitted="true">
+    <!-- External internet: strict system CAs only, no cleartext -->
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
-            <certificates src="user" />
         </trust-anchors>
     </base-config>
+    <!-- Institutional intranet: allow cleartext (acad.iiserb.ac.in HTTP fallback) and user-installed CAs -->
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">iiserb.ac.in</domain>
         <trust-anchors>
@@ -63,6 +72,12 @@ const withIiserbSsl = (config) => {
             <certificates src="user" />
         </trust-anchors>
     </domain-config>
+    <!-- Debug builds only: allow user CAs for proxy debugging -->
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
 </network-security-config>
 `;
       fs.writeFileSync(path.join(resXmlDir, 'network_security_config.xml'), networkSecurityConfigContent);
@@ -73,6 +88,10 @@ const withIiserbSsl = (config) => {
         fs.mkdirSync(packageDir, { recursive: true });
       }
 
+      // --- HARDENED IiserbOkHttpClientFactory.kt ---
+      // Key security improvement: the institutional certificate fallback is ONLY applied when
+      // the TLS peer hostname is *.iiserb.ac.in. External hosts (api.github.com, etc.) use
+      // strict system CA validation with no fallback.
       const factoryContent = `package com.iiserb.project_s
 
 import com.facebook.react.modules.network.OkHttpClientFactory
@@ -93,10 +112,18 @@ import javax.net.ssl.X509ExtendedTrustManager
 import javax.net.ssl.X509TrustManager
 
 /**
- * Custom OkHttpClientFactory for React Native Android networking.
+ * Domain-scoped OkHttp SSL trust factory for IISER Bhopal intranet hosts.
  *
- * Configures domain-scoped SSL trust for IISER Bhopal institutional intranet hosts (*.iiserb.ac.in).
- * Standard CA validation is strictly maintained for all external internet hosts (e.g. GitHub APK downloads).
+ * Security model:
+ * - External hosts (api.github.com, CDNs, etc.): strict system CA validation, no fallback.
+ * - Institutional hosts (*.iiserb.ac.in): system CA validation first, falling back to
+ *   institutional certificate acceptance if the system check fails. This accommodates
+ *   acad.iiserb.ac.in's incomplete certificate chain and campus FortiGate SSL inspection.
+ *
+ * The institutional fallback checks that at least one certificate in the presented chain
+ * has subject/issuer fields matching known IISERB or Sectigo identifiers. This is scoped
+ * strictly to *.iiserb.ac.in peer hostnames via the hostname extracted from the SSLSocket
+ * or SSLEngine, so it cannot be exploited for external connections.
  */
 class IiserbOkHttpClientFactory : OkHttpClientFactory {
 
@@ -118,35 +145,62 @@ class IiserbOkHttpClientFactory : OkHttpClientFactory {
         defaultTrustManager?.checkClientTrusted(chain, authType)
       }
 
+      // --- Server trust: hostname-unaware overload (OkHttp may call this) ---
+      // Without a socket/engine we cannot determine the peer host, so we apply
+      // the institutional fallback conservatively. OkHttp's hostname verifier
+      // (below) provides the second gate that rejects non-IISERB hosts.
       override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
-        verifyServerCertificate(chain, authType)
+        verifyServerCertificate(chain, authType, peerHost = null)
       }
 
+      // --- Server trust: hostname-aware overloads ---
       override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?, socket: Socket?) {
-        verifyServerCertificate(chain, authType)
+        val peerHost = (socket as? SSLSocket)?.let {
+          it.handshakeSession?.peerHost ?: it.inetAddress?.hostName
+        }
+        verifyServerCertificate(chain, authType, peerHost)
       }
 
       override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?, engine: SSLEngine?) {
-        verifyServerCertificate(chain, authType)
+        val peerHost = engine?.peerHost
+        verifyServerCertificate(chain, authType, peerHost)
       }
 
-      private fun verifyServerCertificate(chain: Array<out X509Certificate>?, authType: String?) {
+      /**
+       * Core verification: try system CAs first. If that fails AND the peer is an
+       * institutional host, check the certificate chain for known IISERB identifiers.
+       * For non-institutional hosts (or when peer is unknown), re-throw the original exception.
+       */
+      private fun verifyServerCertificate(chain: Array<out X509Certificate>?, authType: String?, peerHost: String?) {
         try {
           defaultTrustManager?.checkServerTrusted(chain, authType)
         } catch (e: CertificateException) {
-          if (!isAcceptableInstitutionalCert(chain)) {
-            throw e
+          // Only apply institutional fallback for *.iiserb.ac.in hosts
+          val isInstitutional = peerHost != null && isIiserbHost(peerHost)
+          if (isInstitutional && isAcceptableInstitutionalCert(chain)) {
+            // Certificate accepted for institutional host
+            return
           }
+          throw e
         }
       }
 
       override fun getAcceptedIssuers(): Array<X509Certificate> =
         defaultTrustManager?.acceptedIssuers ?: arrayOf()
 
-      private fun isTrustedHost(host: String): Boolean {
-        return host.endsWith("iiserb.ac.in") || host == "localhost" || host == "127.0.0.1"
+      /**
+       * Returns true if the hostname belongs to the IISERB institutional domain.
+       */
+      private fun isIiserbHost(host: String): Boolean {
+        val lower = host.lowercase()
+        return lower.endsWith(".iiserb.ac.in") || lower == "iiserb.ac.in"
       }
 
+      /**
+       * Checks if the certificate chain contains identifiers consistent with
+       * IISERB's known certificate infrastructure (Sectigo DV certs, FortiGate
+       * SSL inspection appliance, institutional naming).
+       */
       private fun isAcceptableInstitutionalCert(chain: Array<out X509Certificate>?): Boolean {
         return chain?.any { cert ->
           val subject = cert.subjectX500Principal?.name?.lowercase() ?: ""
@@ -154,7 +208,6 @@ class IiserbOkHttpClientFactory : OkHttpClientFactory {
           subject.contains("iiserb") || issuer.contains("iiserb") ||
           subject.contains("iiser") || issuer.contains("iiser") ||
           subject.contains("shiksha") || issuer.contains("shiksha") ||
-          subject.contains("bhopal") || issuer.contains("bhopal") ||
           subject.contains("fortinet") || issuer.contains("fortinet") ||
           subject.contains("fortigate") || issuer.contains("fortigate") ||
           subject.contains("sectigo") || issuer.contains("sectigo")
@@ -168,10 +221,11 @@ class IiserbOkHttpClientFactory : OkHttpClientFactory {
 
     builder.sslSocketFactory(sslContext.socketFactory, iiserbTrustManager)
 
+    // Hostname verifier: only bypass default verification for *.iiserb.ac.in
     val defaultVerifier = HttpsURLConnection.getDefaultHostnameVerifier()
     builder.hostnameVerifier { hostname, session ->
       val lower = hostname.lowercase()
-      if (lower.endsWith("iiserb.ac.in") || lower == "localhost" || lower == "127.0.0.1") {
+      if (lower.endsWith(".iiserb.ac.in") || lower == "iiserb.ac.in") {
         true
       } else {
         defaultVerifier.verify(hostname, session)
