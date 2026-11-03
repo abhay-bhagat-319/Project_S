@@ -14,3 +14,12 @@ claude.md
 # Documentation
 docs/
 
+
+# Promo film generated artifacts
+promo/.venv/
+promo/out/
+promo/preview/
+promo/inspect/
+image-search/
+__pycache__/
+*.pyc
